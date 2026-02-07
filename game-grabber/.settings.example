@@ -1,0 +1,8 @@
+# Add-Game.ps1 Configuration
+# Copy this file to .settings and edit with your details
+
+Email=your@email.com
+Password=yourpassword
+Destination=D:\Games
+QbitHost=http://localhost:8075
+MaxResults=10
