@@ -218,6 +218,61 @@ try {
     Write-Log "Sorting torrents by preference score..." "INFO"
     $sortedTorrents = $allTorrents | Sort-Object -Property Score -Descending
 
+    # Take top MaxResults
+    $torrents = $sortedTorrents | Select-Object -First $MaxResults
+    Write-Log "Selected top $($torrents.Count) torrents for display" "DEBUG"
+
+    # Display results
+    Write-Log "Displaying top $($torrents.Count) results..." "INFO"
+    Write-Host ""
+
+    for ($i = 0; $i -lt $torrents.Count; $i++) {
+        $t = $torrents[$i]
+        Write-Host "[$($i+1)] " -NoNewline -ForegroundColor Yellow
+        Write-Host "$($t.Name)" -ForegroundColor White
+
+        # Show uploader and tags
+        $tags = @()
+        if ($t.IsBatch) { $tags += "BATCH/SEASON" }
+        if ($t.IsIndividualEpisode) { $tags += "SINGLE EPISODE" }
+        if ($t.IsPreferredUploader) { $tags += "PREFERRED" }
+        if ($t.IsDualAudio) { $tags += "DUAL AUDIO" }
+        $tagString = if ($tags.Count -gt 0) { " [" + ($tags -join ", ") + "]" } else { "" }
+
+        Write-Host "    Uploader: $($t.Uploader)$tagString" -ForegroundColor Cyan
+        Write-Host "    Size: $($t.Size) | Seeds: $($t.Seeders) | Leech: $($t.Leechers) | DL: $($t.Downloads) | Score: $($t.Score)" -ForegroundColor Gray
+        Write-Host ""
+    }
+
+    # Select torrent
+    $selectedIndex = 0
+    if ($Interactive -and $torrents.Count -gt 1) {
+        Write-Log "Interactive mode: waiting for user selection..." "INFO"
+        Write-Host "Select torrent [1-$($torrents.Count)] or 0 to cancel: " -NoNewline -ForegroundColor Cyan
+        $selection = Read-Host
+        $selectedIndex = [int]$selection - 1
+
+        if ($selectedIndex -lt 0 -or $selectedIndex -ge $torrents.Count) {
+            Write-Log "User cancelled selection" "WARN"
+            exit 0
+        }
+        Write-Log "User selected torrent #$($selectedIndex + 1)" "INFO"
+    } else {
+        Write-Log "Auto-selecting top-scored torrent" "INFO"
+    }
+
+    $selectedTorrent = $torrents[$selectedIndex]
+
+    Write-Log "Selected torrent: $($selectedTorrent.Name)" "SUCCESS"
+    Write-Log "  Uploader: $($selectedTorrent.Uploader)" "DEBUG"
+    Write-Log "  Score: $($selectedTorrent.Score)" "DEBUG"
+    Write-Log "  Seeders: $($selectedTorrent.Seeders)" "DEBUG"
+    Write-Log "  Batch/Season: $($selectedTorrent.IsBatch)" "DEBUG"
+    Write-Log "  Individual Episode: $($selectedTorrent.IsIndividualEpisode)" "DEBUG"
+    Write-Log "  Dual Audio: $($selectedTorrent.IsDualAudio)" "DEBUG"
+    Write-Log "  Preferred Uploader: $($selectedTorrent.IsPreferredUploader)" "DEBUG"
+    Write-Host ""
+
     Write-Log "Process completed" "SUCCESS"
 } catch {
     Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
