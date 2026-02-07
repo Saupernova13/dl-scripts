@@ -26,6 +26,9 @@ param(
     [string]$Filter = ""
 )
 
+# Load System.Web for HttpUtility
+Add-Type -AssemblyName System.Web
+
 # Logging helper function
 function Write-Log {
     param(
@@ -46,9 +49,6 @@ function Write-Log {
 
 # Preferred uploaders (case-insensitive)
 $preferredUploaders = @('judas', 'cerebrus', 'cleo', 'animetime')
-
-# Load System.Web for HttpUtility
-Add-Type -AssemblyName System.Web
 
 # Build search URL
 $searchQuery = $Query
@@ -83,7 +83,7 @@ try {
     $response = Invoke-WebRequest -Uri $url -UseBasicParsing
     $html = $response.Content
     Write-Log "Received HTML response: $($html.Length) bytes" "DEBUG"
-
+    
     # Parse torrent entries - split by rows first to avoid regex performance issues
     $torrents = @()
 
@@ -223,10 +223,22 @@ try {
     Write-Log "Sorting torrents by preference score..." "INFO"
     $sortedTorrents = $allTorrents | Sort-Object -Property Score -Descending
 
+    # Debug: Show top 20 scored torrents
+    Write-Log "Top 20 torrents by score:" "DEBUG"
+    $topDebug = $sortedTorrents | Select-Object -First 20
+    foreach ($td in $topDebug) {
+        $debugTags = @()
+        if ($td.IsBatch) { $debugTags += "BATCH" }
+        if ($td.IsPreferredUploader) { $debugTags += "PREF" }
+        if ($td.IsDualAudio) { $debugTags += "DUAL" }
+        $tagStr = if ($debugTags.Count -gt 0) { " [" + ($debugTags -join ",") + "]" } else { "" }
+        Write-Log "  Score $($td.Score): [$($td.Uploader)]$tagStr $($td.Name.Substring(0, [Math]::Min(60, $td.Name.Length)))..." "DEBUG"
+    }
+
     # Take top MaxResults
     $torrents = $sortedTorrents | Select-Object -First $MaxResults
     Write-Log "Selected top $($torrents.Count) torrents for display" "DEBUG"
-
+    
     # Display results
     Write-Log "Displaying top $($torrents.Count) results..." "INFO"
     Write-Host ""
@@ -248,7 +260,7 @@ try {
         Write-Host "    Size: $($t.Size) | Seeds: $($t.Seeders) | Leech: $($t.Leechers) | DL: $($t.Downloads) | Score: $($t.Score)" -ForegroundColor Gray
         Write-Host ""
     }
-
+    
     # Select torrent
     $selectedIndex = 0
     if ($Interactive -and $torrents.Count -gt 1) {
@@ -280,7 +292,7 @@ try {
 
     # Add to qBittorrent
     Write-Log "Adding torrent to qBittorrent at $QbitHost..." "INFO"
-
+    
     $body = @{
         urls = $selectedTorrent.MagnetLink
         savepath = $Destination
@@ -306,6 +318,7 @@ try {
         Write-Log "Failed to add to qBittorrent (Status: $($addResponse.StatusCode))" "ERROR"
         exit 1
     }
+
 } catch {
     Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
     Write-Log "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
