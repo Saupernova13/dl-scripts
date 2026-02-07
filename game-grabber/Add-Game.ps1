@@ -127,6 +127,46 @@ try {
 
     Write-Log "Parsed $($games.Count) games" "SUCCESS"
 
+    # Select first game
+    $selectedGame = $games[0]
+    Write-Log "Selected: $($selectedGame.Title)" "INFO"
+
+    # Get game page to find download link
+    Write-Log "Fetching game page..." "INFO"
+    $gamePage = Invoke-WebRequest -Uri $selectedGame.URL -WebSession $session -UseBasicParsing
+    $gameHtml = $gamePage.Content
+
+    # Find download link pattern: /file/{fileId}?game={gameId}
+    $downloadUrl = $null
+
+    # Pattern 1: href="/file/...?game=..."
+    $pattern1 = 'href="(/file/[a-zA-Z0-9]+\?game=[a-zA-Z0-9]+)"'
+    $match = [regex]::Match($gameHtml, $pattern1)
+    if ($match.Success) {
+        $downloadUrl = $match.Groups[1].Value
+    }
+
+    # Pattern 2: Direct /file/ search
+    if (-not $downloadUrl) {
+        $pattern2 = '/file/([a-zA-Z0-9]+)\?game=([a-zA-Z0-9]+)'
+        $match = [regex]::Match($gameHtml, $pattern2)
+        if ($match.Success) {
+            $downloadUrl = $match.Value
+        }
+    }
+
+    if (-not $downloadUrl) {
+        Write-Log "Could not find download link" "ERROR"
+        exit 1
+    }
+
+    # Make URL absolute
+    if (-not $downloadUrl.StartsWith("http")) {
+        $downloadUrl = "https://appnetica.com$downloadUrl"
+    }
+
+    Write-Log "Download URL: $downloadUrl" "SUCCESS"
+
 } catch {
     Write-Log "Search failed: $($_.Exception.Message)" "ERROR"
     exit 1
