@@ -139,6 +139,21 @@ try {
         $uploaderMatch = [regex]::Match($torrentName, '^\[([^\]]+)\]')
         $uploader = if ($uploaderMatch.Success) { $uploaderMatch.Groups[1].Value } else { "Unknown" }
 
+        # Detect batch/season vs individual episode
+        $isBatch = $false
+        $isIndividualEpisode = $false
+
+        # Batch indicators (season packs, complete series, episode ranges)
+        if ($torrentName -imatch '(Season\s+\d+|Season\s+0\d+|S\d{2}|S0\d+|\d+-\d+|Batch|Complete|Series|全集|整季)') {
+            $isBatch = $true
+            Write-Log "  Detected batch/season release" "DEBUG"
+        }
+        # Individual episode indicators (single episode number patterns)
+        elseif ($torrentName -imatch '\s-\s\d+\s|\sEP?\d+\s|第\d+話|\s\d+\s\(') {
+            $isIndividualEpisode = $true
+            Write-Log "  Detected individual episode" "DEBUG"
+        }
+
         $torrent = @{
             ID = $viewIdMatch.Groups[1].Value
             Name = $torrentName
@@ -150,6 +165,8 @@ try {
             Seeders = $seeders
             Leechers = $leechers
             Downloads = $downloads
+            IsBatch = $isBatch
+            IsIndividualEpisode = $isIndividualEpisode
         }
 
         $allTorrents += [PSCustomObject]$torrent
