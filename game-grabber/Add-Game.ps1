@@ -71,7 +71,62 @@ try {
     $searchResponse = Invoke-WebRequest -Uri $searchUrl -WebSession $session -UseBasicParsing
     $svelteData = $searchResponse.Content | ConvertFrom-Json
 
-    Write-Log "Search response received" "SUCCESS"
+    # Parse SvelteKit data structure - find search results node
+    $searchNode = $null
+    for ($i = 0; $i -lt $svelteData.nodes.Count; $i++) {
+        $node = $svelteData.nodes[$i]
+        if ($node.type -eq "data" -and $node.uses -and $node.uses.search_params) {
+            $searchNode = $node
+            Write-Log "Found search node at index $i" "INFO"
+            break
+        }
+    }
+
+    if (-not $searchNode) {
+        Write-Log "Failed to find search results" "ERROR"
+        exit 1
+    }
+
+    # Dereference numeric references in data array
+    $dataArray = $searchNode.data
+    $searchResults = $dataArray[0]
+
+    # Get totalItems (dereference if it's a number)
+    $totalItemsRef = $searchResults.totalItems
+    $totalItems = if ($totalItemsRef -is [int]) { $dataArray[$totalItemsRef] } else { $totalItemsRef }
+
+    Write-Log "Found $totalItems games" "SUCCESS"
+
+    if ($totalItems -eq 0) {
+        Write-Log "No results found" "WARN"
+        exit 1
+    }
+
+    # Get games array (dereference)
+    $gamesRef = $searchResults.games
+    $gamesData = if ($gamesRef -is [int]) { $dataArray[$gamesRef] } else { $gamesRef }
+
+    $itemsRef = $gamesData.items
+    $itemsArray = if ($itemsRef -is [int]) { $dataArray[$itemsRef] } else { $itemsRef }
+
+    # Extract game titles and slugs
+    $games = @()
+    foreach ($itemRef in $itemsArray) {
+        $game = if ($itemRef -is [int]) { $dataArray[$itemRef] } else { $itemRef }
+        $title = if ($game.title -is [int]) { $dataArray[$game.title] } else { $game.title }
+        $slug = if ($game.slug -is [int]) { $dataArray[$game.slug] } else { $game.slug }
+
+        $games += [PSCustomObject]@{
+            Title = $title
+            Slug = $slug
+            URL = "https://appnetica.com/games/$slug"
+        }
+
+        if ($games.Count -ge 10) { break }
+    }
+
+    Write-Log "Parsed $($games.Count) games" "SUCCESS"
+
 } catch {
     Write-Log "Search failed: $($_.Exception.Message)" "ERROR"
     exit 1
