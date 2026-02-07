@@ -167,7 +167,57 @@ try {
 
     Write-Log "Download URL: $downloadUrl" "SUCCESS"
 
+    # Download torrent file
+    Write-Log "Downloading torrent..." "INFO"
+    $torrentPath = Join-Path $env:TEMP "$($selectedGame.Slug).torrent"
+    Invoke-WebRequest -Uri $downloadUrl -WebSession $session -OutFile $torrentPath -UseBasicParsing
+
+    if (-not (Test-Path $torrentPath)) {
+        Write-Log "Failed to download torrent" "ERROR"
+        exit 1
+    }
+
+    Write-Log "Torrent saved to: $torrentPath" "SUCCESS"
+
+    # Add torrent to qBittorrent
+    Write-Log "Adding to qBittorrent..." "INFO"
+
+    $qbitHost = "http://localhost:8075"
+    $destination = "D:\Games"
+
+    # Read torrent file
+    $torrentBytes = [System.IO.File]::ReadAllBytes($torrentPath)
+    $fileName = [System.IO.Path]::GetFileName($torrentPath)
+
+    # Build multipart form data (basic attempt)
+    $boundary = [System.Guid]::NewGuid().ToString()
+    $bodyLines = @(
+        "--$boundary",
+        "Content-Disposition: form-data; name=`"torrents`"; filename=`"$fileName`"",
+        "Content-Type: application/x-bittorrent",
+        "",
+        [System.Text.Encoding]::UTF8.GetString($torrentBytes),
+        "--$boundary",
+        "Content-Disposition: form-data; name=`"savepath`"",
+        "",
+        $destination,
+        "--$boundary--"
+    )
+
+    $body = $bodyLines -join "`r`n"
+
+    $headers = @{
+        "Content-Type" = "multipart/form-data; boundary=$boundary"
+    }
+
+    try {
+        $response = Invoke-WebRequest -Uri "$qbitHost/api/v2/torrents/add" -Method POST -Body $body -Headers $headers -UseBasicParsing
+        Write-Log "Added to qBittorrent!" "SUCCESS"
+    } catch {
+        Write-Log "Failed to add to qBittorrent: $($_.Exception.Message)" "ERROR"
+    }
+
 } catch {
-    Write-Log "Search failed: $($_.Exception.Message)" "ERROR"
+    Write-Log "Error: $($_.Exception.Message)" "ERROR"
     exit 1
 }
