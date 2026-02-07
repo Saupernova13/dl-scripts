@@ -44,6 +44,9 @@ function Write-Log {
     Write-Host "[$timestamp] [$Level] $Message" -ForegroundColor $color
 }
 
+# Preferred uploaders (case-insensitive)
+$preferredUploaders = @('judas', 'cerebrus', 'cleo', 'animetime')
+
 # Load System.Web for HttpUtility
 Add-Type -AssemblyName System.Web
 
@@ -157,6 +160,17 @@ try {
         # Calculate score
         $score = $seeders  # Base score is number of seeders
 
+        # Check for preferred uploader (200 point bonus)
+        $isPreferredUploader = $false
+        foreach ($preferred in $preferredUploaders) {
+            if ($uploader -imatch $preferred) {
+                $isPreferredUploader = $true
+                $score += 200
+                Write-Log "  Found preferred uploader: $uploader (matched: $preferred)" "DEBUG"
+                break
+            }
+        }
+
         $torrent = @{
             ID = $viewIdMatch.Groups[1].Value
             Name = $torrentName
@@ -168,6 +182,7 @@ try {
             Seeders = $seeders
             Leechers = $leechers
             Downloads = $downloads
+            IsPreferredUploader = $isPreferredUploader
             IsBatch = $isBatch
             IsIndividualEpisode = $isIndividualEpisode
             Score = $score
