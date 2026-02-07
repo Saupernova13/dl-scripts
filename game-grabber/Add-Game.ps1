@@ -63,15 +63,15 @@ try {
     exit 1
 }
 
-# Search for games
+# Search for games using SvelteKit endpoint
 Write-Log "Searching for: $Query" "INFO"
-$searchUrl = "https://appnetica.com/api/search?q=$([System.Web.HttpUtility]::UrlEncode($Query))"
+$searchUrl = "https://appnetica.com/search/__data.json?term=$([System.Web.HttpUtility]::UrlEncode($Query))&x-sveltekit-invalidated=011"
 
 try {
     $searchResponse = Invoke-WebRequest -Uri $searchUrl -WebSession $session -UseBasicParsing
-    $searchData = $searchResponse.Content | ConvertFrom-Json
+    $svelteData = $searchResponse.Content | ConvertFrom-Json
 
-    Write-Log "Found $($searchData.results.Count) results" "SUCCESS"
+    Write-Log "Search response received" "SUCCESS"
 } catch {
     Write-Log "Search failed: $($_.Exception.Message)" "ERROR"
     exit 1
