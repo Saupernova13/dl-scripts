@@ -208,6 +208,11 @@ try {
             Score = $score
         }
 
+        # Build magnet link using string concatenation
+        $magnetBase = "magnet:?xt=urn:btih:" + $torrent.InfoHash
+        $magnetDn = "$amp" + "dn=" + [System.Web.HttpUtility]::UrlEncode($torrent.Name)
+        $torrent.MagnetLink = $magnetBase + $magnetDn
+
         $allTorrents += [PSCustomObject]$torrent
         $count++
     }
@@ -273,7 +278,34 @@ try {
     Write-Log "  Preferred Uploader: $($selectedTorrent.IsPreferredUploader)" "DEBUG"
     Write-Host ""
 
-    Write-Log "Process completed" "SUCCESS"
+    # Add to qBittorrent
+    Write-Log "Adding torrent to qBittorrent at $QbitHost..." "INFO"
+
+    $body = @{
+        urls = $selectedTorrent.MagnetLink
+        savepath = $Destination
+    }
+
+    Write-Log "Sending POST request to qBittorrent API..." "DEBUG"
+    $addResponse = Invoke-WebRequest -Uri "$QbitHost/api/v2/torrents/add" -Method POST -Body $body -UseBasicParsing
+
+    if ($addResponse.StatusCode -eq 200) {
+        Write-Log "Successfully added torrent to qBittorrent!" "SUCCESS"
+        Write-Log "  Destination: $Destination" "INFO"
+        Write-Log "  Name: $($selectedTorrent.Name)" "INFO"
+        Write-Log "  Size: $($selectedTorrent.Size)" "INFO"
+        Write-Log "  Seeds: $($selectedTorrent.Seeders)" "INFO"
+        Write-Log "  Uploader: $($selectedTorrent.Uploader)" "INFO"
+        Write-Host ""
+
+        # Return JSON for programmatic use
+        $result = $selectedTorrent | ConvertTo-Json
+        Write-Log "Process completed successfully" "SUCCESS"
+        return $result
+    } else {
+        Write-Log "Failed to add to qBittorrent (Status: $($addResponse.StatusCode))" "ERROR"
+        exit 1
+    }
 } catch {
     Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
     Write-Log "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
