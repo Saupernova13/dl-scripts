@@ -81,6 +81,77 @@ try {
     $html = $response.Content
     Write-Log "Received HTML response: $($html.Length) bytes" "DEBUG"
 
+    # Parse torrent entries - split by rows first to avoid regex performance issues
+    $torrents = @()
+
+    # HTML entity patterns
+    $htmlQuot = '&' + 'quot;'
+    $htmlAmp = '&' + 'amp;'
+
+    # Split HTML into table rows - be flexible with class names and whitespace
+    Write-Log "Parsing HTML table rows..." "INFO"
+    $rowPattern = '<tr\s+class="(?:success|default|danger)"[^>]*>(.*?)</tr>'
+    $rowMatches = [regex]::Matches($html, $rowPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
+
+    if ($rowMatches.Count -eq 0) {
+        Write-Log "No results found for: $searchQuery" "ERROR"
+        Write-Log "HTML sample (first 500 chars): $($html.Substring(0, [Math]::Min(500, $html.Length)))" "DEBUG"
+        exit 1
+    }
+
+    Write-Log "Found $($rowMatches.Count) potential matches in HTML" "DEBUG"
+
+    $count = 0
+    $allTorrents = @()
+    foreach ($rowMatch in $rowMatches) {
+
+        $rowHtml = $rowMatch.Groups[1].Value
+
+        # Extract fields from this row with simple patterns
+        $viewIdMatch = [regex]::Match($rowHtml, 'href="/view/(\d+)"')
+        $titleMatch = [regex]::Match($rowHtml, 'href="/view/\d+" title="([^"]*)"')
+        $downloadIdMatch = [regex]::Match($rowHtml, 'href="/download/(\d+)\.torrent"')
+        $magnetMatch = [regex]::Match($rowHtml, 'magnet:\?xt=urn:btih:([a-f0-9]+)')
+
+        # Extract table cells - get all text-center cells
+        $cellMatches = [regex]::Matches($rowHtml, '<td class="text-center"[^>]*>\s*([^<]+?)\s*</td>')
+
+        if (-not $viewIdMatch.Success -or -not $titleMatch.Success -or $cellMatches.Count -lt 5) {
+            Write-Log "Skipping row - incomplete data" "DEBUG"
+            continue
+        }
+
+        # Clean up the name
+        $torrentName = $titleMatch.Groups[1].Value
+        $torrentName = $torrentName.Replace($htmlQuot, '"')
+        $torrentName = $torrentName.Replace($htmlAmp, '&')
+
+        # Extract numeric values safely
+        $seedersText = $cellMatches[2].Groups[1].Value.Trim()
+        $leechersText = $cellMatches[3].Groups[1].Value.Trim()
+        $downloadsText = $cellMatches[4].Groups[1].Value.Trim()
+
+        $seeders = if ($seedersText -match '^\d+$') { [int]$seedersText } else { 0 }
+        $leechers = if ($leechersText -match '^\d+$') { [int]$leechersText } else { 0 }
+        $downloads = if ($downloadsText -match '^\d+$') { [int]$downloadsText } else { 0 }
+
+        $torrent = @{
+            ID = $viewIdMatch.Groups[1].Value
+            Name = $torrentName
+            DownloadID = $downloadIdMatch.Groups[1].Value
+            InfoHash = $magnetMatch.Groups[1].Value
+            Size = $cellMatches[0].Groups[1].Value.Trim()
+            Date = $cellMatches[1].Groups[1].Value.Trim()
+            Seeders = $seeders
+            Leechers = $leechers
+            Downloads = $downloads
+        }
+
+        $allTorrents += [PSCustomObject]$torrent
+        $count++
+    }
+
+    Write-Log "Parsed $count torrents successfully" "SUCCESS"
     Write-Log "Process completed" "SUCCESS"
 } catch {
     Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
