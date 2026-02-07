@@ -135,9 +135,14 @@ try {
         $leechers = if ($leechersText -match '^\d+$') { [int]$leechersText } else { 0 }
         $downloads = if ($downloadsText -match '^\d+$') { [int]$downloadsText } else { 0 }
 
+        # Extract uploader from torrent name (usually in brackets at start)
+        $uploaderMatch = [regex]::Match($torrentName, '^\[([^\]]+)\]')
+        $uploader = if ($uploaderMatch.Success) { $uploaderMatch.Groups[1].Value } else { "Unknown" }
+
         $torrent = @{
             ID = $viewIdMatch.Groups[1].Value
             Name = $torrentName
+            Uploader = $uploader
             DownloadID = $downloadIdMatch.Groups[1].Value
             InfoHash = $magnetMatch.Groups[1].Value
             Size = $cellMatches[0].Groups[1].Value.Trim()
