@@ -160,6 +160,13 @@ try {
         # Calculate score
         $score = $seeders  # Base score is number of seeders
 
+        # Check for dual audio (100 point bonus) - handle "dual audio", "dual-audio", "dual_audio"
+        $isDualAudio = $torrentName -imatch 'dual[\s\-_]*audio'
+        if ($isDualAudio) {
+            $score += 100
+            Write-Log "  Found dual audio release: $uploader" "DEBUG"
+        }
+
         # Check for preferred uploader (200 point bonus)
         $isPreferredUploader = $false
         foreach ($preferred in $preferredUploaders) {
@@ -182,6 +189,7 @@ try {
             Seeders = $seeders
             Leechers = $leechers
             Downloads = $downloads
+            IsDualAudio = $isDualAudio
             IsPreferredUploader = $isPreferredUploader
             IsBatch = $isBatch
             IsIndividualEpisode = $isIndividualEpisode
