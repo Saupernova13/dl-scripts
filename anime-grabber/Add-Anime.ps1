@@ -154,6 +154,9 @@ try {
             Write-Log "  Detected individual episode" "DEBUG"
         }
 
+        # Calculate score
+        $score = $seeders  # Base score is number of seeders
+
         $torrent = @{
             ID = $viewIdMatch.Groups[1].Value
             Name = $torrentName
@@ -167,6 +170,7 @@ try {
             Downloads = $downloads
             IsBatch = $isBatch
             IsIndividualEpisode = $isIndividualEpisode
+            Score = $score
         }
 
         $allTorrents += [PSCustomObject]$torrent
@@ -174,6 +178,11 @@ try {
     }
 
     Write-Log "Parsed $count torrents successfully" "SUCCESS"
+
+    # Sort by score (highest first)
+    Write-Log "Sorting torrents by preference score..." "INFO"
+    $sortedTorrents = $allTorrents | Sort-Object -Property Score -Descending
+
     Write-Log "Process completed" "SUCCESS"
 } catch {
     Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
