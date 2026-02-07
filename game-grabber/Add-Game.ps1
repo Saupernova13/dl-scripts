@@ -62,3 +62,17 @@ try {
     Write-Log "Login failed: $($_.Exception.Message)" "ERROR"
     exit 1
 }
+
+# Search for games
+Write-Log "Searching for: $Query" "INFO"
+$searchUrl = "https://appnetica.com/api/search?q=$([System.Web.HttpUtility]::UrlEncode($Query))"
+
+try {
+    $searchResponse = Invoke-WebRequest -Uri $searchUrl -WebSession $session -UseBasicParsing
+    $searchData = $searchResponse.Content | ConvertFrom-Json
+
+    Write-Log "Found $($searchData.results.Count) results" "SUCCESS"
+} catch {
+    Write-Log "Search failed: $($_.Exception.Message)" "ERROR"
+    exit 1
+}
