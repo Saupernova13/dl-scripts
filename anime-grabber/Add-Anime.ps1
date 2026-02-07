@@ -73,3 +73,17 @@ Write-Log "Search query: $searchQuery" "INFO"
 Write-Log "Destination: $Destination" "INFO"
 Write-Log "Trusted only: $TrustedOnly" "DEBUG"
 Write-Log "URL: $url" "DEBUG"
+
+# Fetch and parse results
+try {
+    Write-Log "Fetching results from nyaa.si..." "INFO"
+    $response = Invoke-WebRequest -Uri $url -UseBasicParsing
+    $html = $response.Content
+    Write-Log "Received HTML response: $($html.Length) bytes" "DEBUG"
+
+    Write-Log "Process completed" "SUCCESS"
+} catch {
+    Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
+    Write-Log "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
+    exit 1
+}
