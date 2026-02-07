@@ -189,30 +189,48 @@ try {
     $torrentBytes = [System.IO.File]::ReadAllBytes($torrentPath)
     $fileName = [System.IO.Path]::GetFileName($torrentPath)
 
-    # Build multipart form data (basic attempt)
+    # Build multipart form data properly using MemoryStream
     $boundary = [System.Guid]::NewGuid().ToString()
-    $bodyLines = @(
-        "--$boundary",
-        "Content-Disposition: form-data; name=`"torrents`"; filename=`"$fileName`"",
-        "Content-Type: application/x-bittorrent",
-        "",
-        [System.Text.Encoding]::UTF8.GetString($torrentBytes),
-        "--$boundary",
-        "Content-Disposition: form-data; name=`"savepath`"",
-        "",
-        $destination,
-        "--$boundary--"
-    )
+    $LF = "`r`n"
 
-    $body = $bodyLines -join "`r`n"
+    $memStream = New-Object System.IO.MemoryStream
+    $writer = New-Object System.IO.StreamWriter($memStream)
+    $writer.NewLine = $LF
+
+    # Part 1: Torrent file
+    $writer.WriteLine("--$boundary")
+    $writer.WriteLine("Content-Disposition: form-data; name=`"torrents`"; filename=`"$fileName`"")
+    $writer.WriteLine("Content-Type: application/x-bittorrent")
+    $writer.WriteLine()
+    $writer.Flush()
+    $memStream.Write($torrentBytes, 0, $torrentBytes.Length)
+    $writer.WriteLine()
+
+    # Part 2: Save path
+    $writer.WriteLine("--$boundary")
+    $writer.WriteLine("Content-Disposition: form-data; name=`"savepath`"")
+    $writer.WriteLine()
+    $writer.WriteLine($destination)
+
+    # End boundary
+    $writer.WriteLine("--$boundary--")
+    $writer.Flush()
+
+    $bodyBytes = $memStream.ToArray()
+    $writer.Close()
+    $memStream.Close()
 
     $headers = @{
         "Content-Type" = "multipart/form-data; boundary=$boundary"
     }
 
     try {
-        $response = Invoke-WebRequest -Uri "$qbitHost/api/v2/torrents/add" -Method POST -Body $body -Headers $headers -UseBasicParsing
-        Write-Log "Added to qBittorrent!" "SUCCESS"
+        $response = Invoke-WebRequest -Uri "$qbitHost/api/v2/torrents/add" -Method POST -Body $bodyBytes -Headers $headers -UseBasicParsing
+
+        if ($response.StatusCode -eq 200) {
+            Write-Log "Successfully added to qBittorrent!" "SUCCESS"
+            Remove-Item $torrentPath -Force -ErrorAction SilentlyContinue
+        }
     } catch {
         Write-Log "Failed to add to qBittorrent: $($_.Exception.Message)" "ERROR"
     }
