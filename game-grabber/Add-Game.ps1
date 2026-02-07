@@ -85,10 +85,12 @@ Write-Log "Destination: $Destination" "INFO"
 $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
 
 try {
-    # Login to appnetica.com
+    # Step 1: Login to appnetica.com
     Write-Log "Logging in to appnetica.com..." "INFO"
 
     $loginUrl = "https://appnetica.com/auth?/login"
+
+    # Use form data (NOT JSON)
     $loginBody = "email=$([System.Web.HttpUtility]::UrlEncode($Email))&password=$([System.Web.HttpUtility]::UrlEncode($Password))"
 
     $loginHeaders = @{
@@ -101,12 +103,14 @@ try {
     try {
         $loginResponse = Invoke-WebRequest -Uri $loginUrl -Method POST -Body $loginBody -Headers $loginHeaders -WebSession $session -UseBasicParsing
 
+        # Check if we got the pb_auth cookie
         $authCookie = $session.Cookies.GetCookies("https://appnetica.com") | Where-Object { $_.Name -eq "pb_auth" }
 
         if ($authCookie) {
             Write-Log "Login successful - auth cookie received" "SUCCESS"
         } else {
             Write-Log "Login response received but no auth cookie found" "WARN"
+            Write-Log "Response status: $($loginResponse.StatusCode)" "DEBUG"
         }
     } catch {
         Write-Log "Login failed: $($_.Exception.Message)" "ERROR"
@@ -114,15 +118,19 @@ try {
         exit 1
     }
 
-    # Search for games using SvelteKit endpoint
+    # Step 2: Search for games using SvelteKit endpoint
     Write-Log "Searching for games..." "INFO"
     $searchUrl = "https://appnetica.com/search/__data.json?term=$([System.Web.HttpUtility]::UrlEncode($Query))&x-sveltekit-invalidated=011"
+    Write-Log "Search URL: $searchUrl" "DEBUG"
 
     try {
         $searchResponse = Invoke-WebRequest -Uri $searchUrl -WebSession $session -UseBasicParsing
-        $svelteData = $searchResponse.Content | ConvertFrom-Json
+        Write-Log "Search response received (Status: $($searchResponse.StatusCode))" "DEBUG"
 
-        # Parse SvelteKit data structure - find search results node
+        $svelteData = $searchResponse.Content | ConvertFrom-Json
+        Write-Log "JSON parsed successfully" "DEBUG"
+
+        # Parse SvelteKit data structure - find the search results node
         $searchNode = $null
         for ($i = 0; $i -lt $svelteData.nodes.Count; $i++) {
             $node = $svelteData.nodes[$i]
@@ -135,41 +143,57 @@ try {
 
         if (-not $searchNode) {
             Write-Log "Failed to find search results node" "ERROR"
+            Write-Log "Available node types: $($svelteData.nodes | ForEach-Object { $_.type } | Out-String)" "DEBUG"
             exit 1
         }
 
-        # Dereference numeric references in data array
+        # The data array contains values with numeric references
         $dataArray = $searchNode.data
+        Write-Log "Data array has $($dataArray.Count) elements" "DEBUG"
+
+        # First element should be the search results object
         $searchResults = $dataArray[0]
 
-        # Get totalItems (dereference if it's a number)
+        # Get totalItems - it's a reference (number) to another position in array
         $totalItemsRef = $searchResults.totalItems
         $totalItems = if ($totalItemsRef -is [int]) { $dataArray[$totalItemsRef] } else { $totalItemsRef }
 
         Write-Log "Found $totalItems total items" "DEBUG"
 
+        # Step 3: Parse search results
+        Write-Log "Parsing search results..." "INFO"
+
         if ($totalItems -eq 0) {
             Write-Log "No results found for: $Query" "ERROR"
+            Write-Log "Try a different search term" "WARN"
             exit 1
         }
 
-        # Get games array (dereference)
+        # Get games data - it's also a reference
         $gamesRef = $searchResults.games
         $gamesData = if ($gamesRef -is [int]) { $dataArray[$gamesRef] } else { $gamesRef }
 
+        Write-Log "Games data type: $($gamesData.GetType().Name)" "DEBUG"
+
+        # Get items array - also a reference
         $itemsRef = $gamesData.items
         $itemsArray = if ($itemsRef -is [int]) { $dataArray[$itemsRef] } else { $itemsRef }
 
-        # Extract games - filter for Steam versions only
+        Write-Log "Found $($itemsArray.Count) game items" "DEBUG"
+
+        # Extract games from items array - filter for Steam versions only
         $games = @()
         $skippedRepacks = 0
 
         foreach ($itemRef in $itemsArray) {
+            # Dereference the item
             $game = if ($itemRef -is [int]) { $dataArray[$itemRef] } else { $itemRef }
+
+            # Dereference title and slug
             $title = if ($game.title -is [int]) { $dataArray[$game.title] } else { $game.title }
             $slug = if ($game.slug -is [int]) { $dataArray[$game.slug] } else { $game.slug }
 
-            # Get publication type to filter repacks
+            # Get publication type to filter out repacks
             $publicationType = $null
             if ($game.expand -ne $null) {
                 $expandRef = if ($game.expand -is [int]) { $dataArray[$game.expand] } else { $game.expand }
@@ -183,14 +207,16 @@ try {
 
             Write-Log "Found game: $title (type: $publicationType)" "DEBUG"
 
-            # Filter: Exclude repacks (dec, fit, dodi, etc.)
+            # Filter: Only include Steam folder versions, exclude repacks
+            # Repack sources: dec, fit, dodi, etc.
+            # Steam sources: steam_folder, steam_rip, etc. (we want these)
             if ($publicationType -and $publicationType -match "^(dec|fit|dodi|elamigos|r\.g\.|repack)") {
                 Write-Log "  Skipping repack: $publicationType" "DEBUG"
                 $skippedRepacks++
                 continue
             }
 
-            # Only include Steam versions
+            # Only include if it's a Steam version or has "steam" in slug
             if ($publicationType -match "steam" -or $slug -match "steam") {
                 $games += [PSCustomObject]@{
                     Title = $title
@@ -210,11 +236,13 @@ try {
 
     } catch {
         Write-Log "Error during search: $($_.Exception.Message)" "ERROR"
+        Write-Log "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
         exit 1
     }
 
     if ($games.Count -eq 0) {
         Write-Log "No Steam folder versions found (only repacks or non-Steam versions available)" "WARN"
+        Write-Log "Try a different search term" "WARN"
         exit 1
     }
 
@@ -253,14 +281,16 @@ try {
     Write-Log "Selected: $($selectedGame.Title)" "SUCCESS"
     Write-Host ""
 
-    # Get game page to find download link
+    # Step 4: Get game page to find download link
     Write-Log "Fetching game page..." "INFO"
     $gamePage = Invoke-WebRequest -Uri $selectedGame.URL -WebSession $session -UseBasicParsing
     $gameHtml = $gamePage.Content
 
-    # Find download link pattern: /file/{fileId}?game={gameId}
+    # Look for download link in format: /file/{fileId}?game={gameId}
+    # This is typically in a href or onclick handler
     Write-Log "Searching for download link pattern..." "DEBUG"
 
+    # Try multiple patterns
     $downloadUrl = $null
 
     # Pattern 1: href="/file/...?game=..."
@@ -271,7 +301,7 @@ try {
         Write-Log "Found download link (pattern 1): $downloadUrl" "DEBUG"
     }
 
-    # Pattern 2: Look in embedded JSON data
+    # Pattern 2: Look in embedded JSON data for file/download info
     if (-not $downloadUrl) {
         $pattern2 = '["'']file["'']:\s*["'']([^"'']+)["'']'
         $match = [regex]::Match($gameHtml, $pattern2)
@@ -279,9 +309,11 @@ try {
             $fileId = $match.Groups[1].Value
             Write-Log "Found file ID in JSON: $fileId" "DEBUG"
 
+            # Extract game ID from URL
             if ($selectedGame.Slug -match '([a-zA-Z0-9]{15})$') {
                 $gameId = $matches[1]
             } else {
+                # Try to find game ID in page HTML
                 $gameIdMatch = [regex]::Match($gameHtml, '"id"\s*:\s*"([a-zA-Z0-9]{15})"')
                 if ($gameIdMatch.Success) {
                     $gameId = $gameIdMatch.Groups[1].Value
@@ -295,7 +327,7 @@ try {
         }
     }
 
-    # Pattern 3: Direct /file/ search
+    # Pattern 3: Search for "file/" anywhere in the HTML
     if (-not $downloadUrl) {
         $pattern3 = '/file/([a-zA-Z0-9]+)\?game=([a-zA-Z0-9]+)'
         $match = [regex]::Match($gameHtml, $pattern3)
@@ -307,17 +339,21 @@ try {
 
     if (-not $downloadUrl) {
         Write-Log "Could not find download link on game page" "ERROR"
+        Write-Log "Saving page HTML to temp file for inspection..." "DEBUG"
+        $debugFile = Join-Path $env:TEMP "game-page-debug.html"
+        $gameHtml | Out-File -FilePath $debugFile -Encoding UTF8
+        Write-Log "Page saved to: $debugFile" "DEBUG"
         exit 1
     }
 
-    # Make URL absolute
+    # Make URL absolute if needed
     if (-not $downloadUrl.StartsWith("http")) {
         $downloadUrl = "https://appnetica.com$downloadUrl"
     }
 
     Write-Log "Download URL: $downloadUrl" "SUCCESS"
 
-    # Download torrent file
+    # Step 5: Download torrent file
     Write-Log "Downloading torrent file..." "INFO"
     $torrentPath = Join-Path $env:TEMP "$($selectedGame.Slug).torrent"
 
@@ -330,7 +366,7 @@ try {
 
     Write-Log "Torrent file saved to: $torrentPath" "SUCCESS"
 
-    # Add torrent to qBittorrent
+    # Step 6: Add torrent to qBittorrent
     Write-Log "Adding torrent to qBittorrent..." "INFO"
 
     try {
@@ -338,10 +374,11 @@ try {
         $torrentBytes = [System.IO.File]::ReadAllBytes($torrentPath)
         $fileName = [System.IO.Path]::GetFileName($torrentPath)
 
-        # Build multipart form data properly using MemoryStream
+        # Build multipart/form-data body (PowerShell 5.1 compatible)
         $boundary = [System.Guid]::NewGuid().ToString()
         $LF = "`r`n"
 
+        # Create MemoryStream to build the body
         $memStream = New-Object System.IO.MemoryStream
         $writer = New-Object System.IO.StreamWriter($memStream)
         $writer.NewLine = $LF
@@ -365,10 +402,12 @@ try {
         $writer.WriteLine("--$boundary--")
         $writer.Flush()
 
+        # Get the complete body
         $bodyBytes = $memStream.ToArray()
         $writer.Close()
         $memStream.Close()
 
+        # Make the request
         $headers = @{
             "Content-Type" = "multipart/form-data; boundary=$boundary"
         }
@@ -385,7 +424,15 @@ try {
             # Clean up temp file
             Remove-Item $torrentPath -Force -ErrorAction SilentlyContinue
 
+            # Return info
+            $result = @{
+                Title = $selectedGame.Title
+                URL = $selectedGame.URL
+                Destination = $Destination
+            } | ConvertTo-Json
+
             Write-Log "Process completed successfully" "SUCCESS"
+            return $result
         } else {
             Write-Log "Failed to add to qBittorrent (Status: $($addResponse.StatusCode))" "ERROR"
             exit 1
@@ -405,5 +452,6 @@ try {
 
 } catch {
     Write-Log "Exception occurred: $($_.Exception.Message)" "ERROR"
+    Write-Log "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
     exit 1
 }
