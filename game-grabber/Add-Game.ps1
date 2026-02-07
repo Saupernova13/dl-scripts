@@ -109,21 +109,49 @@ try {
     $itemsRef = $gamesData.items
     $itemsArray = if ($itemsRef -is [int]) { $dataArray[$itemsRef] } else { $itemsRef }
 
-    # Extract game titles and slugs
+    # Extract games - filter for Steam versions only
     $games = @()
+    $skippedRepacks = 0
+
     foreach ($itemRef in $itemsArray) {
         $game = if ($itemRef -is [int]) { $dataArray[$itemRef] } else { $itemRef }
         $title = if ($game.title -is [int]) { $dataArray[$game.title] } else { $game.title }
         $slug = if ($game.slug -is [int]) { $dataArray[$game.slug] } else { $game.slug }
 
-        $games += [PSCustomObject]@{
-            Title = $title
-            Slug = $slug
-            URL = "https://appnetica.com/games/$slug"
+        # Get publication type to filter repacks
+        $publicationType = $null
+        if ($game.expand -ne $null) {
+            $expandRef = if ($game.expand -is [int]) { $dataArray[$game.expand] } else { $game.expand }
+            if ($expandRef.publication_type -ne $null) {
+                $pubTypeRef = if ($expandRef.publication_type -is [int]) { $dataArray[$expandRef.publication_type] } else { $expandRef.publication_type }
+                if ($pubTypeRef.source -ne $null) {
+                    $publicationType = if ($pubTypeRef.source -is [int]) { $dataArray[$pubTypeRef.source] } else { $pubTypeRef.source }
+                }
+            }
+        }
+
+        # Filter: Exclude repacks (dec, fit, dodi, etc.)
+        if ($publicationType -and $publicationType -match "^(dec|fit|dodi|elamigos|r\.g\.|repack)") {
+            $skippedRepacks++
+            continue
+        }
+
+        # Only include Steam versions
+        if ($publicationType -match "steam" -or $slug -match "steam") {
+            $games += [PSCustomObject]@{
+                Title = $title
+                Slug = $slug
+                URL = "https://appnetica.com/games/$slug"
+                PublicationType = $publicationType
+            }
+        } else {
+            continue
         }
 
         if ($games.Count -ge 10) { break }
     }
+
+    Write-Log "Found $($games.Count) Steam games (skipped $skippedRepacks repacks)" "INFO"
 
     Write-Log "Parsed $($games.Count) games" "SUCCESS"
 
