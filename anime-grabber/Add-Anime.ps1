@@ -160,6 +160,18 @@ try {
         # Calculate score
         $score = $seeders  # Base score is number of seeders
 
+        # MASSIVE bonus for batch/season releases (+1000 points)
+        if ($isBatch) {
+            $score += 1000
+            Write-Log "  Batch bonus applied: +1000" "DEBUG"
+        }
+
+        # MASSIVE penalty for individual episodes (-500 points)
+        if ($isIndividualEpisode) {
+            $score -= 500
+            Write-Log "  Individual episode penalty applied: -500" "DEBUG"
+        }
+
         # Check for dual audio (100 point bonus) - handle "dual audio", "dual-audio", "dual_audio"
         $isDualAudio = $torrentName -imatch 'dual[\s\-_]*audio'
         if ($isDualAudio) {
