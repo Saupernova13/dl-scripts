@@ -1,7 +1,8 @@
 # Add-Game.ps1
 # Search appnetica.com for games and add torrents to qBittorrent
 # Usage: .\Add-Game.ps1 -Query "Spider-Man"
-# Configuration is stored in .settings file in the same directory
+# Configuration sourced from %LOCALAPPDATA%\dlScripts\config.ps1
+# Credentials sourced from .settings file in the same directory as this script
 
 param(
     [Parameter(Mandatory=$true)]
@@ -29,7 +30,13 @@ param(
 # Load System.Web for HttpUtility
 Add-Type -AssemblyName System.Web
 
-# Load settings from .settings file
+# Load central config (provides $gameDestination, $qBitHost, $gameMaxResults, etc.)
+$configPath = Join-Path $env:LOCALAPPDATA "dlScripts\config.ps1"
+if (Test-Path $configPath) {
+    . $configPath
+}
+
+# Load .settings for credentials (and optionally override config values)
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $settingsFile = Join-Path $scriptDir ".settings"
 
@@ -40,24 +47,39 @@ if (Test-Path $settingsFile) {
         $settings[$key.Trim()] = $value.Trim()
     }
 
-    # Apply settings as defaults (command-line parameters override settings)
-    if (-not $Email) { $Email = $settings['Email'] }
-    if (-not $Password) { $Password = $settings['Password'] }
-    if (-not $Destination) { $Destination = $settings['Destination'] }
-    if (-not $QbitHost) { $QbitHost = $settings['QbitHost'] }
+    if (-not $Email -and $settings['Email'])       { $Email = $settings['Email'] }
+    if (-not $Password -and $settings['Password']) { $Password = $settings['Password'] }
+    if (-not $Destination -and $settings['Destination']) { $Destination = $settings['Destination'] }
+    if (-not $QbitHost -and $settings['QbitHost']) { $QbitHost = $settings['QbitHost'] }
     if ($MaxResults -eq 0 -and $settings['MaxResults']) { $MaxResults = [int]$settings['MaxResults'] }
 }
 
-# Validate required settings
+# Validate required credentials
 if (-not $Email -or -not $Password) {
-    Write-Host "ERROR: Email and Password must be provided either via command line or in .settings file" -ForegroundColor Red
+    Write-Host "ERROR: Email and Password must be provided via .settings file or command-line parameters." -ForegroundColor Red
+    Write-Host "       Copy .settings.example to .settings and fill in your credentials." -ForegroundColor Yellow
     exit 1
 }
 
-# Set defaults if not provided
-if (-not $Destination) { $Destination = "D:\Games" }
-if (-not $QbitHost) { $QbitHost = "http://localhost:8075" }
+# Apply config defaults for non-credential settings (if not already set)
+if (-not $Destination -and (Get-Variable -Name 'gameDestination' -ErrorAction SilentlyContinue)) { $Destination = $gameDestination }
+if (-not $QbitHost -and (Get-Variable -Name 'qBitHost' -ErrorAction SilentlyContinue)) { $QbitHost = $qBitHost }
+if ($MaxResults -eq 0 -and (Get-Variable -Name 'gameMaxResults' -ErrorAction SilentlyContinue)) { $MaxResults = $gameMaxResults }
+
+# Final fallback defaults
+if (-not $Destination) { $Destination = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Games" }
+if (-not $QbitHost) { $QbitHost = "http://localhost:8080" }
 if ($MaxResults -eq 0) { $MaxResults = 10 }
+
+# Ensure destination directory exists
+if (-not (Test-Path $Destination)) {
+    try {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    } catch {
+        Write-Error "Cannot create destination directory: $Destination"
+        exit 1
+    }
+}
 
 # Logging helper function
 function Write-Log {
