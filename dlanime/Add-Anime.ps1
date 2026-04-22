@@ -1,4 +1,4 @@
-﻿# dlanime.ps1
+# dlanime.ps1
 # Search nyaa.si and add anime torrents to qBittorrent
 # Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
 
@@ -176,7 +176,10 @@ function Invoke-NyaaSearch {
 
         $isBatch             = $false
         $isIndividualEpisode = $false
-        if ($torrentName -imatch '(Season\s+\d+|Season\s+0\d+|S\d{2}|S0\d+|\d+-\d+|Batch|Complete|Series|全集|整季)') {
+        if ($torrentName -imatch '(?i)S\d{1,2}E\d{1,2}|S\d{1,2}E\d{2}') {
+            $isIndividualEpisode = $true
+            Write-Log "  Detected individual episode (SXEY format)" "DEBUG"
+        } elseif ($torrentName -imatch '(Season\s+\d+|Season\s+0\d+|\d+-\d+|Batch|Complete|Series|全集|整季)') {
             $isBatch = $true
             Write-Log "  Detected batch/season release" "DEBUG"
         } elseif ($torrentName -imatch '\s-\s\d+\s|\sEP?\d+\s|第\d+話|\s\d+\s\(') {
@@ -186,7 +189,7 @@ function Invoke-NyaaSearch {
 
         $score = $seeders
         if ($isBatch)             { $score += 1000; Write-Log "  Batch bonus applied: +1000" "DEBUG" }
-        if ($isIndividualEpisode) { $score -= 500;  Write-Log "  Individual episode penalty applied: -500" "DEBUG" }
+        if ($isIndividualEpisode) { $score -= 1000;  Write-Log "  Individual episode penalty applied: -1000" "DEBUG" }
 
         $isDualAudio = $torrentName -imatch 'dual[\s\-_]*audio'
         if ($isDualAudio) { $score += 100; Write-Log "  Found dual audio release: $uploader" "DEBUG" }
