@@ -1,71 +1,61 @@
 # dltv
 
-A PowerShell script that searches The Pirate Bay for TV shows and automatically adds the best available torrent to qBittorrent.
+Searches [The Pirate Bay](https://thepiratebay.org) for TV show torrents and automatically adds the best match to qBittorrent.
 
-## Features
+## Command
 
-- Searches The Pirate Bay API (apibay.org) in the TV category
-- Smart scoring system prefers complete series > season packs > individual episodes
-- Quality detection: 4K, 1080p, 720p with source bonuses (BluRay, WEB-DL, etc.)
-- Safety filters reject non-TV content (games, software, books, executables, archives)
-- Interactive mode for manual selection
-- Configuration sourced from a central config file â€” no hardcoded paths
+```
+dltv "Show Name" [destination]
+```
 
-## Prerequisites
+Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
 
-- PowerShell 5.1 or higher
-- [qBittorrent](https://www.qbittorrent.org/) with Web UI enabled
-- `curl.exe` (included with Windows 10 1803+)
-- Central config file set up (see [Configuration](#configuration))
+## Usage Examples
+
+```
+dltv "Breaking Bad"
+dltv "The Office" "E:\TV Shows"
+```
+
+The second positional argument is an optional destination override. Omit it to use the path from config.
+
+## PowerShell Parameters
+
+The CMD wrapper passes these through. You can also call the script directly for full control:
+
+```powershell
+.\dltv\Add-TV.ps1 -Query "Breaking Bad" [-Destination "path"] [-QbitHost "url"] [-MaxResults N] [-Interactive]
+```
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `-Query` | Yes | — | Show name to search |
+| `-Destination` | No | from config | Download save path |
+| `-QbitHost` | No | from config | qBittorrent WebUI URL |
+| `-MaxResults` | No | from config | Max results to display |
+| `-Interactive` | No | `$false` | Manually pick from the scored results list |
 
 ## Configuration
 
-This script reads settings from `%LOCALAPPDATA%\dlScripts\config.ps1`.
-
-Create the file with the following content (adjust paths to match your setup):
+All settings are read from `%LOCALAPPDATA%\dlScripts\config.ps1`. Create the file if it does not exist:
 
 ```powershell
 # %LOCALAPPDATA%\dlScripts\config.ps1
 
-# qBittorrent WebUI address
-$qBitHost = "http://localhost:8080"
-
-# TV download destination
+$qBitHost      = "http://localhost:8080"
 $tvDestination = "D:\TV"
-$tvMaxResults = 50
+$tvMaxResults  = 50
 ```
 
-> All settings can be overridden at runtime with command-line parameters.
+All config values can be overridden at runtime with the corresponding parameter.
 
-## Usage
+## How It Works
 
-### Basic
-
-```powershell
-.\dltv.ps1 -Query "Breaking Bad"
-```
-
-### Custom destination
-
-```powershell
-.\dltv.ps1 -Query "The Office" -Destination "E:\TV Shows"
-```
-
-### Interactive mode (manual selection)
-
-```powershell
-.\dltv.ps1 -Query "Breaking Bad" -Interactive
-```
-
-## Parameters
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `-Query` | Yes | â€” | Show name to search |
-| `-Destination` | No | from config | Download save path |
-| `-QbitHost` | No | from config | qBittorrent WebUI URL |
-| `-MaxResults` | No | from config | Max results to display |
-| `-Interactive` | No | `$false` | Manually pick from results |
+1. Queries The Pirate Bay API (apibay.org) in the TV category for the show name
+2. Passes every result through safety filters (see below) — rejects anything that is not TV content
+3. Scores and sorts all remaining results
+4. Auto-selects the highest-scored torrent, or prompts you in `-Interactive` mode
+5. Sends the magnet link to qBittorrent with the configured save path
 
 ## Scoring System
 
@@ -76,33 +66,26 @@ Torrents are ranked automatically to find the best match:
 | Complete series (all seasons) | +2000 |
 | Complete season pack | +1800 |
 | Season pack (no episode number) | +1500 |
-| Single episode | âˆ’800 |
+| Single episode | -800 |
 | 4K / 2160p | +300 |
 | 1080p | +200 |
 | 720p | +100 |
 | BluRay source | +150 |
 | WEB-DL source | +120 |
 | WEBRip / streaming source | +80 |
-| Base: seeder count | â€” |
+| Base: seeder count | — |
+
+Complete series and season packs are strongly preferred. Quality and source bonuses stack on top of the seeder count.
 
 ## Safety Filters
 
-The script hard-rejects any torrent whose name matches:
+Any torrent whose name matches one of the following patterns is hard-rejected before scoring:
 
-- Executable / script file extensions (`.exe`, `.bat`, `.ps1`, etc.)
-- Archive extensions (`.rar`, `.zip`, `.7z`, etc.)
-- Game-related keywords (CODEX, FitGirl, GOG, Steam, etc.)
-- Software-related keywords (Keygen, Activator, Installer, etc.)
-- Book / ebook keywords (epub, audiobook, Manga, etc.)
-
-## How It Works
-
-1. Queries The Pirate Bay API for the show name in the TV category
-2. Filters out non-TV content via safety rules
-3. Scores and sorts all results
-4. Displays the top results
-5. Auto-selects the top-scored result (or prompts in interactive mode)
-6. Sends the magnet link to qBittorrent with the configured save path
+- Executable or script extensions: `.exe`, `.bat`, `.ps1`, `.cmd`, `.vbs`, `.js`, `.jar`, `.py`, `.sh`, `.dll`, `.scr`, `.pif`, `.hta`, `.wsf`, `.com`
+- Archive extensions: `.rar`, `.zip`, `.7z`, `.tar`, `.gz`, `.bz2`, `.xz`, `.zst`, `.cab`
+- Game-related keywords: CODEX, FitGirl, GOG, Steam, Xbox, PlayStation, SKIDROW, RELOADED, RG Mechanics, etc.
+- Software-related keywords: Keygen, Activator, Cracked, Installer, Portable, Serial Key, License Key, Full Version, etc.
+- Book / ebook keywords: epub, audiobook, Manga, PDF, mobi, azw3, comic, etc.
 
 ## Example Output
 
@@ -120,3 +103,9 @@ The script hard-rejects any torrent whose name matches:
 [2026-04-22 18:00:01] [INFO] Auto-selecting top-scored torrent
 [2026-04-22 18:00:02] [SUCCESS] Successfully added to qBittorrent!
 ```
+
+## Notes
+
+- Requires `curl.exe`, which is bundled with Windows 10 1803 and later
+- qBittorrent Web UI must be enabled and reachable at the configured host
+- Safety filters are aggressive by design — use `-Interactive` if a legitimate result gets rejected

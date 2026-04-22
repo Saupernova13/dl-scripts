@@ -1,89 +1,69 @@
 # dlmovie
 
-A PowerShell script that searches the YTS API for movies and automatically adds the best available torrent to qBittorrent.
+Searches the [YTS](https://yts.bz) API for movies and automatically adds the best available torrent to qBittorrent.
 
-## Features
+## Command
 
-- Searches YTS (yts.bz) API by movie name
-- Automatically selects the best quality torrent (priority: 1080p BluRay â†’ 1080p Web â†’ best available)
-- Direct qBittorrent WebUI integration via magnet link
-- Interactive mode for manual selection
-- Configuration sourced from a central config file â€” no hardcoded paths
+```
+dlmovie "Movie Name" [destination]
+```
 
-## Prerequisites
+Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
 
-- PowerShell 5.1 or higher
-- [qBittorrent](https://www.qbittorrent.org/) with Web UI enabled
-- Central config file set up (see [Configuration](#configuration))
+## Usage Examples
+
+```
+dlmovie "Inception"
+dlmovie "Inception" "E:\Movies"
+```
+
+The second positional argument is an optional destination override. Omit it to use the path from config.
+
+## PowerShell Parameters
+
+The CMD wrapper passes these through. You can also call the script directly for full control:
+
+```powershell
+.\dlmovie\Add-Movie.ps1 -Query "Inception" [-Destination "path"] [-QbitHost "url"] [-MaxResults N] [-Interactive]
+```
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `-Query` | Yes | — | Movie name to search |
+| `-Destination` | No | from config | Download save path |
+| `-QbitHost` | No | from config | qBittorrent WebUI URL |
+| `-MaxResults` | No | from config | Max results to consider |
+| `-Interactive` | No | `$false` | Manually pick from the results list |
 
 ## Configuration
 
-This script reads settings from `%LOCALAPPDATA%\dlScripts\config.ps1`.
-
-Create the file with the following content (adjust paths to match your setup):
+All settings are read from `%LOCALAPPDATA%\dlScripts\config.ps1`. Create the file if it does not exist:
 
 ```powershell
 # %LOCALAPPDATA%\dlScripts\config.ps1
 
-# qBittorrent WebUI address
-$qBitHost = "http://localhost:8080"
-
-# Movie download destination
+$qBitHost         = "http://localhost:8080"
 $movieDestination = "D:\Movies"
-$movieMaxResults = 15
+$movieMaxResults  = 15
 ```
 
-> All settings can be overridden at runtime with command-line parameters.
-
-## Usage
-
-### Basic
-
-```powershell
-.\dlmovie.ps1 -Query "Inception"
-```
-
-### Custom destination
-
-```powershell
-.\dlmovie.ps1 -Query "Inception" -Destination "E:\Movies"
-```
-
-### Interactive mode (manual selection)
-
-```powershell
-.\dlmovie.ps1 -Query "Inception" -Interactive
-```
-
-### Custom qBittorrent host
-
-```powershell
-.\dlmovie.ps1 -Query "Inception" -QbitHost "http://192.168.1.10:8080"
-```
-
-## Parameters
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `-Query` | Yes | â€” | Movie name to search |
-| `-Destination` | No | from config | Download save path |
-| `-QbitHost` | No | from config | qBittorrent WebUI URL |
-| `-MaxResults` | No | from config | Max results to consider |
-| `-Interactive` | No | `$false` | Manually pick from results |
-
-## Quality Priority
-
-1. **1080p BluRay** â€” highest quality
-2. **1080p Web** â€” streaming source
-3. **Best available** â€” fallback to highest-seeded torrent
+All config values can be overridden at runtime with the corresponding parameter.
 
 ## How It Works
 
-1. Queries the YTS API for the movie name
-2. For each result, picks the best available torrent by quality priority
-3. Displays results (sorted by seeder count)
-4. Auto-selects the top result (or prompts in interactive mode)
+1. Queries the YTS API with the movie name, sorted by seeds
+2. For each result, picks the best available torrent by quality priority (see below)
+3. Displays results sorted by seeder count
+4. Auto-selects the top result, or prompts you in `-Interactive` mode
 5. Sends the magnet link to qBittorrent with the configured save path
+
+## Quality Priority
+
+Torrents are selected in this order of preference:
+
+1. **1080p BluRay** — highest quality
+2. **1080p Web** — streaming source
+3. **Best available** — fallback to the highest-seeded torrent of any quality
 
 ## Example Output
 
@@ -100,3 +80,8 @@ $movieMaxResults = 15
 [2026-04-22 18:00:01] [SUCCESS] Selected: Inception (2010)
 [2026-04-22 18:00:02] [SUCCESS] Successfully added to qBittorrent!
 ```
+
+## Notes
+
+- Results are sourced from the YTS public API — only movies indexed by YTS are findable
+- qBittorrent Web UI must be enabled and reachable at the configured host

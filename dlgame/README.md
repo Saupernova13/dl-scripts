@@ -1,99 +1,81 @@
 # dlgame
 
-A PowerShell script that searches [appnetica.com](https://appnetica.com) for PC games and automatically downloads them via qBittorrent.
+Authenticates with [appnetica.com](https://appnetica.com), searches for a PC game, and adds its torrent to qBittorrent.
 
-## Features
+## Command
 
-- Authenticates with appnetica.com and searches by game name
-- Filters for Steam versions — excludes repacks and undesired entries
-- Auto-selects the first result, or lets you choose in interactive mode
-- Downloads the `.torrent` file and adds it to qBittorrent
-- Configuration split between a central config file (paths, qBittorrent) and a local `.settings` file (credentials)
+```
+dlgame "Game Name" [destination]
+```
 
-## Prerequisites
+Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
 
-- PowerShell 5.1 or higher
-- [qBittorrent](https://www.qbittorrent.org/) with Web UI enabled
-- An [appnetica.com](https://appnetica.com) account
-- Central config file set up (see [Configuration](#configuration))
+## Usage Examples
+
+```
+dlgame "Spider-Man"
+dlgame "Resident Evil" "E:\Games"
+dlgame "Elden Ring" --interactive
+```
+
+The second positional argument is an optional destination override. Omit it to use the path from config.
+
+## PowerShell Parameters
+
+The CMD wrapper passes these through. You can also call the script directly for full control:
+
+```powershell
+.\dlgame\Add-Game.ps1 -Query "Spider-Man" [-Email "you@example.com"] [-Password "pass"] [-Destination "path"] [-QbitHost "url"] [-MaxResults N] [-Interactive]
+```
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `-Query` | Yes | � | Game name to search |
+| `-Email` | No* | from `.settings` | appnetica.com login email |
+| `-Password` | No* | from `.settings` | appnetica.com login password |
+| `-Destination` | No | from config | Download save path |
+| `-QbitHost` | No | from config | qBittorrent WebUI URL |
+| `-MaxResults` | No | from config | Max number of results to display |
+| `-Interactive` | No | `$false` | Manually pick from the results list |
+
+\* Either `.settings` or command-line parameters must supply credentials.
 
 ## Configuration
 
-### Central config (paths & qBittorrent)
+Settings are split between two files.
 
-Settings are read from `%LOCALAPPDATA%\dlScripts\config.ps1`:
+### Shared config (paths & qBittorrent)
+
+`%LOCALAPPDATA%\dlScripts\config.ps1`:
 
 ```powershell
 # %LOCALAPPDATA%\dlScripts\config.ps1
 
-# qBittorrent WebUI address
-$qBitHost = "http://localhost:8080"
-
-# Game download destination
+$qBitHost        = "http://localhost:8080"
 $gameDestination = "D:\Games"
-$gameMaxResults = 10
+$gameMaxResults  = 10
 ```
 
 ### Credentials (`.settings`)
 
-Copy `.settings.example` to `.settings` in the same directory as the script and fill in your details:
+Copy `.settings.example` to `.settings` in the `dlgame/` folder and fill in your details:
 
 ```ini
 Email=your@email.com
 Password=yourpassword
 ```
 
-> `.settings` is gitignored and will never be committed.
-
-## Usage
-
-### Basic
-
-```powershell
-.\dlgame.ps1 -Query "Spider-Man"
-```
-
-### Custom destination
-
-```powershell
-.\dlgame.ps1 -Query "Spider-Man" -Destination "E:\Games"
-```
-
-### Interactive mode (manual selection)
-
-```powershell
-.\dlgame.ps1 -Query "Resident Evil" -Interactive
-```
-
-### Pass credentials at runtime (no `.settings` file needed)
-
-```powershell
-.\dlgame.ps1 -Query "Witcher 3" -Email "you@example.com" -Password "yourpass"
-```
-
-## Parameters
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `-Query` | Yes | — | Game name to search |
-| `-Email` | No* | from `.settings` | appnetica.com login email |
-| `-Password` | No* | from `.settings` | appnetica.com login password |
-| `-Destination` | No | from config | Download save path |
-| `-QbitHost` | No | from config | qBittorrent WebUI URL |
-| `-MaxResults` | No | from config | Max number of results to show |
-| `-Interactive` | No | `$false` | Manually pick from results |
-
-*Either `.settings` or runtime parameters must supply credentials.
+`.settings` is gitignored and will never be committed. Values in `.settings` override config values where both are present. Command-line parameters override both.
 
 ## How It Works
 
-1. **Login** — Authenticates with appnetica.com using your credentials
-2. **Search** — Queries the SvelteKit search endpoint for the game
-3. **Filter** — Focuses on "Папка игры" (game folder) entries, excludes repacks
-4. **Select** — Auto-selects the first result, or shows a list in interactive mode
-5. **Download** — Downloads the `.torrent` file from the game's page
-6. **Add to qBittorrent** — Sends the torrent to qBittorrent with the configured save path
-7. **Cleanup** — Removes the temporary `.torrent` file
+1. **Login** � Authenticates with appnetica.com using your credentials
+2. **Search** � Queries the SvelteKit search endpoint for the game name
+3. **Filter** � Focuses on "????? ????" (Steam game folder) entries; excludes repacks and undesired entries
+4. **Select** � Auto-selects the first result, or shows a numbered list in `-Interactive` mode
+5. **Download** � Fetches the `.torrent` file from the game's detail page
+6. **Add to qBittorrent** � Sends the torrent to qBittorrent with the configured save path
+7. **Cleanup** � Removes the temporary `.torrent` file
 
 ## Example Output
 
@@ -111,42 +93,9 @@ Password=yourpassword
 [2026-04-22 18:00:02] [INFO] Auto-selecting first game
 [2026-04-22 18:00:05] [SUCCESS] Successfully added to qBittorrent!
 ```
-.\dlgame.ps1 -Query "Dark Souls" -Interactive
-```
-
-### Override Settings
-
-```powershell
-.\dlgame.ps1 -Query "Elden Ring" -Destination "E:\Games"
-```
-
-## Parameters
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `-Query` | Yes | - | Game name to search for |
-| `-Email` | No | From `.settings` | Appnetica login email |
-| `-Password` | No | From `.settings` | Appnetica password |
-| `-Destination` | No | `D:\Games` | Download folder |
-| `-QbitHost` | No | `http://localhost:8075` | qBittorrent WebUI URL |
-| `-MaxResults` | No | `10` | Max search results |
-| `-Interactive` | No | `false` | Choose from results manually |
-
-## How It Works
-
-1. Logs into appnetica.com
-2. Searches for games using the query
-3. Parses SvelteKit API response
-4. Filters for Steam versions (excludes repacks)
-5. Downloads the selected game's torrent file
-6. Uploads to qBittorrent automatically
 
 ## Notes
 
-- Only Steam folder versions are downloaded (no repacks like Decepticon, FitGirl, etc.)
-- Requires qBittorrent WebUI to be enabled and accessible
-- Credentials are stored in `.settings` file (not tracked by git)
-
-## License
-
-MIT
+- Only Steam folder versions are downloaded � repacks (FitGirl, Decepticon, etc.) are excluded
+- Credentials are never logged or stored outside `.settings`
+- qBittorrent Web UI must be enabled and reachable at the configured host
