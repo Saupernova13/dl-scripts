@@ -1,0 +1,19 @@
+# PowerShell artifacts
+*.ps1xml
+$PROFILE
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
