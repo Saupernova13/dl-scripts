@@ -1,35 +1,71 @@
 # Add-Anime.ps1
-# Wrapper to search nyaa.si and add torrents to qBittorrent
-# Usage: .\Add-Anime.ps1 -Query "Frieren" -Destination "D:\TV"
-# Default destination: D:\TV (4TB drive)
+# Search nyaa.si and add anime torrents to qBittorrent
+# Configuration sourced from %APPDATA%/Local/dlScripts/config.ps1
 
 param(
     [Parameter(Mandatory=$true)]
     [string]$Query,
 
     [Parameter(Mandatory=$false)]
-    [string]$Destination = "D:\TV",  # 4TB drive - default location
+    [ValidateSet("yes", "no")]
+    [string]$isAnimeSeries = "yes",
+
+    [Parameter(Mandatory=$false)]
+    [string]$Destination = "",
 
     [Parameter(Mandatory=$false)]
     [switch]$TrustedOnly = $false,
 
     [Parameter(Mandatory=$false)]
-    [string]$QbitHost = "http://localhost:8075",
+    [string]$QbitHost = "",
 
     [Parameter(Mandatory=$false)]
-    [int]$MaxResults = 75,
+    [int]$MaxResults = 0,
 
     [Parameter(Mandatory=$false)]
     [switch]$Interactive = $false,
 
     [Parameter(Mandatory=$false)]
-    [string]$Filter = ""
+    [string]$Filter = "",
+
+    [Parameter(Mandatory=$false)]
+    [switch]$ListOnly = $false
 )
 
-# Load System.Web for HttpUtility
+# Load configuration
+$configPath = Join-Path $env:APPDATA "Local\dlScripts\config.ps1"
+if (Test-Path $configPath) {
+    . $configPath
+} else {
+    Write-Error "Configuration file not found: $configPath`nPlease ensure dlScripts config is set up."
+    exit 1
+}
+
+# Apply config defaults if not specified as parameters
+if (-not $QbitHost) { $QbitHost = $qBitHost }
+if ($MaxResults -eq 0) { $MaxResults = $animeMaxResults }
+
+# Resolve destination based on isAnimeSeries if not explicitly provided
+if (-not $Destination) {
+    if ($isAnimeSeries -eq "no") {
+        $Destination = $animeMoviesDestination
+    } else {
+        $Destination = $animeSeriesDestination
+    }
+}
+
+# Ensure destination directory exists
+if (-not (Test-Path $Destination)) {
+    try {
+        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    } catch {
+        Write-Error "Cannot create destination directory: $Destination"
+        exit 1
+    }
+}
+
 Add-Type -AssemblyName System.Web
 
-# Logging helper function
 function Write-Log {
     param(
         [string]$Message,
@@ -47,27 +83,20 @@ function Write-Log {
     Write-Host "[$timestamp] [$Level] $Message" -ForegroundColor $color
 }
 
-# Preferred uploaders (case-insensitive)
-$preferredUploaders = @('judas', 'cerebrus', 'cleo', 'animetime')
+# Use config preferred uploaders
+$preferredUploaders = $animePreferredUploaders
 
-# Build search URL
 $searchQuery = $Query
 
-# Automatically append "dual audio" to prioritize dual audio releases
-# Skip if user already included it or specified a custom filter
-if (-not $Filter -and $searchQuery -inotmatch 'dual[\s\-_]*audio') {
+if ($animeAutoAppendDualAudio -and -not $Filter -and $searchQuery -inotmatch 'dual[\s\-_]*audio') {
     $searchQuery = "$Query dual audio"
     Write-Log "Automatically appending 'dual audio' to search query" "DEBUG"
-}
-elseif ($Filter) {
+} elseif ($Filter) {
     $searchQuery = "$Query $Filter"
 }
 
 $encodedQuery = [System.Web.HttpUtility]::UrlEncode($searchQuery)
 $amp = [char]38
-# Match browser URL format exactly: ?f=0&c=0_0&q=...
-# f=0: No filter (show all, not just trusted)
-# c=0_0: All categories (broadest search)
 $filterParam = if ($TrustedOnly) { "f=2" } else { "f=0" }
 $url = "https://nyaa.si/?$filterParam" + "$amp" + "c=0_0" + "$amp" + "q=$encodedQuery"
 
@@ -77,21 +106,16 @@ Write-Log "Destination: $Destination" "INFO"
 Write-Log "Trusted only: $TrustedOnly" "DEBUG"
 Write-Log "URL: $url" "DEBUG"
 
-# Fetch and parse results
 try {
     Write-Log "Fetching results from nyaa.si..." "INFO"
     $response = Invoke-WebRequest -Uri $url -UseBasicParsing
     $html = $response.Content
     Write-Log "Received HTML response: $($html.Length) bytes" "DEBUG"
-    
-    # Parse torrent entries - split by rows first to avoid regex performance issues
-    $torrents = @()
 
-    # HTML entity patterns
+    $torrents = @()
     $htmlQuot = '&' + 'quot;'
     $htmlAmp = '&' + 'amp;'
 
-    # Split HTML into table rows - be flexible with class names and whitespace
     Write-Log "Parsing HTML table rows..." "INFO"
     $rowPattern = '<tr\s+class="(?:success|default|danger)"[^>]*>(.*?)</tr>'
     $rowMatches = [regex]::Matches($html, $rowPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
@@ -107,16 +131,13 @@ try {
     $count = 0
     $allTorrents = @()
     foreach ($rowMatch in $rowMatches) {
-
         $rowHtml = $rowMatch.Groups[1].Value
 
-        # Extract fields from this row with simple patterns
         $viewIdMatch = [regex]::Match($rowHtml, 'href="/view/(\d+)"')
         $titleMatch = [regex]::Match($rowHtml, 'href="/view/\d+" title="([^"]*)"')
         $downloadIdMatch = [regex]::Match($rowHtml, 'href="/download/(\d+)\.torrent"')
         $magnetMatch = [regex]::Match($rowHtml, 'magnet:\?xt=urn:btih:([a-f0-9]+)')
 
-        # Extract table cells - get all text-center cells
         $cellMatches = [regex]::Matches($rowHtml, '<td class="text-center"[^>]*>\s*([^<]+?)\s*</td>')
 
         if (-not $viewIdMatch.Success -or -not $titleMatch.Success -or $cellMatches.Count -lt 5) {
@@ -124,12 +145,10 @@ try {
             continue
         }
 
-        # Clean up the name
         $torrentName = $titleMatch.Groups[1].Value
         $torrentName = $torrentName.Replace($htmlQuot, '"')
         $torrentName = $torrentName.Replace($htmlAmp, '&')
 
-        # Extract numeric values safely
         $seedersText = $cellMatches[2].Groups[1].Value.Trim()
         $leechersText = $cellMatches[3].Groups[1].Value.Trim()
         $downloadsText = $cellMatches[4].Groups[1].Value.Trim()
@@ -138,48 +157,38 @@ try {
         $leechers = if ($leechersText -match '^\d+$') { [int]$leechersText } else { 0 }
         $downloads = if ($downloadsText -match '^\d+$') { [int]$downloadsText } else { 0 }
 
-        # Extract uploader from torrent name (usually in brackets at start)
         $uploaderMatch = [regex]::Match($torrentName, '^\[([^\]]+)\]')
         $uploader = if ($uploaderMatch.Success) { $uploaderMatch.Groups[1].Value } else { "Unknown" }
 
-        # Detect batch/season vs individual episode
         $isBatch = $false
         $isIndividualEpisode = $false
 
-        # Batch indicators (season packs, complete series, episode ranges)
         if ($torrentName -imatch '(Season\s+\d+|Season\s+0\d+|S\d{2}|S0\d+|\d+-\d+|Batch|Complete|Series|全集|整季)') {
             $isBatch = $true
             Write-Log "  Detected batch/season release" "DEBUG"
-        }
-        # Individual episode indicators (single episode number patterns)
-        elseif ($torrentName -imatch '\s-\s\d+\s|\sEP?\d+\s|第\d+話|\s\d+\s\(') {
+        } elseif ($torrentName -imatch '\s-\s\d+\s|\sEP?\d+\s|第\d+話|\s\d+\s\(') {
             $isIndividualEpisode = $true
             Write-Log "  Detected individual episode" "DEBUG"
         }
 
-        # Calculate score
-        $score = $seeders  # Base score is number of seeders
+        $score = $seeders
 
-        # MASSIVE bonus for batch/season releases (+1000 points)
         if ($isBatch) {
             $score += 1000
             Write-Log "  Batch bonus applied: +1000" "DEBUG"
         }
 
-        # MASSIVE penalty for individual episodes (-500 points)
         if ($isIndividualEpisode) {
             $score -= 500
             Write-Log "  Individual episode penalty applied: -500" "DEBUG"
         }
 
-        # Check for dual audio (100 point bonus) - handle "dual audio", "dual-audio", "dual_audio"
         $isDualAudio = $torrentName -imatch 'dual[\s\-_]*audio'
         if ($isDualAudio) {
             $score += 100
             Write-Log "  Found dual audio release: $uploader" "DEBUG"
         }
 
-        # Check for preferred uploader (200 point bonus)
         $isPreferredUploader = $false
         foreach ($preferred in $preferredUploaders) {
             if ($uploader -imatch $preferred) {
@@ -208,7 +217,6 @@ try {
             Score = $score
         }
 
-        # Build magnet link using string concatenation
         $magnetBase = "magnet:?xt=urn:btih:" + $torrent.InfoHash
         $magnetDn = "$amp" + "dn=" + [System.Web.HttpUtility]::UrlEncode($torrent.Name)
         $torrent.MagnetLink = $magnetBase + $magnetDn
@@ -219,11 +227,11 @@ try {
 
     Write-Log "Parsed $count torrents successfully" "SUCCESS"
 
-    # Sort by score (highest first)
+    if ($ListOnly) { $MaxResults = 100 }
+
     Write-Log "Sorting torrents by preference score..." "INFO"
     $sortedTorrents = $allTorrents | Sort-Object -Property Score -Descending
 
-    # Debug: Show top 20 scored torrents
     Write-Log "Top 20 torrents by score:" "DEBUG"
     $topDebug = $sortedTorrents | Select-Object -First 20
     foreach ($td in $topDebug) {
@@ -235,11 +243,9 @@ try {
         Write-Log "  Score $($td.Score): [$($td.Uploader)]$tagStr $($td.Name.Substring(0, [Math]::Min(60, $td.Name.Length)))..." "DEBUG"
     }
 
-    # Take top MaxResults
     $torrents = $sortedTorrents | Select-Object -First $MaxResults
     Write-Log "Selected top $($torrents.Count) torrents for display" "DEBUG"
-    
-    # Display results
+
     Write-Log "Displaying top $($torrents.Count) results..." "INFO"
     Write-Host ""
 
@@ -248,7 +254,6 @@ try {
         Write-Host "[$($i+1)] " -NoNewline -ForegroundColor Yellow
         Write-Host "$($t.Name)" -ForegroundColor White
 
-        # Show uploader and tags
         $tags = @()
         if ($t.IsBatch) { $tags += "BATCH/SEASON" }
         if ($t.IsIndividualEpisode) { $tags += "SINGLE EPISODE" }
@@ -260,8 +265,21 @@ try {
         Write-Host "    Size: $($t.Size) | Seeds: $($t.Seeders) | Leech: $($t.Leechers) | DL: $($t.Downloads) | Score: $($t.Score)" -ForegroundColor Gray
         Write-Host ""
     }
-    
-    # Select torrent
+
+    if ($ListOnly) {
+        Write-Host ""
+        Write-Host "--- MAGNET LINKS (top $($torrents.Count)) ---" -ForegroundColor Magenta
+        for ($i = 0; $i -lt $torrents.Count; $i++) {
+            $t = $torrents[$i]
+            Write-Host "[$($i+1)] $($t.Name)" -ForegroundColor Yellow
+            Write-Host "    Size: $($t.Size) | Seeds: $($t.Seeders) | Leech: $($t.Leechers) | Score: $($t.Score)" -ForegroundColor Gray
+            Write-Host "    $($t.MagnetLink)" -ForegroundColor DarkCyan
+            Write-Host ""
+        }
+        Write-Log "List-only mode: $($torrents.Count) results shown. Nothing added to qBittorrent." "SUCCESS"
+        exit 0
+    }
+
     $selectedIndex = 0
     if ($Interactive -and $torrents.Count -gt 1) {
         Write-Log "Interactive mode: waiting for user selection..." "INFO"
@@ -290,9 +308,8 @@ try {
     Write-Log "  Preferred Uploader: $($selectedTorrent.IsPreferredUploader)" "DEBUG"
     Write-Host ""
 
-    # Add to qBittorrent
     Write-Log "Adding torrent to qBittorrent at $QbitHost..." "INFO"
-    
+
     $body = @{
         urls = $selectedTorrent.MagnetLink
         savepath = $Destination
@@ -310,7 +327,6 @@ try {
         Write-Log "  Uploader: $($selectedTorrent.Uploader)" "INFO"
         Write-Host ""
 
-        # Return JSON for programmatic use
         $result = $selectedTorrent | ConvertTo-Json
         Write-Log "Process completed successfully" "SUCCESS"
         return $result

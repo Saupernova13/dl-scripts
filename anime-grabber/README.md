@@ -1,101 +1,148 @@
 # anime-grabber
 
-PowerShell script to automatically search nyaa.si for anime torrents and add them to qBittorrent with intelligent scoring.
+A PowerShell script that searches nyaa.si for anime torrents and automatically adds the best match to qBittorrent with intelligent scoring.
 
 ## Features
 
-- **Smart Search**: Automatically searches nyaa.si with customizable filters
-- **Dual Audio Priority**: Automatically appends "dual audio" to searches to prioritize dual audio releases
-- **Intelligent Scoring System**: Ranks torrents based on multiple criteria:
-  - **Base Score**: Number of seeders
-  - **Batch Bonus**: +1000 points for season packs and batch releases
-  - **Episode Penalty**: -500 points for individual episodes
-  - **Preferred Uploader Bonus**: +200 points for trusted uploaders
-  - **Dual Audio Bonus**: +100 points for dual audio releases
-- **Preferred Uploaders**: Prioritizes releases from judas, cerebrus, cleo, and animetime
-- **Interactive Mode**: Optional manual selection of torrents
-- **qBittorrent Integration**: Automatically adds selected torrents to qBittorrent
+- Searches [nyaa.si](https://nyaa.si) for anime series and movies
+- **Dual Audio Priority**: Automatically appends "dual audio" to searches to find dual audio releases
+- **Intelligent Scoring System**: Ranks torrents based on seeders, release type, uploader, and audio track
+- **Batch/Season Pack Preference**: Heavily favors complete season packs over individual episodes
+- **Preferred Uploaders**: Configurable list of trusted uploaders (default: judas, cerebrus, cleo, animetime)
+- **Interactive Mode**: Optional manual torrent selection
+- **List Mode**: Preview results without adding anything to qBittorrent
+- **qBittorrent Integration**: Adds the selected torrent via the qBittorrent WebUI API
+- Configuration sourced from a central config file — no hardcoded paths
 
-## Installation
+## Prerequisites
 
-1. Ensure PowerShell 5.1 or higher is installed
-2. Clone this repository
-3. Ensure qBittorrent is running and accessible (default: http://localhost:8075)
+- PowerShell 5.1 or higher
+- [qBittorrent](https://www.qbittorrent.org/) with Web UI enabled
+- Central config file set up (see [Configuration](#configuration))
+
+## Configuration
+
+This script reads settings from `%LOCALAPPDATA%\dlScripts\config.ps1`.
+
+Create the file with the following content (adjust paths to match your setup):
+
+```powershell
+# %LOCALAPPDATA%\dlScripts\config.ps1
+
+# qBittorrent WebUI address
+$qBitHost = "http://localhost:8080"
+
+# Anime download destinations
+$animeSeriesDestination = "D:\Anime\Series"
+$animeMoviesDestination = "D:\Anime\Movies"
+$animeMaxResults = 75
+
+# Preferred uploaders (case-insensitive partial match)
+$animePreferredUploaders = @('judas', 'cerebrus', 'cleo', 'animetime')
+
+# Automatically append "dual audio" to every search query
+$animeAutoAppendDualAudio = $true
+```
+
+> All settings can be overridden at runtime with command-line parameters.
 
 ## Usage
 
-### Basic Usage
+### Download an anime series (default)
 
 ```powershell
 .\Add-Anime.ps1 -Query "Frieren"
 ```
 
-### With Custom Destination
+### Download an anime movie
+
+```powershell
+.\Add-Anime.ps1 -Query "Spirited Away" -isAnimeSeries "no"
+```
+
+### Custom destination
 
 ```powershell
 .\Add-Anime.ps1 -Query "Frieren" -Destination "E:\Anime"
 ```
 
-### Interactive Mode (Manual Selection)
+### Interactive mode (manual selection)
 
 ```powershell
-.\Add-Anime.ps1 -Query "Frieren" -Interactive
+.\Add-Anime.ps1 -Query "Demon Slayer" -Interactive
 ```
 
-### Trusted Only (Verified Uploaders)
+### List results without downloading
+
+```powershell
+.\Add-Anime.ps1 -Query "Frieren" -ListOnly
+```
+
+### Trusted uploaders only
 
 ```powershell
 .\Add-Anime.ps1 -Query "Frieren" -TrustedOnly
 ```
 
-### Custom Filter
+### Additional filter terms
 
 ```powershell
-.\Add-Anime.ps1 -Query "Frieren" -Filter "1080p"
+.\Add-Anime.ps1 -Query "One Piece" -Filter "1080p"
 ```
 
 ## Parameters
 
-| Parameter | Type | Required | Default | Description |
-|-----------|------|----------|---------|-------------|
-| `-Query` | string | Yes | - | Search query for the anime |
-| `-Destination` | string | No | `D:\TV` | Download destination path |
-| `-TrustedOnly` | switch | No | `false` | Only show verified/trusted uploaders |
-| `-QbitHost` | string | No | `http://localhost:8075` | qBittorrent host URL |
-| `-MaxResults` | int | No | `75` | Maximum number of results to display |
-| `-Interactive` | switch | No | `false` | Enable manual torrent selection |
-| `-Filter` | string | No | `""` | Additional filter terms |
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `-Query` | Yes | — | Anime name to search |
+| `-isAnimeSeries` | No | `"yes"` | `"yes"` = series destination, `"no"` = movie destination |
+| `-Destination` | No | from config | Override save path (takes priority over `-isAnimeSeries`) |
+| `-TrustedOnly` | No | `$false` | Only show verified/trusted uploads on nyaa.si |
+| `-QbitHost` | No | from config | qBittorrent WebUI URL |
+| `-MaxResults` | No | from config | Max number of results to display |
+| `-Interactive` | No | `$false` | Manually select from results |
+| `-Filter` | No | `""` | Extra terms appended to the search query |
+| `-ListOnly` | No | `$false` | Show results with magnet links and exit — nothing added to qBittorrent |
 
 ## Scoring System
 
-The script uses a sophisticated scoring system to automatically select the best torrent:
+Torrents are ranked automatically to select the best match:
 
-1. **Base Score** = Number of seeders
-2. **+1000 points** for batch/season releases (e.g., "Season 1", "Batch", "Complete")
-3. **-500 points** for individual episodes
-4. **+200 points** for preferred uploaders (judas, cerebrus, cleo, animetime)
-5. **+100 points** for dual audio releases
+| Condition | Points |
+|-----------|--------|
+| Batch / season pack | +1000 |
+| Single episode | −500 |
+| Preferred uploader | +200 |
+| Dual audio | +100 |
+| Base: seeder count | — |
 
-The highest-scored torrent is automatically selected unless Interactive mode is enabled.
+The highest-scored torrent is selected automatically unless `-Interactive` or `-ListOnly` is used.
 
-## Preferred Uploaders
+## Default Preferred Uploaders
 
-The script prioritizes releases from these trusted uploaders:
-- **judas**: High-quality encodes with small file sizes
-- **cerebrus**: Reliable dual audio releases
-- **cleo**: Quality anime releases
-- **animetime**: Consistent uploaders
+| Uploader | Known For |
+|----------|-----------|
+| judas | High-quality encodes, small file sizes |
+| cerebrus | Reliable dual audio releases |
+| cleo | Consistent quality releases |
+| animetime | Broad catalogue coverage |
 
-## Examples
+These can be customized via `$animePreferredUploaders` in the config file.
 
-### Search for Frieren (auto-select best match)
-```powershell
-.\Add-Anime.ps1 -Query "Frieren"
+## Example Output
+
 ```
+[2026-04-22 18:00:00] [INFO] Starting anime download process
+[2026-04-22 18:00:00] [INFO] Search query: Frieren dual audio
+[2026-04-22 18:00:00] [INFO] Destination: D:\Anime\Series
+[2026-04-22 18:00:01] [INFO] Found 75 potential matches in HTML
 
-### Search with manual selection
-```powershell
-.\Add-Anime.ps1 -Query "Demon Slayer" -Interactive
+[1] [Judas] Frieren - Beyond Journey's End (Season 1) [Dual Audio] [1080p]
+    Uploader: Judas [BATCH/SEASON, PREFERRED, DUAL AUDIO]
+    Size: 12.8 GiB | Seeds: 1243 | Score: 2543
+
+[2026-04-22 18:00:01] [INFO] Auto-selecting top-scored torrent
+[2026-04-22 18:00:02] [SUCCESS] Successfully added torrent to qBittorrent!
 ```
 
 ### Search for specific quality
