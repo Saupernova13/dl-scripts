@@ -1,4 +1,4 @@
-# dlmovie.ps1
+﻿# dlmovie.ps1
 # Search YTS.bz for movies and add torrents to qBittorrent
 # Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
 
@@ -32,18 +32,18 @@ function Initialize-DlConfig {
     if (Test-Path $configPath) {
         try   { $config = Get-Content $configPath -Raw | ConvertFrom-Json }
         catch {
-            Write-Host "[dlScripts] config.json could not be parsed — [$Section] defaults will be written." -ForegroundColor Yellow
+            Write-Host "[dlScripts] config.json could not be parsed  - [$Section] defaults will be written." -ForegroundColor Yellow
             $config = [PSCustomObject]@{}
             $dirty  = $true
         }
     } else {
-        Write-Host "[dlScripts] Config not found — creating: $configPath" -ForegroundColor Yellow
+        Write-Host "[dlScripts] Config not found  - creating: $configPath" -ForegroundColor Yellow
         $config = [PSCustomObject]@{}
         $dirty  = $true
     }
     if (-not ($config.PSObject.Properties.Name -contains $Section)) {
         Add-Member -InputObject $config -MemberType NoteProperty -Name $Section -Value $Defaults
-        Write-Host "[dlScripts] Added [$Section] defaults to config.json — edit to customise." -ForegroundColor Cyan
+        Write-Host "[dlScripts] Added [$Section] defaults to config.json  - edit to customise." -ForegroundColor Cyan
         $dirty = $true
     }
     if ($dirty) { $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8 }
