@@ -29,7 +29,7 @@ The CMD wrapper passes these through. You can also call the script directly for 
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `-Query` | Yes | — | Show name to search |
+| `-Query` | Yes | ï¿½ | Show name to search |
 | `-Destination` | No | from config | Download save path |
 | `-QbitHost` | No | from config | qBittorrent WebUI URL |
 | `-MaxResults` | No | from config | Max results to display |
@@ -37,22 +37,26 @@ The CMD wrapper passes these through. You can also call the script directly for 
 
 ## Configuration
 
-All settings are read from `%LOCALAPPDATA%\dlScripts\config.ps1`. Create the file if it does not exist:
+All settings are read from `%LOCALAPPDATA%\dlScripts\config.json`. The file is created automatically with defaults the first time you run the script. If the `tv` section is missing from an existing file, it is added automatically.
 
-```powershell
-# %LOCALAPPDATA%\dlScripts\config.ps1
+Default location: `C:\Users\<you>\AppData\Local\dlScripts\config.json`
 
-$qBitHost      = "http://localhost:8080"
-$tvDestination = "D:\TV"
-$tvMaxResults  = 50
+```json
+{
+  "tv": {
+    "qbitHost": "http://localhost:8080",
+    "destination": "C:\\Users\\you\\TV",
+    "maxResults": 50
+  }
+}
 ```
 
-All config values can be overridden at runtime with the corresponding parameter.
+All values can be overridden at runtime with the corresponding command-line parameter.
 
 ## How It Works
 
 1. Queries The Pirate Bay API (apibay.org) in the TV category for the show name
-2. Passes every result through safety filters (see below) — rejects anything that is not TV content
+2. Passes every result through safety filters (see below) ï¿½ rejects anything that is not TV content
 3. Scores and sorts all remaining results
 4. Auto-selects the highest-scored torrent, or prompts you in `-Interactive` mode
 5. Sends the magnet link to qBittorrent with the configured save path
@@ -73,7 +77,7 @@ Torrents are ranked automatically to find the best match:
 | BluRay source | +150 |
 | WEB-DL source | +120 |
 | WEBRip / streaming source | +80 |
-| Base: seeder count | — |
+| Base: seeder count | ï¿½ |
 
 Complete series and season packs are strongly preferred. Quality and source bonuses stack on top of the seeder count.
 
@@ -108,4 +112,4 @@ Any torrent whose name matches one of the following patterns is hard-rejected be
 
 - Requires `curl.exe`, which is bundled with Windows 10 1803 and later
 - qBittorrent Web UI must be enabled and reachable at the configured host
-- Safety filters are aggressive by design — use `-Interactive` if a legitimate result gets rejected
+- Safety filters are aggressive by design ï¿½ use `-Interactive` if a legitimate result gets rejected

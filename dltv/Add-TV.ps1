@@ -1,6 +1,6 @@
 # dltv.ps1
 # Search TV shows and add torrents to qBittorrent
-# Configuration sourced from %APPDATA%/Local/dlScripts/config.ps1
+# Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
 
 param(
     [Parameter(Mandatory=$true)]
@@ -19,19 +19,47 @@ param(
     [switch]$Interactive = $false
 )
 
-# Load configuration
-$configPath = Join-Path $env:APPDATA "Local\dlScripts\config.ps1"
-if (Test-Path $configPath) {
-    . $configPath
-} else {
-    Write-Error "Configuration file not found: $configPath`nPlease ensure dlScripts config is set up."
-    exit 1
+# Load/create config.json and return this script's section.
+# On first run: creates the file and writes defaults. On subsequent runs: reads existing values.
+# If the section is missing from an existing file, it is added with defaults.
+function Initialize-DlConfig {
+    param([string]$Section, [PSCustomObject]$Defaults)
+    $configDir  = Join-Path $env:LOCALAPPDATA "dlScripts"
+    $configPath = Join-Path $configDir "config.json"
+    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+    $config = $null
+    $dirty  = $false
+    if (Test-Path $configPath) {
+        try   { $config = Get-Content $configPath -Raw | ConvertFrom-Json }
+        catch {
+            Write-Host "[dlScripts] config.json could not be parsed — [$Section] defaults will be written." -ForegroundColor Yellow
+            $config = [PSCustomObject]@{}
+            $dirty  = $true
+        }
+    } else {
+        Write-Host "[dlScripts] Config not found — creating: $configPath" -ForegroundColor Yellow
+        $config = [PSCustomObject]@{}
+        $dirty  = $true
+    }
+    if (-not ($config.PSObject.Properties.Name -contains $Section)) {
+        Add-Member -InputObject $config -MemberType NoteProperty -Name $Section -Value $Defaults
+        Write-Host "[dlScripts] Added [$Section] defaults to config.json — edit to customise." -ForegroundColor Cyan
+        $dirty = $true
+    }
+    if ($dirty) { $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8 }
+    return $config.$Section
 }
 
+$cfg = Initialize-DlConfig -Section "tv" -Defaults ([PSCustomObject]@{
+    qbitHost    = "http://localhost:8080"
+    destination = (Join-Path $HOME "TV")
+    maxResults  = 50
+})
+
 # Apply config defaults if not specified
-if (-not $QbitHost) { $QbitHost = $qBitHost }
-if (-not $Destination) { $Destination = $tvDestination }
-if ($MaxResults -eq 0) { $MaxResults = $tvMaxResults }
+if (-not $QbitHost)    { $QbitHost    = $cfg.qbitHost }
+if (-not $Destination) { $Destination = $cfg.destination }
+if ($MaxResults -eq 0) { $MaxResults  = $cfg.maxResults }
 
 # Ensure destination directory exists
 if (-not (Test-Path $Destination)) {

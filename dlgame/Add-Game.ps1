@@ -1,7 +1,7 @@
 # dlgame.ps1
 # Search appnetica.com for games and add torrents to qBittorrent
 # Usage: .\dlgame.ps1 -Query "Spider-Man"
-# Configuration sourced from %LOCALAPPDATA%\dlScripts\config.ps1
+# Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
 # Credentials sourced from .settings file in the same directory as this script
 
 param(
@@ -30,14 +30,45 @@ param(
 # Load System.Web for HttpUtility
 Add-Type -AssemblyName System.Web
 
-# Load central config (provides $gameDestination, $qBitHost, $gameMaxResults, etc.)
-$configPath = Join-Path $env:LOCALAPPDATA "dlScripts\config.ps1"
-if (Test-Path $configPath) {
-    . $configPath
+# Load/create config.json and return this script's section.
+# On first run: creates the file and writes defaults. On subsequent runs: reads existing values.
+# If the section is missing from an existing file, it is added with defaults.
+function Initialize-DlConfig {
+    param([string]$Section, [PSCustomObject]$Defaults)
+    $configDir  = Join-Path $env:LOCALAPPDATA "dlScripts"
+    $configPath = Join-Path $configDir "config.json"
+    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+    $config = $null
+    $dirty  = $false
+    if (Test-Path $configPath) {
+        try   { $config = Get-Content $configPath -Raw | ConvertFrom-Json }
+        catch {
+            Write-Host "[dlScripts] config.json could not be parsed — [$Section] defaults will be written." -ForegroundColor Yellow
+            $config = [PSCustomObject]@{}
+            $dirty  = $true
+        }
+    } else {
+        Write-Host "[dlScripts] Config not found — creating: $configPath" -ForegroundColor Yellow
+        $config = [PSCustomObject]@{}
+        $dirty  = $true
+    }
+    if (-not ($config.PSObject.Properties.Name -contains $Section)) {
+        Add-Member -InputObject $config -MemberType NoteProperty -Name $Section -Value $Defaults
+        Write-Host "[dlScripts] Added [$Section] defaults to config.json — edit to customise." -ForegroundColor Cyan
+        $dirty = $true
+    }
+    if ($dirty) { $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8 }
+    return $config.$Section
 }
 
-# Load .settings for credentials (and optionally override config values)
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$cfg = Initialize-DlConfig -Section "game" -Defaults ([PSCustomObject]@{
+    qbitHost    = "http://localhost:8080"
+    destination = (Join-Path $HOME "Games")
+    maxResults  = 10
+})
+
+# Load .settings for credentials (Email and Password only)
+$scriptDir    = Split-Path -Parent $MyInvocation.MyCommand.Path
 $settingsFile = Join-Path $scriptDir ".settings"
 
 if (Test-Path $settingsFile) {
@@ -46,12 +77,8 @@ if (Test-Path $settingsFile) {
         $key, $value = $_ -split '=', 2
         $settings[$key.Trim()] = $value.Trim()
     }
-
-    if (-not $Email -and $settings['Email'])       { $Email = $settings['Email'] }
+    if (-not $Email    -and $settings['Email'])    { $Email    = $settings['Email'] }
     if (-not $Password -and $settings['Password']) { $Password = $settings['Password'] }
-    if (-not $Destination -and $settings['Destination']) { $Destination = $settings['Destination'] }
-    if (-not $QbitHost -and $settings['QbitHost']) { $QbitHost = $settings['QbitHost'] }
-    if ($MaxResults -eq 0 -and $settings['MaxResults']) { $MaxResults = [int]$settings['MaxResults'] }
 }
 
 # Validate required credentials
@@ -61,15 +88,10 @@ if (-not $Email -or -not $Password) {
     exit 1
 }
 
-# Apply config defaults for non-credential settings (if not already set)
-if (-not $Destination -and (Get-Variable -Name 'gameDestination' -ErrorAction SilentlyContinue)) { $Destination = $gameDestination }
-if (-not $QbitHost -and (Get-Variable -Name 'qBitHost' -ErrorAction SilentlyContinue)) { $QbitHost = $qBitHost }
-if ($MaxResults -eq 0 -and (Get-Variable -Name 'gameMaxResults' -ErrorAction SilentlyContinue)) { $MaxResults = $gameMaxResults }
-
-# Final fallback defaults
-if (-not $Destination) { $Destination = Join-Path ([Environment]::GetFolderPath('UserProfile')) "Games" }
-if (-not $QbitHost) { $QbitHost = "http://localhost:8080" }
-if ($MaxResults -eq 0) { $MaxResults = 10 }
+# Apply config defaults for non-credential settings
+if (-not $Destination) { $Destination = $cfg.destination }
+if (-not $QbitHost)    { $QbitHost    = $cfg.qbitHost }
+if ($MaxResults -eq 0) { $MaxResults  = $cfg.maxResults }
 
 # Ensure destination directory exists
 if (-not (Test-Path $Destination)) {

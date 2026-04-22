@@ -1,8 +1,7 @@
-# dlgame.ps1 Configuration
-# Copy this file to .settings and edit with your details
+# dlgame credentials
+# Copy this file to .settings and fill in your appnetica.com login details.
+# All other settings (destination, qbitHost, maxResults) are stored in
+# %LOCALAPPDATA%\dlScripts\config.json and auto-created on first run.
 
 Email=your@email.com
 Password=yourpassword
-Destination=D:\Games
-QbitHost=http://localhost:8075
-MaxResults=10

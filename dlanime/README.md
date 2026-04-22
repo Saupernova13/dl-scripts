@@ -1,4 +1,4 @@
-# dlanime
+﻿# dlanime
 
 Searches [nyaa.si](https://nyaa.si) for anime torrents and automatically adds the best match to qBittorrent.
 
@@ -31,7 +31,7 @@ The CMD wrapper passes these through. You can also call the script directly for 
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `-Query` | Yes | � | Anime name to search |
+| `-Query` | Yes | ï¿½ | Anime name to search |
 | `-isAnimeSeries` | No | `"yes"` | `"yes"` saves to series destination, `"no"` saves to movies destination |
 | `-Destination` | No | from config | Override save path; takes priority over `-isAnimeSeries` |
 | `-TrustedOnly` | No | `$false` | Only show verified/trusted uploads on nyaa.si |
@@ -39,29 +39,28 @@ The CMD wrapper passes these through. You can also call the script directly for 
 | `-MaxResults` | No | from config | Max number of results to fetch from nyaa.si |
 | `-Interactive` | No | `$false` | Manually pick from the scored results list |
 | `-Filter` | No | `""` | Extra search terms appended to the query (overrides auto dual-audio append) |
-| `-ListOnly` | No | `$false` | Print results with magnet links and exit � nothing is added to qBittorrent |
+| `-ListOnly` | No | `$false` | Print results with magnet links and exit ï¿½ nothing is added to qBittorrent |
 
 ## Configuration
 
-All settings are read from `%LOCALAPPDATA%\dlScripts\config.ps1`. Create the file if it does not exist:
+All settings are read from `%LOCALAPPDATA%\dlScripts\config.json`. The file is created automatically with defaults the first time you run the script. If the `anime` section is missing from an existing file, it is added automatically.
 
-```powershell
-# %LOCALAPPDATA%\dlScripts\config.ps1
+Default location: `C:\Users\<you>\AppData\Local\dlScripts\config.json`
 
-$qBitHost                  = "http://localhost:8080"
-
-$animeSeriesDestination    = "D:\Anime\Series"
-$animeMoviesDestination    = "D:\Anime\Movies"
-$animeMaxResults           = 75
-
-# Automatically append "dual audio" to every search (can be overridden with -Filter)
-$animeAutoAppendDualAudio  = $true
-
-# Preferred uploaders � matched case-insensitively as partial strings
-$animePreferredUploaders   = @('judas', 'cerebrus', 'cleo', 'animetime')
+```json
+{
+  "anime": {
+    "qbitHost": "http://localhost:8080",
+    "seriesDestination": "C:\\Users\\you\\Anime\\Series",
+    "moviesDestination": "C:\\Users\\you\\Anime\\Movies",
+    "maxResults": 75,
+    "autoAppendDualAudio": true,
+    "preferredUploaders": ["judas", "cerebrus", "cleo", "animetime"]
+  }
+}
 ```
 
-All config values can be overridden at runtime with the corresponding parameter.
+All values can be overridden at runtime with the corresponding command-line parameter.
 
 ## How It Works
 
@@ -79,7 +78,7 @@ All config values can be overridden at runtime with the corresponding parameter.
 | Single episode | -500 |
 | Preferred uploader | +200 |
 | Dual audio | +100 |
-| Base: seeder count | � |
+| Base: seeder count | ï¿½ |
 
 Complete season packs are strongly preferred over individual episodes. The preferred uploader list and dual-audio bonus stack on top.
 

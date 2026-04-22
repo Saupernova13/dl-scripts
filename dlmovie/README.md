@@ -29,7 +29,7 @@ The CMD wrapper passes these through. You can also call the script directly for 
 
 | Parameter | Required | Default | Description |
 |-----------|----------|---------|-------------|
-| `-Query` | Yes | — | Movie name to search |
+| `-Query` | Yes | ï¿½ | Movie name to search |
 | `-Destination` | No | from config | Download save path |
 | `-QbitHost` | No | from config | qBittorrent WebUI URL |
 | `-MaxResults` | No | from config | Max results to consider |
@@ -37,17 +37,21 @@ The CMD wrapper passes these through. You can also call the script directly for 
 
 ## Configuration
 
-All settings are read from `%LOCALAPPDATA%\dlScripts\config.ps1`. Create the file if it does not exist:
+All settings are read from `%LOCALAPPDATA%\dlScripts\config.json`. The file is created automatically with defaults the first time you run the script. If the `movie` section is missing from an existing file, it is added automatically.
 
-```powershell
-# %LOCALAPPDATA%\dlScripts\config.ps1
+Default location: `C:\Users\<you>\AppData\Local\dlScripts\config.json`
 
-$qBitHost         = "http://localhost:8080"
-$movieDestination = "D:\Movies"
-$movieMaxResults  = 15
+```json
+{
+  "movie": {
+    "qbitHost": "http://localhost:8080",
+    "destination": "C:\\Users\\you\\Movies",
+    "maxResults": 15
+  }
+}
 ```
 
-All config values can be overridden at runtime with the corresponding parameter.
+All values can be overridden at runtime with the corresponding command-line parameter.
 
 ## How It Works
 
@@ -61,9 +65,9 @@ All config values can be overridden at runtime with the corresponding parameter.
 
 Torrents are selected in this order of preference:
 
-1. **1080p BluRay** — highest quality
-2. **1080p Web** — streaming source
-3. **Best available** — fallback to the highest-seeded torrent of any quality
+1. **1080p BluRay** ï¿½ highest quality
+2. **1080p Web** ï¿½ streaming source
+3. **Best available** ï¿½ fallback to the highest-seeded torrent of any quality
 
 ## Example Output
 
@@ -83,5 +87,5 @@ Torrents are selected in this order of preference:
 
 ## Notes
 
-- Results are sourced from the YTS public API — only movies indexed by YTS are findable
+- Results are sourced from the YTS public API ï¿½ only movies indexed by YTS are findable
 - qBittorrent Web UI must be enabled and reachable at the configured host
