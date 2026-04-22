@@ -227,14 +227,11 @@ try {
     Write-Log "Fetching results from nyaa.si..." "INFO"
     $allTorrents = Invoke-NyaaSearch -Url $url
 
-    if ($allTorrents.Count -eq 0) {
-        Write-Log "No results found for: $searchQuery" "ERROR"
-        exit 1
-    }
-
-    # If dual audio was auto-appended but none of the results are dual audio, retry without it
-    if ($dualAudioAppended -and -not ($allTorrents | Where-Object { $_.IsDualAudio })) {
-        Write-Log "No dual audio results found - retrying search without 'dual audio'..." "WARN"
+    # If dual audio was auto-appended but no results (or no dual audio results) came back, retry without it
+    $noDualAudioResults = ($allTorrents.Count -eq 0) -or (-not ($allTorrents | Where-Object { $_.IsDualAudio }))
+    if ($dualAudioAppended -and $noDualAudioResults) {
+        $reason = if ($allTorrents.Count -eq 0) { "No results found" } else { "No dual audio results found" }
+        Write-Log "$reason - retrying search without 'dual audio'..." "WARN"
         $fallbackQuery = if ($Filter) { "$Query $Filter" } else { $Query }
         $fallbackUrl   = "https://nyaa.si/?$filterParam" + "$amp" + "c=0_0" + "$amp" + "q=" + [System.Web.HttpUtility]::UrlEncode($fallbackQuery)
         Write-Log "Fallback search query: $fallbackQuery" "INFO"
@@ -245,6 +242,11 @@ try {
         } else {
             Write-Log "Fallback also returned no results" "WARN"
         }
+    }
+
+    if ($allTorrents.Count -eq 0) {
+        Write-Log "No results found for: $Query" "ERROR"
+        exit 1
     }
 
     Write-Log "Parsed $($allTorrents.Count) torrents successfully" "SUCCESS"
