@@ -1,4 +1,4 @@
-# game-grabber
+# dlgame
 
 A PowerShell script that searches [appnetica.com](https://appnetica.com) for PC games and automatically downloads them via qBittorrent.
 
@@ -50,25 +50,25 @@ Password=yourpassword
 ### Basic
 
 ```powershell
-.\Add-Game.ps1 -Query "Spider-Man"
+.\dlgame.ps1 -Query "Spider-Man"
 ```
 
 ### Custom destination
 
 ```powershell
-.\Add-Game.ps1 -Query "Spider-Man" -Destination "E:\Games"
+.\dlgame.ps1 -Query "Spider-Man" -Destination "E:\Games"
 ```
 
 ### Interactive mode (manual selection)
 
 ```powershell
-.\Add-Game.ps1 -Query "Resident Evil" -Interactive
+.\dlgame.ps1 -Query "Resident Evil" -Interactive
 ```
 
 ### Pass credentials at runtime (no `.settings` file needed)
 
 ```powershell
-.\Add-Game.ps1 -Query "Witcher 3" -Email "you@example.com" -Password "yourpass"
+.\dlgame.ps1 -Query "Witcher 3" -Email "you@example.com" -Password "yourpass"
 ```
 
 ## Parameters
@@ -111,13 +111,13 @@ Password=yourpassword
 [2026-04-22 18:00:02] [INFO] Auto-selecting first game
 [2026-04-22 18:00:05] [SUCCESS] Successfully added to qBittorrent!
 ```
-.\Add-Game.ps1 -Query "Dark Souls" -Interactive
+.\dlgame.ps1 -Query "Dark Souls" -Interactive
 ```
 
 ### Override Settings
 
 ```powershell
-.\Add-Game.ps1 -Query "Elden Ring" -Destination "E:\Games"
+.\dlgame.ps1 -Query "Elden Ring" -Destination "E:\Games"
 ```
 
 ## Parameters

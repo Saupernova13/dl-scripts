@@ -1,6 +1,6 @@
-# Add-Game.ps1
+# dlgame.ps1
 # Search appnetica.com for games and add torrents to qBittorrent
-# Usage: .\Add-Game.ps1 -Query "Spider-Man"
+# Usage: .\dlgame.ps1 -Query "Spider-Man"
 # Configuration sourced from %LOCALAPPDATA%\dlScripts\config.ps1
 # Credentials sourced from .settings file in the same directory as this script
 

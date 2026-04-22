@@ -1,4 +1,4 @@
-# Add-Movie.ps1
+# dlmovie.ps1
 # Search YTS.bz for movies and add torrents to qBittorrent
 # Configuration sourced from %APPDATA%/Local/dlScripts/config.ps1
 

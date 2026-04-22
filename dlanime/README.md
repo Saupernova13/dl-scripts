@@ -1,4 +1,4 @@
-# anime-grabber
+# dlanime
 
 A PowerShell script that searches nyaa.si for anime torrents and automatically adds the best match to qBittorrent with intelligent scoring.
 
@@ -51,43 +51,43 @@ $animeAutoAppendDualAudio = $true
 ### Download an anime series (default)
 
 ```powershell
-.\Add-Anime.ps1 -Query "Frieren"
+.\dlanime.ps1 -Query "Frieren"
 ```
 
 ### Download an anime movie
 
 ```powershell
-.\Add-Anime.ps1 -Query "Spirited Away" -isAnimeSeries "no"
+.\dlanime.ps1 -Query "Spirited Away" -isAnimeSeries "no"
 ```
 
 ### Custom destination
 
 ```powershell
-.\Add-Anime.ps1 -Query "Frieren" -Destination "E:\Anime"
+.\dlanime.ps1 -Query "Frieren" -Destination "E:\Anime"
 ```
 
 ### Interactive mode (manual selection)
 
 ```powershell
-.\Add-Anime.ps1 -Query "Demon Slayer" -Interactive
+.\dlanime.ps1 -Query "Demon Slayer" -Interactive
 ```
 
 ### List results without downloading
 
 ```powershell
-.\Add-Anime.ps1 -Query "Frieren" -ListOnly
+.\dlanime.ps1 -Query "Frieren" -ListOnly
 ```
 
 ### Trusted uploaders only
 
 ```powershell
-.\Add-Anime.ps1 -Query "Frieren" -TrustedOnly
+.\dlanime.ps1 -Query "Frieren" -TrustedOnly
 ```
 
 ### Additional filter terms
 
 ```powershell
-.\Add-Anime.ps1 -Query "One Piece" -Filter "1080p"
+.\dlanime.ps1 -Query "One Piece" -Filter "1080p"
 ```
 
 ## Parameters
@@ -147,12 +147,12 @@ These can be customized via `$animePreferredUploaders` in the config file.
 
 ### Search for specific quality
 ```powershell
-.\Add-Anime.ps1 -Query "One Piece" -Filter "1080p HEVC"
+.\dlanime.ps1 -Query "One Piece" -Filter "1080p HEVC"
 ```
 
 ### Download to custom location
 ```powershell
-.\Add-Anime.ps1 -Query "Attack on Titan" -Destination "C:\Downloads\Anime"
+.\dlanime.ps1 -Query "Attack on Titan" -Destination "C:\Downloads\Anime"
 ```
 
 ## Output

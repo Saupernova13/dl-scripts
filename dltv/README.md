@@ -1,4 +1,4 @@
-# tv-grabber
+# dltv
 
 A PowerShell script that searches The Pirate Bay for TV shows and automatically adds the best available torrent to qBittorrent.
 
@@ -42,19 +42,19 @@ $tvMaxResults = 50
 ### Basic
 
 ```powershell
-.\Add-TV.ps1 -Query "Breaking Bad"
+.\dltv.ps1 -Query "Breaking Bad"
 ```
 
 ### Custom destination
 
 ```powershell
-.\Add-TV.ps1 -Query "The Office" -Destination "E:\TV Shows"
+.\dltv.ps1 -Query "The Office" -Destination "E:\TV Shows"
 ```
 
 ### Interactive mode (manual selection)
 
 ```powershell
-.\Add-TV.ps1 -Query "Breaking Bad" -Interactive
+.\dltv.ps1 -Query "Breaking Bad" -Interactive
 ```
 
 ## Parameters

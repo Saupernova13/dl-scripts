@@ -1,4 +1,4 @@
-# Add-Anime.ps1
+# dlanime.ps1
 # Search nyaa.si and add anime torrents to qBittorrent
 # Configuration sourced from %APPDATA%/Local/dlScripts/config.ps1
 

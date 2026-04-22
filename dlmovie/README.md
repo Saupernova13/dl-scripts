@@ -1,4 +1,4 @@
-# movie-grabber
+# dlmovie
 
 A PowerShell script that searches the YTS API for movies and automatically adds the best available torrent to qBittorrent.
 
@@ -40,25 +40,25 @@ $movieMaxResults = 15
 ### Basic
 
 ```powershell
-.\Add-Movie.ps1 -Query "Inception"
+.\dlmovie.ps1 -Query "Inception"
 ```
 
 ### Custom destination
 
 ```powershell
-.\Add-Movie.ps1 -Query "Inception" -Destination "E:\Movies"
+.\dlmovie.ps1 -Query "Inception" -Destination "E:\Movies"
 ```
 
 ### Interactive mode (manual selection)
 
 ```powershell
-.\Add-Movie.ps1 -Query "Inception" -Interactive
+.\dlmovie.ps1 -Query "Inception" -Interactive
 ```
 
 ### Custom qBittorrent host
 
 ```powershell
-.\Add-Movie.ps1 -Query "Inception" -QbitHost "http://192.168.1.10:8080"
+.\dlmovie.ps1 -Query "Inception" -QbitHost "http://192.168.1.10:8080"
 ```
 
 ## Parameters

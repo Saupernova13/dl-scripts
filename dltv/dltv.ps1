@@ -1,4 +1,4 @@
-# Add-TV.ps1
+# dltv.ps1
 # Search TV shows and add torrents to qBittorrent
 # Configuration sourced from %APPDATA%/Local/dlScripts/config.ps1
 
