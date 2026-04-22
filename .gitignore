@@ -5,7 +5,11 @@ credentials.json
 
 # PowerShell artifacts
 *.ps1xml
+*.ps1~
 $PROFILE
+
+# Torrent files
+*.torrent
 
 # Temporary files
 *.tmp
