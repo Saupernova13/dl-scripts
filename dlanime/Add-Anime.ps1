@@ -114,8 +114,10 @@ $preferredUploaders = $cfg.preferredUploaders
 
 $searchQuery = $Query
 
+$dualAudioAppended = $false
 if ($cfg.autoAppendDualAudio -and -not $Filter -and $searchQuery -inotmatch 'dual[\s\-_]*audio') {
     $searchQuery = "$Query dual audio"
+    $dualAudioAppended = $true
     Write-Log "Automatically appending 'dual audio' to search query" "DEBUG"
 } elseif ($Filter) {
     $searchQuery = "$Query $Filter"
@@ -132,39 +134,29 @@ Write-Log "Destination: $Destination" "INFO"
 Write-Log "Trusted only: $TrustedOnly" "DEBUG"
 Write-Log "URL: $url" "DEBUG"
 
-try {
-    Write-Log "Fetching results from nyaa.si..." "INFO"
-    $response = Invoke-WebRequest -Uri $url -UseBasicParsing
-    $html = $response.Content
+# Fetches a nyaa.si search URL and returns an array of scored torrent objects.
+function Invoke-NyaaSearch {
+    param([string]$Url)
+    $resp     = Invoke-WebRequest -Uri $Url -UseBasicParsing
+    $html     = $resp.Content
     Write-Log "Received HTML response: $($html.Length) bytes" "DEBUG"
 
-    $torrents = @()
-    $htmlQuot = '&' + 'quot;'
-    $htmlAmp = '&' + 'amp;'
-
-    Write-Log "Parsing HTML table rows..." "INFO"
+    $hQuot      = '&' + 'quot;'
+    $hAmp       = '&' + 'amp;'
+    $localAmp   = [char]38
     $rowPattern = '<tr\s+class="(?:success|default|danger)"[^>]*>(.*?)</tr>'
     $rowMatches = [regex]::Matches($html, $rowPattern, [System.Text.RegularExpressions.RegexOptions]::Singleline)
-
-    if ($rowMatches.Count -eq 0) {
-        Write-Log "No results found for: $searchQuery" "ERROR"
-        Write-Log "HTML sample (first 500 chars): $($html.Substring(0, [Math]::Min(500, $html.Length)))" "DEBUG"
-        exit 1
-    }
-
     Write-Log "Found $($rowMatches.Count) potential matches in HTML" "DEBUG"
 
-    $count = 0
-    $allTorrents = @()
+    $parsed = @()
     foreach ($rowMatch in $rowMatches) {
         $rowHtml = $rowMatch.Groups[1].Value
 
-        $viewIdMatch = [regex]::Match($rowHtml, 'href="/view/(\d+)"')
-        $titleMatch = [regex]::Match($rowHtml, 'href="/view/\d+" title="([^"]*)"')
+        $viewIdMatch     = [regex]::Match($rowHtml, 'href="/view/(\d+)"')
+        $titleMatch      = [regex]::Match($rowHtml, 'href="/view/\d+" title="([^"]*)"')
         $downloadIdMatch = [regex]::Match($rowHtml, 'href="/download/(\d+)\.torrent"')
-        $magnetMatch = [regex]::Match($rowHtml, 'magnet:\?xt=urn:btih:([a-f0-9]+)')
-
-        $cellMatches = [regex]::Matches($rowHtml, '<td class="text-center"[^>]*>\s*([^<]+?)\s*</td>')
+        $magnetMatch     = [regex]::Match($rowHtml, 'magnet:\?xt=urn:btih:([a-f0-9]+)')
+        $cellMatches     = [regex]::Matches($rowHtml, '<td class="text-center"[^>]*>\s*([^<]+?)\s*</td>')
 
         if (-not $viewIdMatch.Success -or -not $titleMatch.Success -or $cellMatches.Count -lt 5) {
             Write-Log "Skipping row - incomplete data" "DEBUG"
@@ -172,23 +164,18 @@ try {
         }
 
         $torrentName = $titleMatch.Groups[1].Value
-        $torrentName = $torrentName.Replace($htmlQuot, '"')
-        $torrentName = $torrentName.Replace($htmlAmp, '&')
+        $torrentName = $torrentName.Replace($hQuot, '"')
+        $torrentName = $torrentName.Replace($hAmp, '&')
 
-        $seedersText = $cellMatches[2].Groups[1].Value.Trim()
-        $leechersText = $cellMatches[3].Groups[1].Value.Trim()
-        $downloadsText = $cellMatches[4].Groups[1].Value.Trim()
-
-        $seeders = if ($seedersText -match '^\d+$') { [int]$seedersText } else { 0 }
-        $leechers = if ($leechersText -match '^\d+$') { [int]$leechersText } else { 0 }
-        $downloads = if ($downloadsText -match '^\d+$') { [int]$downloadsText } else { 0 }
+        $seeders   = if ($cellMatches[2].Groups[1].Value.Trim() -match '^\d+$') { [int]$cellMatches[2].Groups[1].Value.Trim() } else { 0 }
+        $leechers  = if ($cellMatches[3].Groups[1].Value.Trim() -match '^\d+$') { [int]$cellMatches[3].Groups[1].Value.Trim() } else { 0 }
+        $downloads = if ($cellMatches[4].Groups[1].Value.Trim() -match '^\d+$') { [int]$cellMatches[4].Groups[1].Value.Trim() } else { 0 }
 
         $uploaderMatch = [regex]::Match($torrentName, '^\[([^\]]+)\]')
         $uploader = if ($uploaderMatch.Success) { $uploaderMatch.Groups[1].Value } else { "Unknown" }
 
-        $isBatch = $false
+        $isBatch             = $false
         $isIndividualEpisode = $false
-
         if ($torrentName -imatch '(Season\s+\d+|Season\s+0\d+|S\d{2}|S0\d+|\d+-\d+|Batch|Complete|Series|全集|整季)') {
             $isBatch = $true
             Write-Log "  Detected batch/season release" "DEBUG"
@@ -198,22 +185,11 @@ try {
         }
 
         $score = $seeders
-
-        if ($isBatch) {
-            $score += 1000
-            Write-Log "  Batch bonus applied: +1000" "DEBUG"
-        }
-
-        if ($isIndividualEpisode) {
-            $score -= 500
-            Write-Log "  Individual episode penalty applied: -500" "DEBUG"
-        }
+        if ($isBatch)             { $score += 1000; Write-Log "  Batch bonus applied: +1000" "DEBUG" }
+        if ($isIndividualEpisode) { $score -= 500;  Write-Log "  Individual episode penalty applied: -500" "DEBUG" }
 
         $isDualAudio = $torrentName -imatch 'dual[\s\-_]*audio'
-        if ($isDualAudio) {
-            $score += 100
-            Write-Log "  Found dual audio release: $uploader" "DEBUG"
-        }
+        if ($isDualAudio) { $score += 100; Write-Log "  Found dual audio release: $uploader" "DEBUG" }
 
         $isPreferredUploader = $false
         foreach ($preferred in $preferredUploaders) {
@@ -225,33 +201,53 @@ try {
             }
         }
 
-        $torrent = @{
-            ID = $viewIdMatch.Groups[1].Value
-            Name = $torrentName
-            Uploader = $uploader
-            DownloadID = $downloadIdMatch.Groups[1].Value
-            InfoHash = $magnetMatch.Groups[1].Value
-            Size = $cellMatches[0].Groups[1].Value.Trim()
-            Date = $cellMatches[1].Groups[1].Value.Trim()
-            Seeders = $seeders
-            Leechers = $leechers
-            Downloads = $downloads
-            IsDualAudio = $isDualAudio
+        $parsed += [PSCustomObject]@{
+            ID                  = $viewIdMatch.Groups[1].Value
+            Name                = $torrentName
+            Uploader            = $uploader
+            DownloadID          = $downloadIdMatch.Groups[1].Value
+            InfoHash            = $magnetMatch.Groups[1].Value
+            Size                = $cellMatches[0].Groups[1].Value.Trim()
+            Date                = $cellMatches[1].Groups[1].Value.Trim()
+            Seeders             = $seeders
+            Leechers            = $leechers
+            Downloads           = $downloads
+            IsDualAudio         = $isDualAudio
             IsPreferredUploader = $isPreferredUploader
-            IsBatch = $isBatch
+            IsBatch             = $isBatch
             IsIndividualEpisode = $isIndividualEpisode
-            Score = $score
+            Score               = $score
+            MagnetLink          = "magnet:?xt=urn:btih:$($magnetMatch.Groups[1].Value)${localAmp}dn=$([System.Web.HttpUtility]::UrlEncode($torrentName))"
         }
+    }
+    return $parsed
+}
 
-        $magnetBase = "magnet:?xt=urn:btih:" + $torrent.InfoHash
-        $magnetDn = "$amp" + "dn=" + [System.Web.HttpUtility]::UrlEncode($torrent.Name)
-        $torrent.MagnetLink = $magnetBase + $magnetDn
+try {
+    Write-Log "Fetching results from nyaa.si..." "INFO"
+    $allTorrents = Invoke-NyaaSearch -Url $url
 
-        $allTorrents += [PSCustomObject]$torrent
-        $count++
+    if ($allTorrents.Count -eq 0) {
+        Write-Log "No results found for: $searchQuery" "ERROR"
+        exit 1
     }
 
-    Write-Log "Parsed $count torrents successfully" "SUCCESS"
+    # If dual audio was auto-appended but none of the results are dual audio, retry without it
+    if ($dualAudioAppended -and -not ($allTorrents | Where-Object { $_.IsDualAudio })) {
+        Write-Log "No dual audio results found - retrying search without 'dual audio'..." "WARN"
+        $fallbackQuery = if ($Filter) { "$Query $Filter" } else { $Query }
+        $fallbackUrl   = "https://nyaa.si/?$filterParam" + "$amp" + "c=0_0" + "$amp" + "q=" + [System.Web.HttpUtility]::UrlEncode($fallbackQuery)
+        Write-Log "Fallback search query: $fallbackQuery" "INFO"
+        $fallbackTorrents = Invoke-NyaaSearch -Url $fallbackUrl
+        if ($fallbackTorrents.Count -gt 0) {
+            $allTorrents = $fallbackTorrents
+            Write-Log "Fallback returned $($allTorrents.Count) results" "SUCCESS"
+        } else {
+            Write-Log "Fallback also returned no results" "WARN"
+        }
+    }
+
+    Write-Log "Parsed $($allTorrents.Count) torrents successfully" "SUCCESS"
 
     if ($ListOnly) { $MaxResults = 100 }
 
