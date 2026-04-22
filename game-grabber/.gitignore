@@ -1,0 +1,11 @@
+# Settings file contains credentials
+.settings
+
+# PowerShell
+*.ps1~
+
+# Torrent files
+*.torrent
+
+# Logs
+*.log
