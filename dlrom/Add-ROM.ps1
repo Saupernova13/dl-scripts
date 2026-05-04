@@ -213,7 +213,7 @@ function Extract-LinksFromHtml {
     $archExts = '7z|zip|rar|iso|bin|img|chd|pbp'
 
     # Primary: anchor text is the filename (matches how CDRomance tables are structured)
-    $pattern = "<a\s+href=""([^""]+)""[^>]*>\s*([^<]+\.($archExts))\s*</a>"
+    $pattern = '<a[\s\S]+?href="([^"]+)"[^>]*>\s*([^<]+\.' + '(' + $archExts + '))\s*</a>'
     $found = [regex]::Matches($Html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($m in $found) {
         $url   = $m.Groups[1].Value.Trim()
@@ -225,7 +225,7 @@ function Extract-LinksFromHtml {
     if ($links.Count -gt 0) { return $links }
 
     # Fallback: href itself ends with an archive extension
-    $pattern2 = "<a\s+href=""([^""]+\.($archExts)(?:\?[^""]*)?)""\s*[^>]*>([^<]*)</a>"
+    $pattern2 = '<a[\s\S]+?href="([^"]+\.' + '(' + $archExts + ')(?:\?[^"]*)?)"[^>]*>([^<]*)</a>'
     $found2 = [regex]::Matches($Html, $pattern2, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($m in $found2) {
         $url   = $m.Groups[1].Value.Trim()
@@ -295,7 +295,33 @@ function Invoke-CdromanceSearch {
             $gameUrl  = $m.Groups[1].Value.Trim()
             $platSlug = $m.Groups[2].Value.Trim()
             $title    = [System.Web.HttpUtility]::HtmlDecode(($m.Groups[3].Value -replace '\s+', ' ').Trim())
-            if (-not $seen.ContainsKey($gameUrl) -and $platSlug -notin @('page','category','tag','author') -and $title) {
+            if (-not $seen.ContainsKey($gameUrl) -and $platSlug -notin @('page','category','tag','author','guides','news','reviews','cdn-cgi','wp-content') -and $title) {
+                $seen[$gameUrl] = $true
+                $results += [PSCustomObject]@{ Title = $title; Url = $gameUrl; Platform = $platSlug }
+            }
+        }
+    }
+
+    # Fallback 2: cover-link grid layout (no <article> tags, title in <div class="game-title">)
+    if ($results.Count -eq 0) {
+        Write-Log "Grid parsing found nothing; trying cover-link layout." 'DEBUG'
+        $seen = @{}
+        $coverPat = 'class="cover-link"[^>]*href="(https://cdromance\.org/([a-z0-9-]+)/[^/"]+/)"'
+        $coverMatches = [regex]::Matches($html, $coverPat, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        foreach ($m in $coverMatches) {
+            $gameUrl = $m.Groups[1].Value.Trim()
+            $platSlug = $m.Groups[2].Value.Trim()
+            if ($platSlug -in @('page','category','tag','author','guides','news','reviews','cdn-cgi','wp-content')) { continue }
+            if ($gameUrl -match '/page/') { continue }
+            if ($seen.ContainsKey($gameUrl)) { continue }
+            # Extract title from <div class="game-title"> within this <a> block
+            $after = $html.Substring($m.Groups[0].Index, [Math]::Min(800, $html.Length - $m.Groups[0].Index))
+            $titleMatch = [regex]::Match($after, 'class="game-title"[^>]*>([^<]+)<')
+            $title = ""
+            if ($titleMatch.Success) {
+                $title = [System.Web.HttpUtility]::HtmlDecode($titleMatch.Groups[1].Value.Trim())
+            }
+            if ($title) {
                 $seen[$gameUrl] = $true
                 $results += [PSCustomObject]@{ Title = $title; Url = $gameUrl; Platform = $platSlug }
             }
@@ -333,7 +359,7 @@ function Get-DownloadLinks {
         try {
             $ticketResp = Invoke-WebRequest -Uri 'https://cdromance.org/' -Method POST `
                 -Body "cdrTicketInput=$ticket" -Headers $postHeaders -UseBasicParsing -ErrorAction Stop
-            $links = Extract-LinksFromHtml $ticketResp.Content
+            $links = @(Extract-LinksFromHtml $ticketResp.Content)
             if ($links.Count -gt 0) {
                 Write-Log "Strategy A (ticket POST) found $($links.Count) link(s)." 'DEBUG'
                 return $links
@@ -343,36 +369,38 @@ function Get-DownloadLinks {
         }
     }
 
-    # Strategy B: ACF data-attributes → direct.php plugin endpoint
-    $acfMatch = [regex]::Match($html, 'id="acf-content-wrapper"[^>]+data-id="([^"]+)"[^>]+data-server="([^"]+)"')
+    # Strategy B: ACF data-id → cdr-main/ajax.php
+    $acfMatch = [regex]::Match($html, 'id="acf-content-wrapper"[^>]*data-id="([^"]+)"')
     if (-not $acfMatch.Success) {
-        $acfMatch = [regex]::Match($html, 'data-id="([^"]+)"[^>]+data-server="([^"]+)"[^>]*id="acf-content-wrapper"')
+        $acfMatch = [regex]::Match($html, 'data-id="([^"]+)"[^>]*id="acf-content-wrapper"')
     }
     if ($acfMatch.Success) {
         $postId = $acfMatch.Groups[1].Value
-        $server = $acfMatch.Groups[2].Value
-        Write-Log "ACF wrapper found: id=$postId server=$server" 'DEBUG'
+        Write-Log "ACF wrapper found: id=$postId" 'DEBUG'
 
         $apiHeaders = $headers.Clone()
-        $apiHeaders['Content-Type'] = 'application/x-www-form-urlencoded'
-        $apiHeaders['Referer']      = $GamePageUrl
+        $apiHeaders['Content-Type']   = 'application/x-www-form-urlencoded'
+        $apiHeaders['Referer']        = $GamePageUrl
+        $apiHeaders['X-Requested-With'] = 'XMLHttpRequest'
 
         try {
-            $apiResp = Invoke-WebRequest -Uri 'https://cdromance.org/wp-content/plugins/cdromance/public/direct.php' `
-                -Method POST -Body "id=$postId&server=$server" -Headers $apiHeaders -UseBasicParsing -ErrorAction Stop
-            $links = Extract-LinksFromHtml $apiResp.Content
+            $apiResp = Invoke-WebRequest -Uri 'https://cdromance.org/wp-content/plugins/cdr-main/public/ajax.php' `
+                -Method POST -Body "post_id=$postId" -Headers $apiHeaders -UseBasicParsing -ErrorAction Stop
+            Write-Log "AJAX response length: $($apiResp.Content.Length)" 'DEBUG'
+            $links = @(Extract-LinksFromHtml $apiResp.Content)
+            Write-Log "Extracted $($links.Count) links from AJAX response" 'DEBUG'
             if ($links.Count -gt 0) {
-                Write-Log "Strategy B (ACF direct.php) found $($links.Count) link(s)." 'DEBUG'
+                Write-Log "Strategy B (cdr-main ajax.php) found $($links.Count) link(s)." 'DEBUG'
                 return $links
             }
         } catch {
-            Write-Log "ACF direct.php POST failed: $($_.Exception.Message)" 'DEBUG'
+            Write-Log "cdr-main ajax.php POST failed: $($_.Exception.Message)" 'DEBUG'
         }
     }
 
     # Strategy C: raw href scan on the original game page
     Write-Log "Falling back to raw href scan on game page." 'DEBUG'
-    return Extract-LinksFromHtml $html
+    return @(Extract-LinksFromHtml $html)
 }
 
 function Select-DownloadLinks {
@@ -646,7 +674,7 @@ if ($Platform) {
 
 # Search
 Write-Log "Searching for: $Query" 'INFO'
-$results = Invoke-CdromanceSearch -SearchQuery $Query -PlatformSlug $resolvedSlug -SearchRegion $Region -SearchSort $Sort
+$results = @(Invoke-CdromanceSearch -SearchQuery $Query -PlatformSlug $resolvedSlug -SearchRegion $Region -SearchSort $Sort)
 
 if ($results.Count -eq 0) {
     Write-Log "No results found for: $Query" 'WARN'
@@ -697,7 +725,7 @@ if ($allLinks.Count -eq 0) {
 }
 
 Write-Log "Found $($allLinks.Count) raw link(s) on page." 'DEBUG'
-$selectedLinks = Select-DownloadLinks -Links $allLinks
+$selectedLinks = @(Select-DownloadLinks -Links $allLinks)
 
 if ($selectedLinks.Count -eq 0) {
     Write-Log "No suitable links after filtering (demos removed, nothing left)." 'ERROR'
