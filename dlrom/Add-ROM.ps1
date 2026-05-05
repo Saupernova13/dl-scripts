@@ -729,8 +729,9 @@ if ($Interactive -and $displayResults.Count -gt 1) {
     }
     $selected = $displayResults[$idx]
 } else {
-    $selected = $displayResults[0]
-    Write-Log "Auto-selecting: $($selected.Title)" 'INFO'
+    $usaResult = $displayResults | Where-Object { $_.Url -imatch '\busa\b' } | Select-Object -First 1
+    $selected  = if ($usaResult) { $usaResult } else { $displayResults[0] }
+    Write-Log "Auto-selecting: $($selected.Title) [$($selected.Url)]" 'INFO'
 }
 
 # Get download links (reveals the "SHOW LINKS" table)
