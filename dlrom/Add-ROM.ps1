@@ -79,19 +79,19 @@ function Initialize-DlConfig {
 
 # ─── Motrix RPC (adapted from dlmotrix) ──────────────────────────────────────
 
+function ConvertFrom-RpcResponse {
+    param($Content)
+    $str = if ($Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($Content) } else { [string]$Content }
+    return $str | ConvertFrom-Json
+}
+
 function Invoke-MotrixRpc {
     param([string]$Method, [object[]]$Params = @())
     $body = @{ jsonrpc = '2.0'; id = '1'; method = $Method; params = $Params } | ConvertTo-Json -Depth 10
-    try {
-        $resp = Invoke-WebRequest -Uri $script:MOTRIX_URL -Method POST -Body $body -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop
-        $json = $resp.Content | ConvertFrom-Json
-        if ($json.error) { Write-Log "RPC error: $($json.error.message)" 'ERROR'; return $null }
-        return $json.result
-    } catch {
-        Write-Log "Cannot reach Motrix at $script:MOTRIX_URL" 'ERROR'
-        Write-Log "Make sure Motrix is running. Download from: https://motrix.app" 'WARN'
-        exit 1
-    }
+    $resp = Invoke-WebRequest -Uri $script:MOTRIX_URL -Method POST -Body $body -ContentType 'application/json' -UseBasicParsing -ErrorAction Stop
+    $json = ConvertFrom-RpcResponse $resp.Content
+    if ($json.error) { throw "Motrix RPC error ($Method): $($json.error.message)" }
+    return $json.result
 }
 
 function Format-Bytes {
@@ -115,7 +115,7 @@ function Test-MotrixRunning {
         $body = @{ jsonrpc = '2.0'; id = '1'; method = 'aria2.getVersion'; params = @() } | ConvertTo-Json -Depth 5
         $resp = Invoke-WebRequest -Uri $script:MOTRIX_URL -Method POST -Body $body `
             -ContentType 'application/json' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
-        $json = $resp.Content | ConvertFrom-Json
+        $json = ConvertFrom-RpcResponse $resp.Content
         return (-not $json.error -and $null -ne $json.result)
     } catch { return $false }
 }
@@ -306,8 +306,10 @@ function Invoke-CdromanceSearch {
     if ($results.Count -eq 0) {
         Write-Log "Grid parsing found nothing; trying cover-link layout." 'DEBUG'
         $seen = @{}
-        $coverPat = 'class="cover-link"[^>]*href="(https://cdromance\.org/([a-z0-9-]+)/[^/"]+/)"'
-        $coverMatches = [regex]::Matches($html, $coverPat, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
+        $coverPatA = 'class="cover-link"[^>]*href="(https://cdromance\.org/([a-z0-9-]+)/[^/"]+/)"'
+        $coverPatB = 'href="(https://cdromance\.org/([a-z0-9-]+)/[^/"]+/)"[^>]*class="cover-link"'
+        $coverMatches = @([regex]::Matches($html, $coverPatA, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)) +
+                        @([regex]::Matches($html, $coverPatB, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase))
         foreach ($m in $coverMatches) {
             $gameUrl = $m.Groups[1].Value.Trim()
             $platSlug = $m.Groups[2].Value.Trim()
@@ -423,6 +425,14 @@ function Select-DownloadLinks {
         $english
     } else {
         $filtered
+    }
+
+    # Phase 2b: prefer USA/NTSC-U region
+    $usaPat = '(?i)\busa\b'
+    $usa    = @($working | Where-Object { $_.Label -imatch $usaPat })
+    if ($usa.Count -gt 0) {
+        Write-Log "USA variant(s) detected: $($usa.Count) link(s)" 'DEBUG'
+        $working = $usa
     }
 
     # Phase 3: multi-disc detection — return one link per disc number
@@ -542,9 +552,7 @@ function Find-RomFile {
 
 function Invoke-MotrixDownload {
     param([string]$Url, [string]$OutFile, [string]$Label)
-    $outName = [System.IO.Path]::GetFileName($OutFile)
-    $outDir  = [System.IO.Path]::GetDirectoryName($OutFile)
-    $gid = Invoke-MotrixRpc 'aria2.addUri' @(, @($Url), @{ dir = $outDir; out = $outName })
+    $gid = Invoke-MotrixRpc 'aria2.addUri' @(, @($Url))
     if (-not $gid) { throw "Motrix failed to queue the download." }
     Write-Log "GID: $gid" 'DEBUG'
     return Wait-MotrixDownload -Gid $gid -Label $Label -PollMs ([int]$cfg.pollIntervalMs)
@@ -620,10 +628,26 @@ function Invoke-WebClientDownload {
     }
 }
 
+function Get-FallbackDownloader {
+    if (Get-Command 'aria2c.exe' -ErrorAction SilentlyContinue) { return 'aria2c' }
+    if (Get-Command 'aria2c'     -ErrorAction SilentlyContinue) { return 'aria2c' }
+    if (Get-Command 'curl.exe'   -ErrorAction SilentlyContinue) { return 'curl'   }
+    if (Get-Command 'Start-BitsTransfer' -ErrorAction SilentlyContinue) { return 'bits' }
+    return 'webclient'
+}
+
 function Invoke-FileDownload {
     param([string]$Url, [string]$OutFile, [string]$Label = "")
+    if ($script:DOWNLOADER -eq 'motrix') {
+        try {
+            return Invoke-MotrixDownload -Url $Url -OutFile $OutFile -Label $Label
+        } catch {
+            Write-Log "Motrix failed: $($_.Exception.Message)" 'WARN'
+            $script:DOWNLOADER = Get-FallbackDownloader
+            Write-Log "Falling back to: $script:DOWNLOADER" 'WARN'
+        }
+    }
     switch ($script:DOWNLOADER) {
-        'motrix'    { return Invoke-MotrixDownload    -Url $Url -OutFile $OutFile -Label $Label }
         'aria2c'    { return Invoke-Aria2cDownload    -Url $Url -OutFile $OutFile -Label $Label }
         'curl'      { return Invoke-CurlDownload      -Url $Url -OutFile $OutFile -Label $Label }
         'bits'      { return Invoke-BitsDownload      -Url $Url -OutFile $OutFile -Label $Label }
@@ -711,7 +735,7 @@ if ($Interactive -and $displayResults.Count -gt 1) {
 
 # Get download links (reveals the "SHOW LINKS" table)
 Write-Log "Fetching download links for: $($selected.Title)" 'INFO'
-$allLinks = Get-DownloadLinks -GamePageUrl $selected.Url
+$allLinks = @(Get-DownloadLinks -GamePageUrl $selected.Url)
 
 if ($allLinks.Count -eq 0) {
     Write-Log "No download links found on the game page." 'ERROR'
