@@ -29,39 +29,14 @@ param(
     [string]$Filter = "",
 
     [Parameter(Mandatory=$false)]
-    [switch]$ListOnly = $false
+    [switch]$ListOnly = $false,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$DryRun = $false
 )
 
-# Load/create config.json and return this script's section.
-# On first run: creates the file and writes defaults. On subsequent runs: reads existing values.
-# If the section is missing from an existing file, it is added with defaults.
-function Initialize-DlConfig {
-    param([string]$Section, [PSCustomObject]$Defaults)
-    $configDir  = Join-Path $env:LOCALAPPDATA "dlScripts"
-    $configPath = Join-Path $configDir "config.json"
-    if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
-    $config = $null
-    $dirty  = $false
-    if (Test-Path $configPath) {
-        try   { $config = Get-Content $configPath -Raw | ConvertFrom-Json }
-        catch {
-            Write-Host "[dlScripts] config.json could not be parsed  - [$Section] defaults will be written." -ForegroundColor Yellow
-            $config = [PSCustomObject]@{}
-            $dirty  = $true
-        }
-    } else {
-        Write-Host "[dlScripts] Config not found  - creating: $configPath" -ForegroundColor Yellow
-        $config = [PSCustomObject]@{}
-        $dirty  = $true
-    }
-    if (-not ($config.PSObject.Properties.Name -contains $Section)) {
-        Add-Member -InputObject $config -MemberType NoteProperty -Name $Section -Value $Defaults
-        Write-Host "[dlScripts] Added [$Section] defaults to config.json  - edit to customise." -ForegroundColor Cyan
-        $dirty = $true
-    }
-    if ($dirty) { $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8 }
-    return $config.$Section
-}
+# Shared resolver library: Initialize-DlConfig, Resolve-MediaPath, Get-DriveMetaInventory.
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
 
 $cfg = Initialize-DlConfig -Section "anime" -Defaults ([PSCustomObject]@{
     qbitHost            = "http://localhost:8080"
@@ -70,24 +45,39 @@ $cfg = Initialize-DlConfig -Section "anime" -Defaults ([PSCustomObject]@{
     maxResults          = 75
     autoAppendDualAudio = $true
     preferredUploaders  = @("judas", "cerebrus", "cleo", "animetime")
+    useDriveMetadata    = $true
 })
 
 # Apply config defaults if not specified as parameters
 if (-not $QbitHost)    { $QbitHost   = $cfg.qbitHost }
 if ($MaxResults -eq 0) { $MaxResults = $cfg.maxResults }
 
-# Resolve destination based on isAnimeSeries if not explicitly provided
-if (-not $Destination) {
+# Resolve destination:
+#   -Destination CLI > drive-meta resolver (when useDriveMetadata) > cfg legacy fields > $HOME fallback.
+if ($Destination) {
+    $destRoot = [System.IO.Path]::GetPathRoot($Destination)
+    if ($destRoot -and -not (Test-Path $destRoot)) {
+        Write-Error "Destination drive '$destRoot' is not connected. Refusing to send torrent to a dead drive."
+        exit 1
+    }
+} elseif ($cfg.useDriveMetadata) {
+    $mediaType = if ($isAnimeSeries -eq "no") { 'anime_movie' } else { 'anime_series' }
+    $Destination = Resolve-MediaPath -MediaType $mediaType
+} else {
     $Destination = if ($isAnimeSeries -eq "no") { $cfg.moviesDestination } else { $cfg.seriesDestination }
 }
 
-# Ensure destination directory exists
+# Ensure destination directory exists (skip side effects in DryRun)
 if (-not (Test-Path $Destination)) {
-    try {
-        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    } catch {
-        Write-Error "Cannot create destination directory: $Destination"
-        exit 1
+    if ($DryRun) {
+        Write-Host "[DRY RUN] Destination would be created: $Destination" -ForegroundColor Gray
+    } else {
+        try {
+            New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+        } catch {
+            Write-Error "Cannot create destination directory: $Destination"
+            exit 1
+        }
     }
 }
 
@@ -334,6 +324,15 @@ try {
     Write-Log "  Dual Audio: $($selectedTorrent.IsDualAudio)" "DEBUG"
     Write-Log "  Preferred Uploader: $($selectedTorrent.IsPreferredUploader)" "DEBUG"
     Write-Host ""
+
+    if ($DryRun) {
+        $magnetPreview = $selectedTorrent.MagnetLink.Substring(0, [Math]::Min(120, $selectedTorrent.MagnetLink.Length))
+        Write-Log "[DRY RUN] Would POST to $QbitHost/api/v2/torrents/add" "INFO"
+        Write-Log "[DRY RUN]   savepath: $Destination" "INFO"
+        Write-Log "[DRY RUN]   magnet:   $magnetPreview..." "INFO"
+        Write-Log "Dry run complete - no torrent submitted." "SUCCESS"
+        return ($selectedTorrent | ConvertTo-Json)
+    }
 
     Write-Log "Adding torrent to qBittorrent at $QbitHost..." "INFO"
 
