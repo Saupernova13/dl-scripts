@@ -596,6 +596,53 @@ function Find-RomFile {
         Select-Object -First 1
 }
 
+# Extensions we treat as an already-installable ROM (download was a raw ROM, not an archive).
+$script:ROM_EXTS = @('.iso', '.bin', '.cue', '.img', '.chd', '.pbp', '.gdi',
+                     '.nds', '.3ds', '.cia', '.gba', '.gb', '.gbc', '.gg',
+                     '.z64', '.n64', '.v64', '.sfc', '.smc', '.nes',
+                     '.rvz', '.wbfs', '.gcm', '.cso')
+
+# True only if the file really starts with a zip/7z/rar signature. Used to decide
+# extract-vs-file-directly; Get-ArchiveType can't answer this (it always returns a type).
+function Test-IsArchive {
+    param([string]$Path)
+    try {
+        $fs  = [System.IO.File]::OpenRead($Path)
+        try {
+            $buf = New-Object byte[] 8
+            $n   = $fs.Read($buf, 0, 8)
+        } finally { $fs.Dispose() }
+        if ($n -lt 4) { return $false }
+        $hex = ($buf[0..($n - 1)] | ForEach-Object { $_.ToString('X2') }) -join ''
+        if ($hex -match '^504B0304' -or $hex -match '^504B0506' -or $hex -match '^504B0708') { return $true }  # zip
+        if ($hex -match '^377ABCAF271C') { return $true }  # 7z
+        if ($hex -match '^526172211A07') { return $true }  # rar4/rar5
+        return $false
+    } catch { return $false }
+}
+
+# Move a single ROM into the console destination, verify it landed, and bring along a
+# paired .cue/.bin sibling. Throws if the move fails or the file does not appear at dest.
+function Move-RomToDest {
+    param([string]$SourcePath, [string]$DestDir)
+    if (-not (Test-Path $DestDir)) { New-Item -ItemType Directory -Path $DestDir -Force | Out-Null }
+    $name  = [System.IO.Path]::GetFileName($SourcePath)
+    $final = Join-Path $DestDir $name
+    Move-Item -LiteralPath $SourcePath -Destination $final -Force -ErrorAction Stop
+    if (-not (Test-Path -LiteralPath $final)) { throw "ROM did not appear at destination: $final" }
+    Write-Log "ROM saved to: $final" 'SUCCESS'
+    $ext = [System.IO.Path]::GetExtension($name).ToLower()
+    if ($ext -eq '.bin' -or $ext -eq '.cue') {
+        $pairExt = if ($ext -eq '.bin') { '.cue' } else { '.bin' }
+        $pairSrc = [System.IO.Path]::ChangeExtension($SourcePath, $pairExt)
+        if (Test-Path -LiteralPath $pairSrc) {
+            Move-Item -LiteralPath $pairSrc -Destination $DestDir -Force -ErrorAction SilentlyContinue
+            Write-Log "Paired $pairExt moved alongside $ext" 'DEBUG'
+        }
+    }
+    return $final
+}
+
 # ─── Download Backends ────────────────────────────────────────────────────────
 
 function Invoke-MotrixDownload {
@@ -1137,6 +1184,22 @@ foreach ($link in $selectedLinks) {
             continue
         }
 
+        # Raw ROM (not a real archive): file it straight into the console folder so it can
+        # never be left behind in the downloader's folder. Only true archives get extracted.
+        if (-not (Test-IsArchive $completedPath)) {
+            $dlExt = [System.IO.Path]::GetExtension($completedPath).ToLower()
+            if ($dlExt -notin $script:ROM_EXTS) {
+                Write-Log "Download is not an archive and '$dlExt' is an unrecognised ROM type; filing as-is." 'WARN'
+            }
+            try {
+                Move-RomToDest -SourcePath $completedPath -DestDir $romDest | Out-Null
+                $installedCount++
+            } catch {
+                Write-Log "Failed to file ROM: $($_.Exception.Message)" 'ERROR'
+            }
+            continue
+        }
+
         $extractId  = [System.IO.Path]::GetFileNameWithoutExtension($safeLabel) + '_' + (Get-Random)
         $extractDir = Join-Path $tempDir "extracted\$extractId"
         try {
@@ -1153,20 +1216,8 @@ foreach ($link in $selectedLinks) {
         }
 
         try {
-            Move-Item -Path $romFile.FullName -Destination $romDest -Force -ErrorAction Stop
-            if (Test-Path (Join-Path $romDest $romFile.Name)) {
-                $installedCount++
-                Write-Log "ROM saved to: $(Join-Path $romDest $romFile.Name)" 'SUCCESS'
-
-                # Move paired .cue sheet when the ROM is a .bin
-                if ($romFile.Extension.ToLower() -eq '.bin') {
-                    $cueSrc = Join-Path $romFile.DirectoryName ([System.IO.Path]::ChangeExtension($romFile.Name, '.cue'))
-                    if (Test-Path $cueSrc) {
-                        Move-Item -Path $cueSrc -Destination $romDest -Force -ErrorAction SilentlyContinue
-                        Write-Log "Paired .cue moved alongside .bin" 'DEBUG'
-                    }
-                }
-            }
+            Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest | Out-Null
+            $installedCount++
         } catch {
             Write-Log "Move failed: $($_.Exception.Message)" 'ERROR'
         }
