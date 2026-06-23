@@ -26,7 +26,10 @@ param(
     [switch]$Interactive = $false,
 
     [Parameter(Mandatory=$false)]
-    [switch]$NoExtract = $false
+    [switch]$NoExtract = $false,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$NoSteam = $false
 )
 
 Add-Type -AssemblyName System.Web
@@ -72,6 +75,15 @@ function Initialize-DlConfig {
         Add-Member -InputObject $config -MemberType NoteProperty -Name $Section -Value $Defaults
         Write-Host "[dlScripts] Added [$Section] defaults to config.json - edit to customise." -ForegroundColor Cyan
         $dirty = $true
+    } else {
+        $existing = $config.$Section
+        foreach ($prop in $Defaults.PSObject.Properties) {
+            if (-not ($existing.PSObject.Properties.Name -contains $prop.Name)) {
+                Add-Member -InputObject $existing -MemberType NoteProperty -Name $prop.Name -Value $prop.Value
+                Write-Host "[dlScripts] Backfilled missing key [$Section.$($prop.Name)] in config.json" -ForegroundColor Cyan
+                $dirty = $true
+            }
+        }
     }
     if ($dirty) { $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8 }
     return $config.$Section
@@ -154,13 +166,15 @@ $PLATFORM_SLUGS = @{
     "3ds"       = "3ds-roms"
 }
 
+# Folder names match EmuDeck's roms layout so its emulators and Steam ROM Manager
+# parsers both see the files (e.g. PS1 lives in 'psx', GameCube in 'gc').
 $PLATFORM_FOLDERS = @{
     "ps2-iso"   = "ps2"
-    "psx-iso"   = "ps1"
+    "psx-iso"   = "psx"
     "psp"       = "psp"
-    "vita"      = "vita"
+    "vita"      = "psvita"
     "n64-roms"  = "n64"
-    "gamecube"  = "gamecube"
+    "gamecube"  = "gc"
     "nds-roms"  = "nds"
     "gba"       = "gba"
     "snes-roms" = "snes"
@@ -170,7 +184,7 @@ $PLATFORM_FOLDERS = @{
     "dreamcast" = "dreamcast"
     "saturn"    = "saturn"
     "wii"       = "wii"
-    "3ds-roms"  = "3ds"
+    "3ds-roms"  = "n3ds"
 }
 
 # ─── Archive Helpers ──────────────────────────────────────────────────────────
@@ -659,12 +673,190 @@ function Invoke-FileDownload {
 # ─── Config Setup ─────────────────────────────────────────────────────────────
 
 $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
-    romsBase       = "C:\Emulation\roms"
-    tempDir        = (Join-Path $env:TEMP "dlrom")
-    motrixRpcUrl   = "http://localhost:16800/jsonrpc"
-    maxResults     = 10
-    pollIntervalMs = 2000
+    romsBase        = "C:\Emulation\roms"
+    tempDir         = (Join-Path $env:TEMP "dlrom")
+    motrixRpcUrl    = "http://localhost:16800/jsonrpc"
+    maxResults      = 10
+    pollIntervalMs  = 2000
+    steamSync       = $true     # after a successful install, add the ROM to Steam via Steam ROM Manager
+    srmExe          = ""        # path to srm.exe; blank = autodetect C:\Emulation\tools\srm.exe
+    srmRestartSteam = "auto"    # auto (restart only if running) | never | always
+    srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
+    srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
 })
+
+# Read a config value with a fallback when the key is absent (stale config that missed backfill).
+function Get-CfgValue {
+    param([string]$Name, $Default)
+    if ($cfg.PSObject.Properties.Name -contains $Name -and $null -ne $cfg.$Name) { return $cfg.$Name }
+    return $Default
+}
+
+# ─── Steam ROM Manager Integration ────────────────────────────────────────────
+
+function Find-Srm {
+    param([string]$Configured)
+    if ($Configured -and (Test-Path $Configured)) { return $Configured }
+    $default = "C:\Emulation\tools\srm.exe"
+    if (Test-Path $default) { return $default }
+    $cmd = Get-Command "srm.exe" -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
+# Locate the standalone srm-wrapper CLI (preferred over the built-in logic below).
+function Find-SrmWrapper {
+    param([string]$Configured)
+    if ($Configured -and (Test-Path $Configured)) { return $Configured }
+    foreach ($name in @('srm-wrapper.cmd', 'srm-wrapper')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+    }
+    return $null
+}
+
+function Get-SrmUserDataDir {
+    param([string]$SrmExe)
+    return Join-Path (Split-Path -Parent $SrmExe) "userData"
+}
+
+function Get-SrmRomsDir {
+    param([string]$SrmExe, [string]$Fallback)
+    $settingsPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userSettings.json"
+    if (Test-Path $settingsPath) {
+        try {
+            $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+            if ($settings.environmentVariables.romsDirectory) { return $settings.environmentVariables.romsDirectory }
+        } catch { }
+    }
+    return $Fallback
+}
+
+function Get-SrmSteamExe {
+    param([string]$SrmExe)
+    $settingsPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userSettings.json"
+    if (Test-Path $settingsPath) {
+        try {
+            $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
+            $steamDir = $settings.environmentVariables.steamDirectory
+            if ($steamDir) {
+                $candidate = Join-Path $steamDir "steam.exe"
+                if (Test-Path $candidate) { return $candidate }
+            }
+        } catch { }
+    }
+    $fallback = Join-Path ${env:ProgramFiles(x86)} "Steam\steam.exe"
+    if (Test-Path $fallback) { return $fallback }
+    return $null
+}
+
+# Returns parserIds of *disabled* SRM parsers whose romDirectory resolves to $RomDest.
+function Get-SrmParserIdsForFolder {
+    param([string]$SrmExe, [string]$RomDest, [string]$RomsBase)
+    $configPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userConfigurations.json"
+    if (-not (Test-Path $configPath)) { return @() }
+    try {
+        $parsers = Get-Content $configPath -Raw | ConvertFrom-Json
+    } catch {
+        Write-Log "Could not parse SRM userConfigurations.json; skipping parser enable." 'WARN'
+        return @()
+    }
+    $romsDir    = Get-SrmRomsDir -SrmExe $SrmExe -Fallback $RomsBase
+    $targetNorm = ($RomDest -replace '/', '\').TrimEnd('\')
+    $ids = @()
+    foreach ($p in $parsers) {
+        if (-not $p.romDirectory) { continue }
+        $dir = $p.romDirectory
+        $dir = $dir.Replace('${romsdirglobal}', $romsDir)
+        $dir = $dir.Replace('${/}', '\')
+        $dir = $dir.Replace('/', '\')
+        if ($dir.TrimEnd('\') -ieq $targetNorm -and $p.disabled -eq $true) {
+            $ids += $p.parserId
+        }
+    }
+    return @($ids)
+}
+
+function Invoke-Srm {
+    param([string]$SrmExe, [string[]]$SrmArgs)
+    $workDir = Split-Path -Parent $SrmExe
+    $proc = Start-Process -FilePath $SrmExe -ArgumentList $SrmArgs -WorkingDirectory $workDir `
+        -WindowStyle Hidden -Wait -PassThru
+    return $proc.ExitCode
+}
+
+function Invoke-SteamRomManager {
+    param([string]$RomDest, [string]$RomsBase)
+
+    $srm = Find-Srm -Configured (Get-CfgValue 'srmExe' '')
+    if (-not $srm) {
+        Write-Log "Steam sync skipped: neither srm-wrapper nor Steam ROM Manager (srm.exe) was found." 'WARN'
+        Write-Log "Install srm-wrapper on PATH, or Steam ROM Manager (EmuDeck installs it at C:\Emulation\tools\srm.exe), to auto-add ROMs to Steam." 'WARN'
+        Write-Log "The ROM is downloaded and in place at: $RomDest" 'WARN'
+        return
+    }
+    Write-Log "Steam ROM Manager: $srm" 'INFO'
+
+    # 1) Enable the parser watching this folder (if requested and currently disabled)
+    if ([bool](Get-CfgValue 'srmEnableParser' $true)) {
+        $ids = @(Get-SrmParserIdsForFolder -SrmExe $srm -RomDest $RomDest -RomsBase $RomsBase)
+        if ($ids.Count -gt 0) {
+            Write-Log "Enabling SRM parser(s) for $RomDest : $($ids -join ', ')" 'INFO'
+            $code = Invoke-Srm -SrmExe $srm -SrmArgs (@('enable') + $ids)
+            if ($code -ne 0) { Write-Log "srm enable exited with code $code." 'WARN' }
+        } else {
+            Write-Log "No disabled SRM parser watches $RomDest (already enabled or none configured)." 'DEBUG'
+        }
+    }
+
+    # 2) Decide Steam restart behaviour
+    $policy   = (Get-CfgValue 'srmRestartSteam' 'auto').ToString().ToLower()
+    $running  = [bool](Get-Process -Name steam -ErrorAction SilentlyContinue)
+    $restart  = switch ($policy) {
+        'always' { $true }
+        'never'  { $false }
+        default  { $running }   # 'auto'
+    }
+    $steamExe = Get-SrmSteamExe -SrmExe $srm
+
+    # 3) Close Steam so SRM can fully apply (categories require Steam closed)
+    if ($restart -and $running) {
+        if ($steamExe) {
+            Write-Log "Shutting down Steam so SRM can apply changes..." 'INFO'
+            Start-Process -FilePath $steamExe -ArgumentList '-shutdown' -WindowStyle Hidden | Out-Null
+            $deadline = (Get-Date).AddSeconds(20)
+            while ((Get-Process -Name steam -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
+                Start-Sleep -Milliseconds 500
+            }
+            if (Get-Process -Name steam -ErrorAction SilentlyContinue) {
+                Write-Log "Steam did not exit within 20s; continuing anyway (new shortcut may need a manual Steam restart)." 'WARN'
+            }
+        } else {
+            Write-Log "Steam is running but steam.exe path is unknown; cannot restart it automatically." 'WARN'
+        }
+    }
+
+    # 4) Add to Steam
+    Write-Log "Running Steam ROM Manager 'add'..." 'INFO'
+    $addCode = Invoke-Srm -SrmExe $srm -SrmArgs @('add')
+    if ($addCode -eq 0) {
+        Write-Log "Steam ROM Manager finished adding games to Steam." 'SUCCESS'
+    } else {
+        Write-Log "srm add exited with code $addCode." 'WARN'
+    }
+
+    # 5) Relaunch Steam
+    if ($restart -and ($running -or $policy -eq 'always')) {
+        if ($steamExe) {
+            Write-Log "Relaunching Steam..." 'INFO'
+            Start-Process -FilePath $steamExe | Out-Null
+        } else {
+            Write-Log "Could not relaunch Steam (steam.exe path unknown); start it manually to see the new game." 'WARN'
+        }
+    } elseif (-not $restart) {
+        Write-Log "Steam not restarted (policy: $policy). Restart Steam to see the new game." 'INFO'
+    }
+}
 
 if ($MaxResults -eq 0) { $MaxResults = [int]$cfg.maxResults }
 $script:MOTRIX_URL = $cfg.motrixRpcUrl
@@ -786,7 +978,10 @@ if (-not (Test-Path $tempDir)) {
     New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
 }
 
-# Download, extract, and install each selected link
+# Download, extract, and install each selected link.
+# Each iteration removes its temp archive + extraction dir in a finally so nothing is
+# left behind on success OR failure (--no-extract keeps the archive, which is the deliverable).
+$installedCount = 0
 foreach ($link in $selectedLinks) {
     Write-Log "Downloading: $($link.Label)" 'INFO'
 
@@ -795,67 +990,104 @@ foreach ($link in $selectedLinks) {
     $outFile   = Join-Path $tempDir $safeLabel
 
     $completedPath = $null
+    $extractDir    = $null
     try {
-        $completedPath = Invoke-FileDownload -Url $link.Url -OutFile $outFile -Label $link.Label
-    } catch {
-        Write-Log "Download failed: $($_.Exception.Message)" 'ERROR'
-        continue
-    }
+        try {
+            $completedPath = Invoke-FileDownload -Url $link.Url -OutFile $outFile -Label $link.Label
+        } catch {
+            Write-Log "Download failed: $($_.Exception.Message)" 'ERROR'
+            continue
+        }
 
-    if ($NoExtract) {
-        Write-Log "Archive saved (--no-extract): $completedPath" 'SUCCESS'
-        continue
-    }
+        if ($NoExtract) {
+            Write-Log "Archive saved (--no-extract): $completedPath" 'SUCCESS'
+            continue
+        }
 
-    if (-not $completedPath -or -not (Test-Path $completedPath)) {
-        Write-Log "Downloaded file not found at: $outFile" 'ERROR'
-        continue
-    }
+        if (-not $completedPath -or -not (Test-Path $completedPath)) {
+            Write-Log "Downloaded file not found at: $outFile" 'ERROR'
+            continue
+        }
 
-    $extractId  = [System.IO.Path]::GetFileNameWithoutExtension($safeLabel) + '_' + (Get-Random)
-    $extractDir = Join-Path $tempDir "extracted\$extractId"
-    try {
-        Expand-RomArchive -ArchivePath $completedPath -OutDir $extractDir
-    } catch {
-        Write-Log "Extraction failed: $($_.Exception.Message)" 'ERROR'
-        Write-Log "Archive left at: $completedPath" 'WARN'
-        continue
-    }
+        $extractId  = [System.IO.Path]::GetFileNameWithoutExtension($safeLabel) + '_' + (Get-Random)
+        $extractDir = Join-Path $tempDir "extracted\$extractId"
+        try {
+            Expand-RomArchive -ArchivePath $completedPath -OutDir $extractDir
+        } catch {
+            Write-Log "Extraction failed: $($_.Exception.Message)" 'ERROR'
+            continue
+        }
 
-    $romFile = Find-RomFile -ExtractedDir $extractDir
-    if (-not $romFile) {
-        Write-Log "No ROM file found after extraction. Extracted dir: $extractDir" 'WARN'
-        Write-Log "Archive left at: $completedPath" 'WARN'
-        continue
-    }
+        $romFile = Find-RomFile -ExtractedDir $extractDir
+        if (-not $romFile) {
+            Write-Log "No ROM file found after extraction." 'WARN'
+            continue
+        }
 
-    $moved = $false
-    try {
-        Move-Item -Path $romFile.FullName -Destination $romDest -Force -ErrorAction Stop
-        if (Test-Path (Join-Path $romDest $romFile.Name)) {
-            $moved = $true
-            Write-Log "ROM saved to: $(Join-Path $romDest $romFile.Name)" 'SUCCESS'
+        try {
+            Move-Item -Path $romFile.FullName -Destination $romDest -Force -ErrorAction Stop
+            if (Test-Path (Join-Path $romDest $romFile.Name)) {
+                $installedCount++
+                Write-Log "ROM saved to: $(Join-Path $romDest $romFile.Name)" 'SUCCESS'
 
-            # Move paired .cue sheet when the ROM is a .bin
-            if ($romFile.Extension.ToLower() -eq '.bin') {
-                $cueSrc = Join-Path $romFile.DirectoryName ([System.IO.Path]::ChangeExtension($romFile.Name, '.cue'))
-                if (Test-Path $cueSrc) {
-                    Move-Item -Path $cueSrc -Destination $romDest -Force -ErrorAction SilentlyContinue
-                    Write-Log "Paired .cue moved alongside .bin" 'DEBUG'
+                # Move paired .cue sheet when the ROM is a .bin
+                if ($romFile.Extension.ToLower() -eq '.bin') {
+                    $cueSrc = Join-Path $romFile.DirectoryName ([System.IO.Path]::ChangeExtension($romFile.Name, '.cue'))
+                    if (Test-Path $cueSrc) {
+                        Move-Item -Path $cueSrc -Destination $romDest -Force -ErrorAction SilentlyContinue
+                        Write-Log "Paired .cue moved alongside .bin" 'DEBUG'
+                    }
                 }
             }
+        } catch {
+            Write-Log "Move failed: $($_.Exception.Message)" 'ERROR'
         }
-    } catch {
-        Write-Log "Move failed: $($_.Exception.Message)" 'ERROR'
-        Write-Log "Extracted files remain at: $extractDir" 'WARN'
     }
+    finally {
+        # Always clean download artifacts (keep the archive only under --no-extract).
+        if (-not $NoExtract) {
+            if ($completedPath -and (Test-Path $completedPath)) { Remove-Item -Path $completedPath -Force -ErrorAction SilentlyContinue }
+            if (Test-Path $outFile)                              { Remove-Item -Path $outFile -Force -ErrorAction SilentlyContinue }
+            if ($extractDir -and (Test-Path $extractDir))        { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
 
-    # Clean up only after the ROM is confirmed at its destination
-    if ($moved) {
-        try { Remove-Item -Path $completedPath -Force -ErrorAction SilentlyContinue } catch { }
-        try { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue } catch { }
-        Write-Log "Temp files cleaned up." 'DEBUG'
+# Prune the extraction parent if our cleanup left it empty.
+$extractedParent = Join-Path $tempDir "extracted"
+if ((Test-Path $extractedParent) -and -not (Get-ChildItem -LiteralPath $extractedParent -Force -ErrorAction SilentlyContinue)) {
+    Remove-Item -Path $extractedParent -Force -ErrorAction SilentlyContinue
+}
+
+# Add the freshly installed ROM(s) to Steam. Prefer the standalone srm-wrapper CLI;
+# fall back to the built-in implementation if it isn't installed or fails.
+if ($installedCount -gt 0 -and -not $NoSteam -and [bool](Get-CfgValue 'steamSync' $true)) {
+    Write-Log "Syncing $installedCount new ROM(s) to Steam..." 'INFO'
+    $handled = $false
+    $wrapper = Find-SrmWrapper -Configured (Get-CfgValue 'srmWrapperCmd' '')
+    if ($wrapper) {
+        Write-Log "Using srm-wrapper: $wrapper" 'INFO'
+        $wrapperArgs = @('--rom-dir', $romDest, '--restart-steam', ((Get-CfgValue 'srmRestartSteam' 'auto').ToString()))
+        $srmExeCfg = (Get-CfgValue 'srmExe' '')
+        if ($srmExeCfg) { $wrapperArgs += @('--srm', $srmExeCfg) }
+        try {
+            & $wrapper @wrapperArgs
+            $code = $LASTEXITCODE
+            if ($code -eq 0) {
+                $handled = $true
+                Write-Log "Steam sync handled by srm-wrapper." 'SUCCESS'
+            } else {
+                Write-Log "srm-wrapper exited with code $code; falling back to built-in SRM logic." 'WARN'
+            }
+        } catch {
+            Write-Log "srm-wrapper failed: $($_.Exception.Message); falling back to built-in SRM logic." 'WARN'
+        }
     }
+    if (-not $handled) {
+        Invoke-SteamRomManager -RomDest $romDest -RomsBase $romsBase
+    }
+} elseif ($installedCount -gt 0 -and $NoSteam) {
+    Write-Log "Skipping Steam sync (--no-steam)." 'INFO'
 }
 
 Write-Log "All done." 'SUCCESS'

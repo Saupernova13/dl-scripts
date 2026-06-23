@@ -8,7 +8,7 @@ PowerShell scripts for searching and downloading media with automatic extraction
 | [dlgame](dlgame/) | `dlgame.cmd` | appnetica.com | qBittorrent | PC games (Steam folder versions) |
 | [dlmovie](dlmovie/) | `dlmovie.cmd` | YTS | qBittorrent | Movies |
 | [dltv](dltv/) | `dltv.cmd` | The Pirate Bay | qBittorrent | TV shows |
-| [dlrom](dlrom/) | `dlrom.cmd` | cdromance.org | Motrix / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs) |
+| [dlrom](dlrom/) | `dlrom.cmd` | cdromance.org | Motrix / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs + auto-add to Steam via Steam ROM Manager) |
 
 ## Setup
 
@@ -75,7 +75,7 @@ All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, stru
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
   "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000 }
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "" }
 }
 ```
 
@@ -90,12 +90,35 @@ Each script self-bootstraps: if the file or its section is missing, it is create
 - **dlanime, dlgame, dlmovie, dltv**: Queue torrents to qBittorrent via WebUI API (`POST /api/v2/torrents/add`). qBittorrent must be running with Web UI enabled. The host is configured per-section in `config.json`.
 - **dlrom**: Downloads direct files via **Motrix (preferred) → aria2c → curl.exe → BITS → PowerShell WebClient**. Auto-detects available downloader at runtime with fallbacks. Auto-extracts archives and installs ROMs to emulator directories.
 
+### Steam ROM Manager integration (dlrom)
+
+After a ROM is installed, `dlrom` adds it to Steam via **Steam ROM Manager (SRM)** — it never writes a Steam shortcut itself. Because SRM tracks what it has added, running SRM by hand later reconciles instead of creating duplicates.
+
+`dlrom` **prefers the standalone `srm-wrapper` CLI** (sibling `srm-wrapper` repo) if it's on `PATH` (or set `srmWrapperCmd`): it runs `srm-wrapper --rom-dir <dest> --restart-steam <policy>`. If the wrapper isn't installed or returns non-zero, `dlrom` falls back to its **built-in** implementation (`Invoke-SteamRomManager` in `Add-ROM.ps1`):
+1. Locate `srm.exe` (config `srmExe`, else `C:\Emulation\tools\srm.exe`, else `PATH`).
+2. If `srmEnableParser`, read SRM's `userConfigurations.json` and enable any **disabled** parser whose `romDirectory` resolves to the destination folder (`srm enable <id>`), so the platform actually gets scanned.
+3. Honour `srmRestartSteam`: on `auto` (default) restart Steam only if it is running — gracefully `steam -shutdown`, run SRM, then relaunch (SRM needs Steam closed to apply categories, and Steam only reads new shortcuts on restart).
+4. Run `srm add` silently (`-WindowStyle Hidden`), then relaunch Steam if it was closed.
+
+If **neither** the wrapper nor `srm.exe` is found, `dlrom` does **not** crash — it logs where the ROM was saved and suggests installing `srm-wrapper` or SRM.
+
+Config keys (`[rom]` section): `steamSync` (master on/off, default `true`), `srmWrapperCmd` (blank = autodetect on PATH), `srmExe`, `srmRestartSteam` (`auto`/`never`/`always`), `srmEnableParser`. Skip per-run with `--no-steam`.
+
+Notes:
+- Platform folders match EmuDeck's layout (e.g. PS1 → `psx`, GameCube → `gc`, 3DS → `n3ds`, Vita → `psvita`) so both the emulators and SRM's parsers find the files.
+- `srm add` runs **all** currently-enabled parsers, so the first sync may add a backlog of everything already on disk — SRM dedupes, so this is safe.
+- Requires SRM configured once (EmuDeck does this) with its parsers pointing at `romsBase`.
+
+### Temp cleanup (dlrom)
+
+Each download removes its temp archive and extraction directory in a `finally`, so nothing is left in `%TEMP%\dlrom` whether the download **succeeds or fails**. Only the installed ROM remains at its destination. `--no-extract` is the one exception: it intentionally keeps the downloaded archive (that's the deliverable) and does not extract.
+
 ### CMD wrapper behaviour
 
 - `%~dp0` is used to resolve the `.ps1` path relative to the CMD file, so the scripts work correctly regardless of which directory the user is in or where PATH points.
 - `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract]`.
+- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam]`.
 
 ### Drive metadata
 
