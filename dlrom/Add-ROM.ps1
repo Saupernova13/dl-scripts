@@ -132,8 +132,38 @@ function Test-MotrixRunning {
     } catch { return $false }
 }
 
+# AB Download Manager exposes a local HTTP integration API (default port 15151).
+# POST /ping -> "pong"; POST /add { items:[{link,downloadPage,headers,description,suggestedName,type}], options:{silentAdd,silentStart} }.
+# It has no completion/status API, so callers watch its download folder for the finished file.
+function Test-AbRunning {
+    $port = if ($script:AB_PORT) { $script:AB_PORT } else { 15151 }
+    try {
+        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$port/ping" -Method POST -Body 'null' `
+            -ContentType 'application/json' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
+        $txt = if ($resp.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($resp.Content) } else { [string]$resp.Content }
+        return ($txt -match '(?i)pong')
+    } catch { return $false }
+}
+
+function Add-AbDownload {
+    param([string]$Url, [string]$SuggestedName = $null, [string]$Referer = $null, [hashtable]$Headers = $null)
+    $port = if ($script:AB_PORT) { $script:AB_PORT } else { 15151 }
+    $item = [ordered]@{
+        link          = $Url
+        downloadPage  = $Referer
+        headers       = $Headers
+        description   = $null
+        suggestedName = $SuggestedName
+        type          = 'http'
+    }
+    $body = @{ items = @($item); options = @{ silentAdd = $true; silentStart = $true } } | ConvertTo-Json -Depth 6
+    Invoke-WebRequest -Uri "http://127.0.0.1:$port/add" -Method POST -Body $body `
+        -ContentType 'application/json' -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop | Out-Null
+}
+
 function Find-Downloader {
     if (Test-MotrixRunning)                                           { return 'motrix'    }
+    if (Test-AbRunning)                                               { return 'ab'        }
     if (Get-Command 'aria2c.exe' -ErrorAction SilentlyContinue)      { return 'aria2c'    }
     if (Get-Command 'aria2c'     -ErrorAction SilentlyContinue)      { return 'aria2c'    }
     if (Get-Command 'curl.exe'   -ErrorAction SilentlyContinue)      { return 'curl'      }
@@ -642,12 +672,64 @@ function Invoke-WebClientDownload {
     }
 }
 
-function Get-FallbackDownloader {
+# AB has no completion API, so watch its download folder for the file (named after suggestedName).
+# Completion = file present, no partial sibling, and size stable across two polls.
+function Wait-AbFile {
+    param([string]$Dir, [string]$Name, [int]$TimeoutSec = 1800, [string]$Label = "")
+    $target     = Join-Path $Dir $Name
+    $deadline   = (Get-Date).AddSeconds($TimeoutSec)
+    $lastSize   = -1
+    $stable     = 0
+    $partialExt = @('.part', '.tmp', '.download', '.crdownload', '.abdownload', '.bak')
+    $shortLabel = if ($Label.Length -gt 45) { $Label.Substring(0, 42) + '...' } else { $Label }
+    while ((Get-Date) -lt $deadline) {
+        $partials = @(Get-ChildItem -LiteralPath $Dir -Filter "$Name*" -File -ErrorAction SilentlyContinue |
+                      Where-Object { $partialExt -contains $_.Extension.ToLower() })
+        $exists = Test-Path -LiteralPath $target
+        $size   = if ($exists) { (Get-Item -LiteralPath $target).Length } else { 0 }
+        if ($exists -and $partials.Count -eq 0 -and $size -gt 0 -and $size -eq $lastSize) {
+            $stable++
+            if ($stable -ge 2) { Write-Host ""; return $target }
+        } else {
+            $stable = 0
+        }
+        $lastSize = $size
+        Write-Host "`r  [AB] $(Format-Bytes $size)  $shortLabel   " -NoNewline -ForegroundColor Cyan
+        Start-Sleep -Seconds 2
+    }
+    Write-Host ""
+    return $null
+}
+
+function Invoke-AbDownload {
+    param([string]$Url, [string]$OutFile, [string]$Label)
+    $name = [System.IO.Path]::GetFileName($OutFile)
+    Write-Log "Handing download to AB Download Manager (port $script:AB_PORT): $Label" 'INFO'
+    Add-AbDownload -Url $Url -SuggestedName $name -Referer 'https://cdromance.org/' -Headers @{ 'User-Agent' = $HTTP_HEADERS['User-Agent'] }
+    Write-Log "Queued in AB; watching $script:AB_DOWNLOAD_DIR for '$name'..." 'INFO'
+    $done = Wait-AbFile -Dir $script:AB_DOWNLOAD_DIR -Name $name -TimeoutSec $script:AB_TIMEOUT -Label $Label
+    if (-not $done) {
+        throw "AB Download Manager did not produce '$name' in $($script:AB_DOWNLOAD_DIR) within $($script:AB_TIMEOUT)s (folder/name may differ - set [rom].abDownloadDir)."
+    }
+    Write-Log "AB download complete." 'SUCCESS'
+    # Move into dlrom's temp pipeline so the rest of the flow (extract/install) is unchanged.
+    if ($done -ne $OutFile) { Move-Item -LiteralPath $done -Destination $OutFile -Force -ErrorAction Stop }
+    return $OutFile
+}
+
+# Direct (synchronous) tiers only - used as the final fallback after Motrix/AB.
+function Get-DirectDownloader {
     if (Get-Command 'aria2c.exe' -ErrorAction SilentlyContinue) { return 'aria2c' }
     if (Get-Command 'aria2c'     -ErrorAction SilentlyContinue) { return 'aria2c' }
     if (Get-Command 'curl.exe'   -ErrorAction SilentlyContinue) { return 'curl'   }
     if (Get-Command 'Start-BitsTransfer' -ErrorAction SilentlyContinue) { return 'bits' }
     return 'webclient'
+}
+
+# When Motrix fails: prefer AB next, then the direct tiers.
+function Get-FallbackDownloader {
+    if (Test-AbRunning) { return 'ab' }
+    return Get-DirectDownloader
 }
 
 function Invoke-FileDownload {
@@ -658,6 +740,15 @@ function Invoke-FileDownload {
         } catch {
             Write-Log "Motrix failed: $($_.Exception.Message)" 'WARN'
             $script:DOWNLOADER = Get-FallbackDownloader
+            Write-Log "Falling back to: $script:DOWNLOADER" 'WARN'
+        }
+    }
+    if ($script:DOWNLOADER -eq 'ab') {
+        try {
+            return Invoke-AbDownload -Url $Url -OutFile $OutFile -Label $Label
+        } catch {
+            Write-Log "AB Download Manager failed: $($_.Exception.Message)" 'WARN'
+            $script:DOWNLOADER = Get-DirectDownloader
             Write-Log "Falling back to: $script:DOWNLOADER" 'WARN'
         }
     }
@@ -683,6 +774,9 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     srmRestartSteam = "auto"    # auto (restart only if running) | never | always
     srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
+    abPort          = 15151     # AB Download Manager integration port (preferred over Motrix when reachable order-wise)
+    abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
+    abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
 })
 
 # Read a config value with a fallback when the key is absent (stale config that missed backfill).
@@ -861,6 +955,13 @@ function Invoke-SteamRomManager {
 if ($MaxResults -eq 0) { $MaxResults = [int]$cfg.maxResults }
 $script:MOTRIX_URL = $cfg.motrixRpcUrl
 $tempDir           = $cfg.tempDir
+
+# AB Download Manager settings (resolved before downloader selection)
+$script:AB_PORT    = [int](Get-CfgValue 'abPort' 15151)
+$script:AB_TIMEOUT = [int](Get-CfgValue 'abTimeoutSec' 1800)
+$abDirCfg          = Get-CfgValue 'abDownloadDir' ''
+$script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
+
 $script:DOWNLOADER = Find-Downloader
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -868,6 +969,7 @@ $script:DOWNLOADER = Find-Downloader
 # Report which downloader will be used
 $downloaderLabel = switch ($script:DOWNLOADER) {
     'motrix'    { 'Motrix (aria2 RPC)'                          }
+    'ab'        { "AB Download Manager (port $script:AB_PORT)"  }
     'aria2c'    { 'aria2c (standalone)'                         }
     'curl'      { 'curl.exe (Windows built-in)'                 }
     'bits'      { 'BITS (Background Intelligent Transfer)'      }

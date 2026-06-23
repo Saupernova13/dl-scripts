@@ -75,7 +75,7 @@ All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, stru
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
   "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "" }
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800 }
 }
 ```
 
@@ -88,7 +88,8 @@ Each script self-bootstraps: if the file or its section is missing, it is create
 ### Download methods
 
 - **dlanime, dlgame, dlmovie, dltv**: Queue torrents to qBittorrent via WebUI API (`POST /api/v2/torrents/add`). qBittorrent must be running with Web UI enabled. The host is configured per-section in `config.json`.
-- **dlrom**: Downloads direct files via **Motrix (preferred) → aria2c → curl.exe → BITS → PowerShell WebClient**. Auto-detects available downloader at runtime with fallbacks. Auto-extracts archives and installs ROMs to emulator directories.
+- **dlrom**: Downloads direct files via **Motrix → AB Download Manager → aria2c → curl.exe → BITS → PowerShell WebClient**. Auto-detects the best available downloader at runtime and falls through on failure. Auto-extracts archives and installs ROMs to emulator directories.
+  - **AB Download Manager** (port `abPort`, default 15151) is used when Motrix isn't running. Its API can queue a download but can't report completion, so dlrom passes a `suggestedName` and **watches AB's download folder** (`abDownloadDir`, default `%USERPROFILE%\Downloads\ABDM`) until the file finishes, then moves it into the pipeline. Set `abDownloadDir` if you changed AB's download location; `abTimeoutSec` bounds the wait.
 
 ### Steam ROM Manager integration (dlrom)
 
