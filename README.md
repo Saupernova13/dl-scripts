@@ -91,6 +91,17 @@ Each script self-bootstraps: if the file or its section is missing, it is create
 - **dlrom**: Downloads direct files via **Motrix → AB Download Manager → aria2c → curl.exe → BITS → PowerShell WebClient**. Auto-detects the best available downloader at runtime and falls through on failure. Auto-extracts archives and installs ROMs to emulator directories.
   - **AB Download Manager** (port `abPort`, default 15151) is used when Motrix isn't running. Its API can queue a download but can't report completion, so dlrom passes a `suggestedName` and **watches AB's download folder** (`abDownloadDir`, default `%USERPROFILE%\Downloads\ABDM`) until the file finishes, then moves it into the pipeline. Set `abDownloadDir` if you changed AB's download location; `abTimeoutSec` bounds the wait.
 
+### ROM destination resolution (dlrom)
+
+The base directory is resolved in priority order, so the local emulation library always wins when present:
+
+1. `--dest PATH` — explicit per-run override.
+2. `romsBase` (default `C:\Emulation\roms`) — used whenever the folder exists.
+3. **Drive picker** — only if `romsBase` is missing: `Resolve-MediaPath -MediaType 'rom'` picks a connected drive advertising a `rom_path` in its `drive-meta.json`.
+4. Manual prompt — last resort if no drive advertises a ROM path.
+
+The ROM is filed under `<romsBase>\<console>` (EmuDeck layout). When `--platform` is omitted, the console folder is taken from the platform detected on the chosen search result, so a bare `dlrom "Game"` still lands in the right folder instead of a generic `\roms`.
+
 ### Steam ROM Manager integration (dlrom)
 
 After a ROM is installed, `dlrom` adds it to Steam via **Steam ROM Manager (SRM)** — it never writes a Steam shortcut itself. Because SRM tracks what it has added, running SRM by hand later reconciles instead of creating duplicates.
@@ -139,7 +150,8 @@ Each connected drive can advertise where it stores different media types by plac
   "tv_path": "",
   "anime_series_path": "",
   "anime_movie_path": "",
-  "game_pc_path": "Games\\PC"
+  "game_pc_path": "Games\\PC",
+  "rom_path": "Emulation\\roms"
 }
 ```
 

@@ -34,6 +34,10 @@ param(
 
 Add-Type -AssemblyName System.Web
 
+# Shared resolver library (sibling lib/). Dot-sourced for Resolve-MediaPath, which
+# backs the ROM destination drive-picker fallback when the configured base is absent.
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
+
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
 function Write-Log {
@@ -1058,16 +1062,38 @@ $platformFolder = if ($resolvedSlug -and $PLATFORM_FOLDERS.ContainsKey($resolved
     $PLATFORM_FOLDERS[$resolvedSlug]
 } elseif ($Platform) {
     $Platform.ToLower()
+} elseif ($selected.Platform -and $PLATFORM_FOLDERS.ContainsKey($selected.Platform)) {
+    # No --platform given: use the platform detected from the chosen search result
+    # so a bare `dlrom "Game"` still lands in the right console folder, not \roms.
+    $PLATFORM_FOLDERS[$selected.Platform]
 } else {
     "roms"
 }
 
-$romsBase = if ($Destination) { $Destination } else { $cfg.romsBase }
-if (-not (Test-Path $romsBase)) {
-    Write-Log "ROMs base path not found: $romsBase" 'WARN'
-    Write-Host "Enter alternate path (or press Enter for $HOME\Emulation\roms): " -NoNewline
-    $alt = Read-Host
-    $romsBase = if ($alt) { $alt } else { Join-Path $HOME "Emulation\roms" }
+# Resolve the ROMs base directory in priority order:
+#   1. -Destination          explicit per-run override (always wins)
+#   2. cfg.romsBase          the configured base (C:\Emulation\roms) when it exists
+#   3. drive-meta picker      a connected drive advertising a rom_path
+#   4. manual prompt          last resort
+$romsBase = $null
+if ($Destination) {
+    $romsBase = $Destination
+} elseif ($cfg.romsBase -and (Test-Path $cfg.romsBase)) {
+    $romsBase = $cfg.romsBase
+    Write-Log "ROMs base: $romsBase" 'DEBUG'
+} else {
+    if ($cfg.romsBase) {
+        Write-Log "Configured ROMs base not available: $($cfg.romsBase) - falling back to drive picker." 'WARN'
+    }
+    try {
+        $romsBase = Resolve-MediaPath -MediaType 'rom' -Strict
+        Write-Log "Drive picker selected ROMs base: $romsBase" 'INFO'
+    } catch {
+        Write-Log "No connected drive advertises a ROM path ($($_.Exception.Message))." 'DEBUG'
+        Write-Host "Enter ROMs base path (or press Enter for $HOME\Emulation\roms): " -NoNewline
+        $alt = Read-Host
+        $romsBase = if ($alt) { $alt } else { Join-Path $HOME "Emulation\roms" }
+    }
 }
 
 $romDest = Join-Path $romsBase $platformFolder

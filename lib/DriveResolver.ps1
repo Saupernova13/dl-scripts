@@ -108,7 +108,7 @@ function Get-DriveMetaInventory {
 function Resolve-MediaPath {
     param(
         [Parameter(Mandatory=$true)]
-        [ValidateSet('movie','tv','anime_series','anime_movie','game_pc')]
+        [ValidateSet('movie','tv','anime_series','anime_movie','game_pc','rom')]
         [string]$MediaType,
         [switch]$Strict,
         [switch]$DryRun
