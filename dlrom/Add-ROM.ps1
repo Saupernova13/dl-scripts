@@ -29,7 +29,10 @@ param(
     [switch]$NoExtract = $false,
 
     [Parameter(Mandatory=$false)]
-    [switch]$NoSteam = $false
+    [switch]$NoSteam = $false,
+
+    [Parameter(Mandatory=$false)]
+    [switch]$LinksOnly = $false
 )
 
 Add-Type -AssemblyName System.Web
@@ -37,6 +40,10 @@ Add-Type -AssemblyName System.Web
 # Shared resolver library (sibling lib/). Dot-sourced for Resolve-MediaPath, which
 # backs the ROM destination drive-picker fallback when the configured base is absent.
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
+
+# Cloudflare bypass via FlareSolverr (headless Docker browser, off-screen). Provides
+# Invoke-CdrWeb, used for every cdromance.org request so blocks are solved automatically.
+. (Join-Path $PSScriptRoot "CfSolver.ps1")
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
 
@@ -303,15 +310,10 @@ function Invoke-CdromanceSearch {
     Write-Log "Searching: $url" 'DEBUG'
 
     try {
-        $resp = Invoke-WebRequest -Uri $url -Headers $HTTP_HEADERS -UseBasicParsing -ErrorAction Stop
+        $resp = Invoke-CdrWeb -Uri $url
     } catch {
-        $code = $_.Exception.Response.StatusCode.Value__
-        if ($code -in @(403, 503)) {
-            Write-Log "Cloudflare blocked the request (HTTP $code)." 'ERROR'
-            Write-Log "Open https://cdromance.org in your browser first, then re-run." 'WARN'
-            exit 1
-        }
         Write-Log "Search failed: $($_.Exception.Message)" 'ERROR'
+        Write-Log "If this is a Cloudflare block, ensure Docker Desktop is running so FlareSolverr can solve it." 'WARN'
         exit 1
     }
 
@@ -384,12 +386,9 @@ function Invoke-CdromanceSearch {
 function Get-DownloadLinks {
     param([string]$GamePageUrl)
 
-    $headers = $HTTP_HEADERS.Clone()
-    $headers['Referer'] = 'https://cdromance.org/'
-
     Write-Log "Fetching game page..." 'INFO'
     try {
-        $resp = Invoke-WebRequest -Uri $GamePageUrl -Headers $headers -UseBasicParsing -ErrorAction Stop
+        $resp = Invoke-CdrWeb -Uri $GamePageUrl -Referer 'https://cdromance.org/'
     } catch {
         Write-Log "Failed to fetch game page: $($_.Exception.Message)" 'ERROR'
         return @()
@@ -402,13 +401,9 @@ function Get-DownloadLinks {
         $ticket = $ticketMatch.Groups[1].Value
         Write-Log "Found ticket: $ticket" 'DEBUG'
 
-        $postHeaders = $headers.Clone()
-        $postHeaders['Content-Type'] = 'application/x-www-form-urlencoded'
-        $postHeaders['Referer']      = $GamePageUrl
-
         try {
-            $ticketResp = Invoke-WebRequest -Uri 'https://cdromance.org/' -Method POST `
-                -Body "cdrTicketInput=$ticket" -Headers $postHeaders -UseBasicParsing -ErrorAction Stop
+            $ticketResp = Invoke-CdrWeb -Uri 'https://cdromance.org/' -Method POST `
+                -Body "cdrTicketInput=$ticket" -Referer $GamePageUrl
             $links = @(Extract-LinksFromHtml $ticketResp.Content)
             if ($links.Count -gt 0) {
                 Write-Log "Strategy A (ticket POST) found $($links.Count) link(s)." 'DEBUG'
@@ -428,14 +423,10 @@ function Get-DownloadLinks {
         $postId = $acfMatch.Groups[1].Value
         Write-Log "ACF wrapper found: id=$postId" 'DEBUG'
 
-        $apiHeaders = $headers.Clone()
-        $apiHeaders['Content-Type']   = 'application/x-www-form-urlencoded'
-        $apiHeaders['Referer']        = $GamePageUrl
-        $apiHeaders['X-Requested-With'] = 'XMLHttpRequest'
-
         try {
-            $apiResp = Invoke-WebRequest -Uri 'https://cdromance.org/wp-content/plugins/cdr-main/public/ajax.php' `
-                -Method POST -Body "post_id=$postId" -Headers $apiHeaders -UseBasicParsing -ErrorAction Stop
+            $apiResp = Invoke-CdrWeb -Uri 'https://cdromance.org/wp-content/plugins/cdr-main/public/ajax.php' `
+                -Method POST -Body "post_id=$postId" -Referer $GamePageUrl `
+                -ExtraHeaders @{ 'X-Requested-With' = 'XMLHttpRequest' }
             Write-Log "AJAX response length: $($apiResp.Content.Length)" 'DEBUG'
             $links = @(Extract-LinksFromHtml $apiResp.Content)
             Write-Log "Extracted $($links.Count) links from AJAX response" 'DEBUG'
@@ -828,6 +819,12 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     abPort          = 15151     # AB Download Manager integration port (preferred over Motrix when reachable order-wise)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
+    cfSolverUrl     = "http://localhost:8191/v1"                       # FlareSolverr endpoint
+    cfSolverMode    = "auto"    # auto (solve only when blocked) | always | never
+    cfAutoStart     = $true     # docker start/run the solver container on demand (never opens a window)
+    cfContainerName = "flaresolverr"
+    cfDockerImage   = "ghcr.io/flaresolverr/flaresolverr:latest"
+    cfSolverTimeoutMs = 120000  # per-challenge solve budget (ms)
 })
 
 # Read a config value with a fallback when the key is absent (stale config that missed backfill).
@@ -1013,6 +1010,15 @@ $script:AB_TIMEOUT = [int](Get-CfgValue 'abTimeoutSec' 1800)
 $abDirCfg          = Get-CfgValue 'abDownloadDir' ''
 $script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
 
+# Cloudflare bypass settings (consumed by CfSolver.ps1 / Invoke-CdrWeb)
+$script:CF_SOLVER_URL = Get-CfgValue 'cfSolverUrl' 'http://localhost:8191/v1'
+$script:CF_MODE       = (Get-CfgValue 'cfSolverMode' 'auto').ToString().ToLower()
+$script:CF_AUTOSTART  = [bool](Get-CfgValue 'cfAutoStart' $true)
+$script:CF_CONTAINER  = Get-CfgValue 'cfContainerName' 'flaresolverr'
+$script:CF_IMAGE      = Get-CfgValue 'cfDockerImage' 'ghcr.io/flaresolverr/flaresolverr:latest'
+$script:CF_TIMEOUT    = [int](Get-CfgValue 'cfSolverTimeoutMs' 120000)
+$script:CF_CACHE_DIR  = $tempDir
+
 $script:DOWNLOADER = Find-Downloader
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
@@ -1087,7 +1093,7 @@ if ($allLinks.Count -eq 0) {
     Write-Log "No download links found on the game page." 'ERROR'
     $debugPath = Join-Path $env:TEMP "dlrom-debug.html"
     try {
-        $dbgResp = Invoke-WebRequest -Uri $selected.Url -Headers $HTTP_HEADERS -UseBasicParsing -ErrorAction SilentlyContinue
+        $dbgResp = Invoke-CdrWeb -Uri $selected.Url
         $dbgResp.Content | Set-Content $debugPath -Encoding UTF8
         Write-Log "Debug HTML saved to: $debugPath" 'WARN'
     } catch { }
@@ -1103,6 +1109,14 @@ if ($selectedLinks.Count -eq 0) {
 }
 
 Write-Log "Will download $($selectedLinks.Count) file(s): $(($selectedLinks | ForEach-Object { $_.Label }) -join ', ')" 'INFO'
+
+# Links-only: print the resolved download links and stop (useful for previewing and for
+# verifying the Cloudflare bypass without downloading anything).
+if ($LinksOnly) {
+    Write-Log "Links-only mode - not downloading." 'INFO'
+    foreach ($l in $selectedLinks) { Write-Host "$($l.Label)`t$($l.Url)" }
+    exit 0
+}
 
 # Resolve ROM destination
 $platformFolder = if ($resolvedSlug -and $PLATFORM_FOLDERS.ContainsKey($resolvedSlug)) {

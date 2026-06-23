@@ -12,12 +12,13 @@ REM   dlrom "Metal Slug" --platform ps2 --region usa
 REM   dlrom "Zelda" --platform n64 --interactive
 
 if "%~1"=="" (
-    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--interactive] [--no-extract] [--no-steam]
+    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--interactive] [--no-extract] [--no-steam] [--links-only]
     echo.
     echo Platforms: ps2, ps1, psp, vita, n64, gamecube, nds, gba, snes, nes, gbc, gb, dreamcast, saturn, wii, 3ds
     echo Regions:   usa, europe, japan, world
     echo.
-    echo --no-steam: skip adding the download to Steam via Steam ROM Manager
+    echo --no-steam:   skip adding the download to Steam via Steam ROM Manager
+    echo --links-only: resolve and print the download links, then stop without downloading
     echo.
     echo Examples:
     echo   dlrom "Rayman 2"
@@ -42,6 +43,7 @@ set "DEST="
 set "INTERACTIVE="
 set "NO_EXTRACT="
 set "NO_STEAM="
+set "LINKS_ONLY="
 
 :shift_args
 shift
@@ -53,6 +55,7 @@ if /i "%~1"=="--dest"        goto :set_dest
 if /i "%~1"=="--interactive" ( set "INTERACTIVE=1" & goto :shift_args )
 if /i "%~1"=="--no-extract"  ( set "NO_EXTRACT=1"  & goto :shift_args )
 if /i "%~1"=="--no-steam"    ( set "NO_STEAM=1"    & goto :shift_args )
+if /i "%~1"=="--links-only"  ( set "LINKS_ONLY=1"  & goto :shift_args )
 goto :shift_args
 
 :set_platform
@@ -84,5 +87,6 @@ if defined DEST        set "PS_ARGS=%PS_ARGS% -Destination "%DEST%""
 if defined INTERACTIVE set "PS_ARGS=%PS_ARGS% -Interactive"
 if defined NO_EXTRACT  set "PS_ARGS=%PS_ARGS% -NoExtract"
 if defined NO_STEAM    set "PS_ARGS=%PS_ARGS% -NoSteam"
+if defined LINKS_ONLY  set "PS_ARGS=%PS_ARGS% -LinksOnly"
 
 powershell -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%

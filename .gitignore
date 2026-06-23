@@ -11,6 +11,10 @@ credentials.json
 *.ps1~
 $PROFILE
 
+# Python artifacts
+__pycache__/
+*.pyc
+
 # Torrent files
 *.torrent
 

@@ -104,6 +104,23 @@ The ROM is filed under `<romsBase>\<console>` (EmuDeck layout). When `--platform
 
 Whatever the downloader (Motrix, AB, etc.) drops the file as, the final ROM is always moved into `<romsBase>\<console>`: real archives (zip/7z/rar, detected by signature) are extracted first; a **raw ROM** download (`.iso`/`.chd`/`.nds`/…) is filed directly instead of failing extraction and being left behind in the downloader's folder.
 
+### Cloudflare bypass (dlrom)
+
+cdromance.org sits behind Cloudflare, which rejects plain script requests (HTTP 403) because their TLS fingerprint isn't a browser's. dlrom gets past this automatically, with nothing shown on screen:
+
+1. **FlareSolverr** (headless Chromium in Docker) solves the challenge and mints a `cf_clearance` cookie + matching User-Agent. This is the only step that needs a real browser. dlrom auto-`docker start`s (or creates) the container on demand; it never launches Docker Desktop itself, so no window ever appears.
+2. **`cdr_http.py`** (Python + `curl_cffi`) replays that cookie while impersonating Chrome's TLS/HTTP2 fingerprint, so Cloudflare accepts it — and, unlike a browser navigation, it can send headers like `X-Requested-With` that the link-reveal endpoint requires. `curl_cffi` is auto-installed on first use.
+
+The `cf_clearance` is cached under `%TEMP%\dlrom\cf_session.json` and reused across runs (the first run mints it, ~15-100s; later runs are instant). A `403`/`503`/`429` triggers one automatic re-mint + retry. Only the page scraping uses this path — the actual file download is a normal direct URL that isn't Cloudflare-gated, so it stays on Motrix/AB/aria2.
+
+**One-time setup** (dlrom will also do this for you on demand):
+```
+docker run -d --name flaresolverr -p 8191:8191 --restart unless-stopped ghcr.io/flaresolverr/flaresolverr:latest
+```
+The `--restart unless-stopped` policy means it comes back automatically after a reboot (once Docker Desktop is running).
+
+Config keys (`[rom]` section): `cfSolverUrl` (default `http://localhost:8191/v1`), `cfSolverMode` (`auto` = solve only when blocked / `always` / `never`), `cfAutoStart`, `cfContainerName`, `cfDockerImage`, `cfSolverTimeoutMs`. Requires Docker and Python 3 on PATH. Use `--links-only` to resolve and print the download links without downloading (handy for confirming the bypass works).
+
 ### Steam ROM Manager integration (dlrom)
 
 After a ROM is installed, `dlrom` adds it to Steam via **Steam ROM Manager (SRM)** — it never writes a Steam shortcut itself. Because SRM tracks what it has added, running SRM by hand later reconciles instead of creating duplicates.
@@ -132,7 +149,7 @@ Each download removes its temp archive and extraction directory in a `finally`, 
 - `%~dp0` is used to resolve the `.ps1` path relative to the CMD file, so the scripts work correctly regardless of which directory the user is in or where PATH points.
 - `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam]`.
+- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only]`.
 
 ### Drive metadata
 
