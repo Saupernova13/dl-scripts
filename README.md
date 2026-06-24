@@ -8,7 +8,7 @@ PowerShell scripts for searching and downloading media with automatic extraction
 | [dlgame](dlgame/) | `dlgame.cmd` | appnetica.com | qBittorrent | PC games (Steam folder versions) |
 | [dlmovie](dlmovie/) | `dlmovie.cmd` | YTS | qBittorrent | Movies |
 | [dltv](dltv/) | `dltv.cmd` | The Pirate Bay | qBittorrent | TV shows |
-| [dlrom](dlrom/) | `dlrom.cmd` | cdromance.org | Motrix / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs + auto-add to Steam via Steam ROM Manager) |
+| [dlrom](dlrom/) | `dlrom.cmd` | cdromance.org | Motrix / AB / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs + auto-add to Steam via Steam ROM Manager) |
 
 ## Setup
 
@@ -24,6 +24,30 @@ dlrom "Zelda" --platform n64
 ```
 
 Config is stored at `%LOCALAPPDATA%\dlScripts\config.json` and is **auto-created with defaults on first run** — no manual setup required. See each subfolder's `README.md` for the full parameter reference.
+
+## Requirements
+
+- **Windows** with PowerShell 5.1+ (built into Windows 10/11).
+- A torrent client (**qBittorrent** with the Web UI enabled) for `dlanime`/`dlgame`/`dlmovie`/`dltv`.
+- `dlrom` additionally uses **Docker Desktop** + **Python 3** (Cloudflare bypass) and **7-Zip** (extraction); a download manager (Motrix / AB) and Steam ROM Manager are optional — see [`dlrom/README.md`](dlrom/).
+
+Nothing here is hardcoded to one machine: paths come from `config.json` (auto-created), runtime drive
+detection, or command-line overrides, so the scripts work on a fresh setup.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the repo layout and conventions (config-driven paths,
+ASCII-only scripts, approved PowerShell verbs, `Write-Log` levels).
+
+## License
+
+[MIT](LICENSE).
+
+## Disclaimer
+
+These scripts automate downloads from third-party sites. Use them only for content you are legally
+entitled to (for example, personal backups of games and media you own). You are responsible for
+complying with the laws of your jurisdiction and the terms of the sites involved.
 
 ---
 
@@ -61,9 +85,19 @@ dl-scripts/
 │   ├── Add-TV.ps1
 │   └── README.md
 └── dlrom/
-    ├── Add-ROM.ps1
+    ├── Add-ROM.ps1          ← orchestrator (thin)
+    ├── Logging.ps1          ← Write-Log + formatters
+    ├── Cdromance.ps1        ← search + link discovery
+    ├── Downloaders.ps1      ← download backends + dispatcher
+    ├── RomFiles.ps1         ← extraction + ROM install
+    ├── SteamRomManager.ps1  ← Steam ROM Manager sync
+    ├── CfSolver.ps1         ← Cloudflare bypass
+    ├── cdr_http.py          ← Cloudflare bypass (Python helper)
     └── README.md
 ```
+
+> dlrom is split into focused modules that `Add-ROM.ps1` dot-sources. The other tools are
+> still single-file. See [`dlrom/README.md`](dlrom/) for the per-module breakdown.
 
 ### Config
 
@@ -75,7 +109,7 @@ All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, stru
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
   "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800 }
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "cfSolverUrl": "http://localhost:8191/v1", "cfSolverMode": "auto", "cfAutoStart": true, "cfContainerName": "flaresolverr", "cfDockerImage": "ghcr.io/flaresolverr/flaresolverr:latest", "cfSolverTimeoutMs": 120000 }
 }
 ```
 
@@ -149,7 +183,7 @@ Each download removes its temp archive and extraction directory in a `finally`, 
 - `%~dp0` is used to resolve the `.ps1` path relative to the CMD file, so the scripts work correctly regardless of which directory the user is in or where PATH points.
 - `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only]`.
+- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only] [--verbose] [--quiet]`. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
 
 ### Drive metadata
 
@@ -204,6 +238,6 @@ powershell -File lib\DriveResolver.ps1
 
 - Logic lives in the `.ps1` files. The `.cmd` files only parse args and invoke PowerShell.
 - `Initialize-DlConfig` lives in `lib\DriveResolver.ps1` and is dot-sourced by each script. The function signature is unchanged.
-- All scripts use identical logging via `Write-Log` with levels: `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`.
-- **dlrom** (`Add-ROM.ps1`) uses: `Invoke-CdromanceSearch` for web scraping, `Get-DownloadLinks` + `Select-DownloadLinks` for link filtering (handles multi-disc, English preference, demo filtering), and a unified `Invoke-FileDownload` dispatcher that auto-detects the best available downloader (Motrix RPC, aria2c, curl, BITS, or WebClient).
+- All scripts use identical logging via `Write-Log` with levels: `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`. In dlrom, `DEBUG` is hidden unless `--verbose`/`-Verbose` is passed, and `--quiet`/`-Quiet` hides routine `INFO`.
+- **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `Cdromance.ps1` (scraping: `Invoke-CdromanceSearch`, `Get-DownloadLinks`, `Select-DownloadLinks` — multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
 
