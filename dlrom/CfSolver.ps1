@@ -17,7 +17,8 @@
 # Dot-sourced by Add-ROM.ps1, which sets these script-scope vars from config.json:
 #   $script:CF_SOLVER_URL  $script:CF_MODE     $script:CF_AUTOSTART
 #   $script:CF_CONTAINER   $script:CF_IMAGE    $script:CF_TIMEOUT   $script:CF_CACHE_DIR
-# $script:HTTP_HEADERS (with a User-Agent) and Write-Log come from Add-ROM.ps1.
+# $HTTP_HEADERS (with a User-Agent) comes from Cdromance.ps1; Write-Log and
+# ConvertTo-ResponseText come from Logging.ps1. All resolve at call time.
 
 $script:CF_PY        = $null    # resolved python invocation @{ Exe; Pre }
 $script:CF_PY_READY  = $false   # curl_cffi confirmed importable this run
@@ -38,8 +39,7 @@ function Get-CfSolverBase { return ($script:CF_SOLVER_URL -replace '/v1/?$', '')
 function Test-CfSolverUp {
     try {
         $r = Invoke-WebRequest -Uri (Get-CfSolverBase) -UseBasicParsing -TimeoutSec 4 -ErrorAction Stop
-        $txt = if ($r.Content -is [byte[]]) { [System.Text.Encoding]::UTF8.GetString($r.Content) } else { [string]$r.Content }
-        return ($txt -match 'FlareSolverr')
+        return ((ConvertTo-ResponseText $r.Content) -match 'FlareSolverr')
     } catch { return $false }
 }
 
