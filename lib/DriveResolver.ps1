@@ -2,8 +2,15 @@
 # Shared library for dl-scripts. Provides:
 #   Initialize-DlConfig    - Bootstraps %LOCALAPPDATA%\dlScripts\config.json sections,
 #                            backfilling any new keys from $Defaults into existing sections.
-#   Get-DriveMetaInventory - Enumerates connected drives with valid drive-meta.json files.
-#   Resolve-MediaPath      - Picks a drive at runtime by reading those metadata files.
+#   Get-DriveRegistryUrl   - Base URL of the drive-registry API (env / config / default).
+#   Get-DriveMetaInventory - Connected drives, from the drive-registry API.
+#   Resolve-MediaPath      - Picks a destination drive for a media type via the API.
+#
+# The drive-picking logic no longer lives here: it is owned by the drive-registry service
+# (Documents\github\drive-registry, http://127.0.0.1:9600), which also stamps the
+# drive-meta.json file onto every connected drive. This library is a thin API client.
+# API-only by design: if the service is unreachable, resolution fails loudly rather than
+# guessing a path.
 #
 # Each script dot-sources this file via:
 #   . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
@@ -64,45 +71,37 @@ function Initialize-DlConfig {
     return $config.$Section
 }
 
-function Get-DriveMetaInventory {
-    $results = @()
-    $seenNames = @{}
-    $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue
-    foreach ($drv in $drives) {
-        if ($drv.Name.Length -ne 1) { continue }
-        $metaPath = Join-Path $drv.Root "drive-meta.json"
-        if (-not (Test-Path $metaPath)) { continue }
+# Base URL of the drive-registry API. Resolved from (in order): DRIVE_REGISTRY_URL env var,
+# a top-level "driveRegistryUrl" key in dlScripts config.json, then the localhost default.
+function Get-DriveRegistryUrl {
+    if ($env:DRIVE_REGISTRY_URL) { return ([string]$env:DRIVE_REGISTRY_URL).TrimEnd('/') }
+    $configPath = Join-Path (Join-Path $env:LOCALAPPDATA "dlScripts") "config.json"
+    if (Test-Path $configPath) {
         try {
-            $meta = Get-Content $metaPath -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
-        } catch {
-            Write-Log "[resolver] skipping $($drv.Root) - drive-meta.json could not be parsed: $($_.Exception.Message)" "WARN"
-            continue
-        }
-        if (-not $meta.drive_name) {
-            Write-Log "[resolver] skipping $($drv.Root) - drive-meta.json missing drive_name" "WARN"
-            continue
-        }
-        if ($seenNames.ContainsKey($meta.drive_name)) {
-            Write-Log "[resolver] skipping $($drv.Root) - duplicate drive_name '$($meta.drive_name)' (also on $($seenNames[$meta.drive_name]))" "WARN"
-            continue
-        }
-        $seenNames[$meta.drive_name] = $drv.Root
-        $freeBytes = $null
-        try {
-            $vol = Get-Volume -DriveLetter $drv.Name -ErrorAction Stop
-            $freeBytes = $vol.SizeRemaining
-        } catch {
-            $freeBytes = $drv.Free
-        }
-        $results += [PSCustomObject]@{
-            DriveLetter = $drv.Name
-            Root        = $drv.Root
-            FreeBytes   = $freeBytes
-            FreeGB      = [math]::Round($freeBytes / 1GB, 1)
-            Meta        = $meta
-        }
+            $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
+            if ($cfg.driveRegistryUrl) { return ([string]$cfg.driveRegistryUrl).TrimEnd('/') }
+        } catch { }
     }
-    return $results
+    return "http://127.0.0.1:9600"
+}
+
+# HTTP status of a failed Invoke-RestMethod, or $null if the call never reached the server
+# (connection refused / DNS / timeout). Distinguishes "service down" from an HTTP error.
+function Get-WebErrorStatus {
+    param($ErrorRecord)
+    try { if ($ErrorRecord.Exception.Response) { return [int]$ErrorRecord.Exception.Response.StatusCode } } catch { }
+    return $null
+}
+
+# Connected drives as reported by the drive-registry API (letter, serial, freeGB, meta, ...).
+function Get-DriveMetaInventory {
+    $base = Get-DriveRegistryUrl
+    try {
+        $resp = Invoke-RestMethod -Uri "$base/drives" -Method Get -TimeoutSec 15 -ErrorAction Stop
+    } catch {
+        throw "Get-DriveMetaInventory: drive-registry API not reachable at $base - is the drive-registry service running? ($($_.Exception.Message))"
+    }
+    return $resp.drives
 }
 
 function Resolve-MediaPath {
@@ -113,67 +112,80 @@ function Resolve-MediaPath {
         [switch]$Strict,
         [switch]$DryRun
     )
-    $pathKey   = "${MediaType}_path"
-    $inventory = Get-DriveMetaInventory
-    $candidates = @()
-    foreach ($entry in $inventory) {
-        $relPath = $entry.Meta.$pathKey
-        if (-not $relPath) { continue }
-        $base = if ($null -ne $entry.Meta.drive_priority) { [int]$entry.Meta.drive_priority } else { 50 }
-        $preferred = 0
-        $preferredArr = $entry.Meta.drive_preferred_media
-        if ($preferredArr -and ($preferredArr -contains $MediaType)) { $preferred = 1000 }
-        $type = if ($entry.Meta.drive_type) { $entry.Meta.drive_type } else { 'hdd' }
-        if ($MediaType -eq 'game_pc') {
-            $typeBonus = switch ($type) { 'ssd' { 300 } 'sdcard' { -200 } default { 0 } }
+    $base = Get-DriveRegistryUrl
+    $uri  = "$base/resolve?media=$([uri]::EscapeDataString($MediaType))"
+    if ($Strict) { $uri += "&strict=1" }
+
+    try {
+        $resp = Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 15 -ErrorAction Stop
+    } catch {
+        $status = Get-WebErrorStatus $_
+        if ($status -eq 409) {
+            # Strict mode and no connected drive advertises this media type.
+            throw "Resolve-MediaPath: no connected drive advertises '$MediaType'."
+        } elseif ($null -eq $status) {
+            throw "Resolve-MediaPath: drive-registry API not reachable at $base - is the drive-registry service running? ($($_.Exception.Message))"
         } else {
-            $typeBonus = switch ($type) { 'hdd' { 300 } 'ssd' { 100 } default { 0 } }
-        }
-        $lastResort = if ($entry.Meta.drive_last_resort) { -5000 } else { 0 }
-        $freeGB = $entry.FreeGB
-        $score = $base + $preferred + $typeBonus + $lastResort + ($freeGB * 0.5)
-        $candidates += [PSCustomObject]@{
-            DriveLetter = $entry.DriveLetter
-            DriveName   = $entry.Meta.drive_name
-            Type        = $type
-            RelPath     = $relPath
-            AbsPath     = (Join-Path $entry.Root $relPath)
-            FreeGB      = $freeGB
-            Base        = $base
-            Preferred   = $preferred
-            TypeBonus   = $typeBonus
-            LastResort  = $lastResort
-            Score       = $score
+            throw "Resolve-MediaPath: drive-registry API error (HTTP $status) resolving '$MediaType'. $($_.Exception.Message)"
         }
     }
-    if ($candidates.Count -eq 0) {
+
+    $pick = $resp.pick
+    if (-not $pick) {
+        # Non-strict, and the service reports no drive for this media type. Fall back to a
+        # home folder so the download still lands somewhere (the API is up; it just had no
+        # candidate - e.g. every target drive is disconnected).
         $fallback = Join-Path $HOME $MediaType
-        if ($Strict) { throw "Resolve-MediaPath: no connected drive advertises '$MediaType'." }
-        Write-Log "[resolver] no connected drive advertises '$MediaType' - falling back to $fallback" "WARN"
+        Write-Log "[resolver] drive-registry has no drive for '$MediaType' - falling back to $fallback" "WARN"
         if ($DryRun) { return $null }
         return $fallback
     }
-    $pick = $candidates | Sort-Object -Property Score -Descending | Select-Object -First 1
-    $scoreStr = "{0:N1}" -f $pick.Score
-    Write-Log "[resolver] picked $($pick.DriveLetter): ($($pick.DriveName)) for $MediaType, free=$($pick.FreeGB)GB, score=$scoreStr" "INFO"
-    if ($DryRun) { return $pick }
-    return $pick.AbsPath
+
+    $freeStr = if ($null -ne $pick.freeGB) { "$($pick.freeGB)GB" } else { "?" }
+    Write-Log "[resolver] picked $($pick.letter): ($($pick.driveName)) for $MediaType, free=$freeStr, priority=$($pick.priority)" "INFO"
+    if ($DryRun) {
+        return [PSCustomObject]@{
+            DriveLetter = $pick.letter
+            DriveName   = $pick.driveName
+            Type        = $pick.type
+            RelPath     = $pick.relPath
+            AbsPath     = $pick.absPath
+            FreeGB      = $pick.freeGB
+            Priority    = $pick.priority
+            LastResort  = $pick.lastResort
+        }
+    }
+    return $pick.absPath
 }
 
 function Invoke-DriveResolverTest {
-    Write-Host "`n=== DriveResolver Test Harness ===" -ForegroundColor Magenta
-    $inv = Get-DriveMetaInventory
-    Write-Host "`nDrive inventory ($($inv.Count) drives with drive-meta.json):" -ForegroundColor Magenta
-    foreach ($d in $inv) {
-        $preferred = if ($d.Meta.drive_preferred_media) { $d.Meta.drive_preferred_media -join "," } else { "(none)" }
-        Write-Host ("  {0}: {1,-30} type={2,-6} free={3,7}GB preferred=[{4}]" -f $d.DriveLetter, $d.Meta.drive_name, $d.Meta.drive_type, $d.FreeGB, $preferred) -ForegroundColor Gray
+    $base = Get-DriveRegistryUrl
+    Write-Host "`n=== DriveResolver (drive-registry API @ $base) ===" -ForegroundColor Magenta
+    try {
+        $health = Invoke-RestMethod -Uri "$base/health" -Method Get -TimeoutSec 10 -ErrorAction Stop
+        Write-Host ("service: {0} v{1} (up {2}s)" -f $health.service, $health.version, $health.uptimeSec) -ForegroundColor Gray
+    } catch {
+        Write-Host "drive-registry API not reachable at $base - is the service running?" -ForegroundColor Red
+        return
     }
-    foreach ($mt in 'movie','tv','anime_series','anime_movie','game_pc') {
+
+    $inv = Get-DriveMetaInventory
+    Write-Host "`nDrive inventory ($($inv.Count) connected):" -ForegroundColor Magenta
+    foreach ($d in $inv) {
+        $name = if ($d.meta -and $d.meta.drive_name) { $d.meta.drive_name } else { "(unstamped)" }
+        $type = if ($d.meta -and $d.meta.drive_type) { $d.meta.drive_type } else { "?" }
+        Write-Host ("  {0}: {1,-30} type={2,-6} free={3,8}GB" -f $d.letter, $name, $type, $d.freeGB) -ForegroundColor Gray
+    }
+
+    foreach ($mt in 'movie','tv','anime_series','anime_movie','game_pc','rom') {
         Write-Host "`n--- $mt ---" -ForegroundColor Magenta
         $pick = Resolve-MediaPath -MediaType $mt -DryRun
         if ($pick) {
             Write-Host ("  pick:  {0}: ({1}) -> {2}" -f $pick.DriveLetter, $pick.DriveName, $pick.AbsPath) -ForegroundColor Green
-            Write-Host ("  score: base={0} preferred={1} type={2} lastResort={3} freeGB*0.5={4:N1} -> total={5:N1}" -f $pick.Base, $pick.Preferred, $pick.TypeBonus, $pick.LastResort, ($pick.FreeGB * 0.5), $pick.Score) -ForegroundColor Gray
+            $lr = if ($pick.LastResort) { " last-resort" } else { "" }
+            Write-Host ("  rank:  priority={0}{1} free={2}GB type={3}" -f $pick.Priority, $lr, $pick.FreeGB, $pick.Type) -ForegroundColor Gray
+        } else {
+            Write-Host "  (no drive advertises this media type)" -ForegroundColor DarkGray
         }
     }
     Write-Host ""
