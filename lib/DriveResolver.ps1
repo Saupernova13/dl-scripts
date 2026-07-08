@@ -2,15 +2,15 @@
 # Shared library for dl-scripts. Provides:
 #   Initialize-DlConfig    - Bootstraps %LOCALAPPDATA%\dlScripts\config.json sections,
 #                            backfilling any new keys from $Defaults into existing sections.
-#   Get-DriveRegistryUrl   - Base URL of the drive-registry API (env / config / default).
-#   Get-DriveMetaInventory - Connected drives, from the drive-registry API.
-#   Resolve-MediaPath      - Picks a destination drive for a media type via the API.
+#   Get-DriveRegCli        - Locates the drive-registry CLI (env / config / PATH).
+#   Get-DriveMetaInventory - Connected drives, from the drive-registry CLI.
+#   Resolve-MediaPath      - Picks a destination drive for a media type via the CLI.
 #
-# The drive-picking logic no longer lives here: it is owned by the drive-registry service
-# (Documents\github\drive-registry, http://127.0.0.1:9600), which also stamps the
-# drive-meta.json file onto every connected drive. This library is a thin API client.
-# API-only by design: if the service is unreachable, resolution fails loudly rather than
-# guessing a path.
+# The drive-picking logic lives in the drive-registry CLI (Documents\github\drive-registry),
+# a PATH-registered command (`drivereg`). This library is a thin client: it shells out to
+# `drivereg resolve <media> --json` and parses the result. There is no service and no port -
+# each call runs the tool synchronously. If the CLI is missing, resolution fails loudly
+# (install it: run install.ps1 in the drive-registry repo) rather than guessing a path.
 #
 # Each script dot-sources this file via:
 #   . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
@@ -71,36 +71,40 @@ function Initialize-DlConfig {
     return $config.$Section
 }
 
-# Base URL of the drive-registry API. Resolved from (in order): DRIVE_REGISTRY_URL env var,
-# a top-level "driveRegistryUrl" key in dlScripts config.json, then the localhost default.
-function Get-DriveRegistryUrl {
-    if ($env:DRIVE_REGISTRY_URL) { return ([string]$env:DRIVE_REGISTRY_URL).TrimEnd('/') }
+# Locate the drive-registry CLI. Resolved from (in order): DRIVEREG_CLI env var (a path to the
+# executable/.cmd), a top-level "driveRegistryCli" key in dlScripts config.json, then `drivereg`
+# on PATH. Throws a clear, actionable error if none is found.
+function Get-DriveRegCli {
+    if ($env:DRIVEREG_CLI) { return [string]$env:DRIVEREG_CLI }
     $configPath = Join-Path (Join-Path $env:LOCALAPPDATA "dlScripts") "config.json"
     if (Test-Path $configPath) {
         try {
             $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
-            if ($cfg.driveRegistryUrl) { return ([string]$cfg.driveRegistryUrl).TrimEnd('/') }
+            if ($cfg.driveRegistryCli) { return [string]$cfg.driveRegistryCli }
         } catch { }
     }
-    return "http://127.0.0.1:9600"
+    $cmd = Get-Command 'drivereg' -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    throw "drivereg CLI not found on PATH. Install it: run install.ps1 in the drive-registry repo (adds it to your PATH), then open a new shell. Or set DRIVEREG_CLI to the drivereg.cmd path."
 }
 
-# HTTP status of a failed Invoke-RestMethod, or $null if the call never reached the server
-# (connection refused / DNS / timeout). Distinguishes "service down" from an HTTP error.
-function Get-WebErrorStatus {
-    param($ErrorRecord)
-    try { if ($ErrorRecord.Exception.Response) { return [int]$ErrorRecord.Exception.Response.StatusCode } } catch { }
-    return $null
+# Run the drive-registry CLI and return @{ Output = <stdout string>; ExitCode = <int> }.
+# stderr is discarded so stdout stays clean JSON; the exit code carries success/failure.
+function Invoke-DriveReg {
+    param([Parameter(Mandatory=$true)][string[]]$CliArgs)
+    $cli = Get-DriveRegCli
+    $out = & $cli @CliArgs 2>$null
+    return [PSCustomObject]@{ Output = ($out -join "`n"); ExitCode = $LASTEXITCODE }
 }
 
-# Connected drives as reported by the drive-registry API (letter, serial, freeGB, meta, ...).
+# Connected drives as reported by the drive-registry CLI (letter, serial, freeGB, meta, ...).
 function Get-DriveMetaInventory {
-    $base = Get-DriveRegistryUrl
-    try {
-        $resp = Invoke-RestMethod -Uri "$base/drives" -Method Get -TimeoutSec 15 -ErrorAction Stop
-    } catch {
-        throw "Get-DriveMetaInventory: drive-registry API not reachable at $base - is the drive-registry service running? ($($_.Exception.Message))"
+    $res = Invoke-DriveReg -CliArgs @('drives', '--json')
+    if ($res.ExitCode -ne 0) {
+        throw "Get-DriveMetaInventory: drivereg failed (exit $($res.ExitCode)). $($res.Output)"
     }
+    try { $resp = $res.Output | ConvertFrom-Json }
+    catch { throw "Get-DriveMetaInventory: could not parse drivereg output. $($res.Output)" }
     return $resp.drives
 }
 
@@ -112,31 +116,29 @@ function Resolve-MediaPath {
         [switch]$Strict,
         [switch]$DryRun
     )
-    $base = Get-DriveRegistryUrl
-    $uri  = "$base/resolve?media=$([uri]::EscapeDataString($MediaType))"
-    if ($Strict) { $uri += "&strict=1" }
+    $cliArgs = @('resolve', $MediaType, '--json')
+    if ($Strict) { $cliArgs += '--strict' }
 
-    try {
-        $resp = Invoke-RestMethod -Uri $uri -Method Get -TimeoutSec 15 -ErrorAction Stop
-    } catch {
-        $status = Get-WebErrorStatus $_
-        if ($status -eq 409) {
-            # Strict mode and no connected drive advertises this media type.
-            throw "Resolve-MediaPath: no connected drive advertises '$MediaType'."
-        } elseif ($null -eq $status) {
-            throw "Resolve-MediaPath: drive-registry API not reachable at $base - is the drive-registry service running? ($($_.Exception.Message))"
-        } else {
-            throw "Resolve-MediaPath: drive-registry API error (HTTP $status) resolving '$MediaType'. $($_.Exception.Message)"
-        }
+    $res = Invoke-DriveReg -CliArgs $cliArgs
+
+    # Exit 3 = --strict and no connected drive advertises this media type (was HTTP 409).
+    if ($res.ExitCode -eq 3) {
+        throw "Resolve-MediaPath: no connected drive advertises '$MediaType'."
     }
+    if ($res.ExitCode -ne 0) {
+        throw "Resolve-MediaPath: drivereg error (exit $($res.ExitCode)) resolving '$MediaType'. $($res.Output)"
+    }
+
+    try { $resp = $res.Output | ConvertFrom-Json }
+    catch { throw "Resolve-MediaPath: could not parse drivereg output for '$MediaType'. $($res.Output)" }
 
     $pick = $resp.pick
     if (-not $pick) {
-        # Non-strict, and the service reports no drive for this media type. Fall back to a
-        # home folder so the download still lands somewhere (the API is up; it just had no
-        # candidate - e.g. every target drive is disconnected).
+        # Non-strict, and no drive advertises this media type. Fall back to a home folder so the
+        # download still lands somewhere (the CLI ran fine; it just had no candidate - e.g. every
+        # target drive is disconnected).
         $fallback = Join-Path $HOME $MediaType
-        Write-Log "[resolver] drive-registry has no drive for '$MediaType' - falling back to $fallback" "WARN"
+        Write-Log "[resolver] drivereg has no drive for '$MediaType' - falling back to $fallback" "WARN"
         if ($DryRun) { return $null }
         return $fallback
     }
@@ -159,20 +161,19 @@ function Resolve-MediaPath {
 }
 
 function Invoke-DriveResolverTest {
-    $base = Get-DriveRegistryUrl
-    Write-Host "`n=== DriveResolver (drive-registry API @ $base) ===" -ForegroundColor Magenta
+    Write-Host "`n=== DriveResolver (drive-registry CLI) ===" -ForegroundColor Magenta
     try {
-        $health = Invoke-RestMethod -Uri "$base/health" -Method Get -TimeoutSec 10 -ErrorAction Stop
-        Write-Host ("service: {0} v{1} (up {2}s)" -f $health.service, $health.version, $health.uptimeSec) -ForegroundColor Gray
+        $cli = Get-DriveRegCli
+        Write-Host "drivereg: $cli" -ForegroundColor Gray
     } catch {
-        Write-Host "drive-registry API not reachable at $base - is the service running?" -ForegroundColor Red
+        Write-Host $_.Exception.Message -ForegroundColor Red
         return
     }
 
     $inv = Get-DriveMetaInventory
     Write-Host "`nDrive inventory ($($inv.Count) connected):" -ForegroundColor Magenta
     foreach ($d in $inv) {
-        $name = if ($d.meta -and $d.meta.drive_name) { $d.meta.drive_name } else { "(unstamped)" }
+        $name = if ($d.meta -and $d.meta.drive_name) { $d.meta.drive_name } else { "(no role)" }
         $type = if ($d.meta -and $d.meta.drive_type) { $d.meta.drive_type } else { "?" }
         Write-Host ("  {0}: {1,-30} type={2,-6} free={3,8}GB" -f $d.letter, $name, $type, $d.freeGB) -ForegroundColor Gray
     }

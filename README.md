@@ -69,7 +69,7 @@ dl-scripts/
 ├── dltv.cmd
 ├── dlrom.cmd
 ├── lib/
-│   └── DriveResolver.ps1    ← shared: Initialize-DlConfig + drive-registry API client (Resolve-MediaPath)
+│   └── DriveResolver.ps1    ← shared: Initialize-DlConfig + drive-registry CLI client (Resolve-MediaPath)
 ├── dlanime/
 │   ├── Add-Anime.ps1        ← actual logic
 │   └── README.md
@@ -131,7 +131,7 @@ The base directory is resolved in priority order, so the local emulation library
 
 1. `--dest PATH` — explicit per-run override.
 2. `romsBase` (default `C:\Emulation\roms`) — used whenever the folder exists.
-3. **drive-registry API** — only if `romsBase` is missing: `Resolve-MediaPath -MediaType 'rom' -Strict` asks the drive-registry service, which returns the highest-priority connected drive advertising a ROM path.
+3. **drive-registry CLI** — only if `romsBase` is missing: `Resolve-MediaPath -MediaType 'rom' -Strict` runs `drivereg resolve rom --strict`, which returns the highest-priority connected drive advertising a ROM path.
 4. Manual prompt — last resort if no drive advertises a ROM path.
 
 The ROM is filed under `<romsBase>\<console>` (EmuDeck layout). When `--platform` is omitted, the console folder is taken from the platform detected on the chosen search result, so a bare `dlrom "Game"` still lands in the right folder instead of a generic `\roms`.
@@ -185,36 +185,25 @@ Each download removes its temp archive and extraction directory in a `finally`, 
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
 - `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only] [--verbose] [--quiet]`. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
 
-### Drive metadata (drive-registry API)
+### Drive metadata (drive-registry CLI)
 
-Destination drives are chosen by the **[drive-registry](../drive-registry)** service, not by these
-scripts. That service owns the whole story: it stamps a `drive-meta.json` onto every connected drive
-from a central policy, and it resolves the best destination for a media type. `lib\DriveResolver.ps1`
-is now a thin client — `Resolve-MediaPath -MediaType <type>` just calls
-`GET http://127.0.0.1:9600/resolve?media=<type>` and returns the picked path. No drive-picking logic
-lives in this repo anymore.
+Destination drives are chosen by the **[drive-registry](../drive-registry)** CLI, not by these
+scripts. That tool owns the whole story: it holds a central, serial-keyed drive policy and resolves
+the best destination for a media type (and can stamp a `drive-meta.json` onto each drive). It is a
+plain PATH command (`drivereg`), **not a service** — there is no daemon or port. `lib\DriveResolver.ps1`
+is a thin client: `Resolve-MediaPath -MediaType <type>` runs `drivereg resolve <type> --json` and
+returns the picked path. No drive-picking logic lives in this repo anymore.
 
-The API base URL comes from `DRIVE_REGISTRY_URL`, then a top-level `driveRegistryUrl` key in
-`config.json`, then the `http://127.0.0.1:9600` default. **API-only:** if the service is unreachable,
-resolution fails with a clear error rather than guessing a path (the prod drive-registry runs at logon).
+The command is located via `DRIVEREG_CLI` (a path to `drivereg.cmd`), then a top-level
+`driveRegistryCli` key in `config.json`, then `drivereg` on PATH. If the CLI isn't installed,
+resolution fails with a clear error rather than guessing a path — install it by running `install.ps1`
+in the [drive-registry](../drive-registry) repo (adds it to your PATH).
 
-Each drive's stamped `drive-meta.json` (schema 2) declares the media it accepts, each with a priority
-(higher wins) and optional `last_resort`:
-```json
-{
-  "schema": 2,
-  "drive_name": "samsung-970-evo-plus-1tb",
-  "drive_type": "ssd",
-  "media": {
-    "game_pc": { "path": "Games", "priority": 100 },
-    "rom": { "path": "Emulation\\roms", "priority": 60 }
-  }
-}
-```
-
-For a media type, only drives that advertise a path for it are candidates; they rank by
-non-last-resort first, then priority, then free space. See the drive-registry repo for the policy and
-the full API. Drives that are unplugged are simply absent, so a torrent is never sent to a dead path.
+`drivereg` computes each drive's role live from its central `policy.json`, which declares per drive
+the media it accepts, each with a priority (higher wins) and optional `last_resort`. For a media type,
+only drives that advertise a path for it are candidates; they rank by non-last-resort first, then
+priority, then free space. Drives that are unplugged are simply absent, so a torrent is never sent to a
+dead path. See the drive-registry repo for the policy format.
 
 **To test resolution without submitting a torrent:**
 ```
@@ -224,7 +213,7 @@ dlanime "Test" -isAnimeSeries yes -DryRun
 dltv "Test" -DryRun
 ```
 
-**To inspect all connected drives and their picks (hits the API):**
+**To inspect all connected drives and their picks (runs the CLI):**
 ```
 powershell -File lib\DriveResolver.ps1
 ```
@@ -233,7 +222,7 @@ powershell -File lib\DriveResolver.ps1
 
 - Logic lives in the `.ps1` files. The `.cmd` files only parse args and invoke PowerShell.
 - `Initialize-DlConfig` lives in `lib\DriveResolver.ps1` and is dot-sourced by each script. The function signature is unchanged.
-- `Resolve-MediaPath` (same file) is a client for the drive-registry API — it does no drive scanning or scoring itself. To change how drives are ranked or add a drive, edit the [drive-registry](../drive-registry) policy, not these scripts.
+- `Resolve-MediaPath` (same file) is a client for the drive-registry CLI (`drivereg`) — it does no drive scanning or scoring itself. To change how drives are ranked or add a drive, edit the [drive-registry](../drive-registry) policy, not these scripts.
 - All scripts use identical logging via `Write-Log` with levels: `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`. In dlrom, `DEBUG` is hidden unless `--verbose`/`-Verbose` is passed, and `--quiet`/`-Quiet` hides routine `INFO`.
 - **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `Cdromance.ps1` (scraping: `Invoke-CdromanceSearch`, `Get-DownloadLinks`, `Select-DownloadLinks` — multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
 
