@@ -4,13 +4,18 @@
 #                            backfilling any new keys from $Defaults into existing sections.
 #   Get-DriveRegistryUrl   - Base URL of the drive-registry API (env / config / default).
 #   Get-DriveMetaInventory - Connected drives, from the drive-registry API.
+#   Get-FallbackMediaPath  - Safe local default path for a media type (no API needed).
 #   Resolve-MediaPath      - Picks a destination drive for a media type via the API.
 #
 # The drive-picking logic no longer lives here: it is owned by the drive-registry service
 # (Documents\github\drive-registry, http://127.0.0.1:9600), which also stamps the
 # drive-meta.json file onto every connected drive - including drives plugged in after it
-# started. This library is a thin API client. API-only by design: if the service is
-# unreachable, resolution fails loudly rather than guessing a path.
+# started. This library is a thin API client.
+#
+# The API is OPTIONAL: if the service isn't configured or isn't running, Resolve-MediaPath
+# degrades to a safe default destination (the caller's configured folder, else a per-type
+# folder under the home directory) so every dl-script works standalone. Only -Strict callers
+# (dlrom's ROM base) get a thrown error instead, so they can run their own fallback.
 #
 # Each script dot-sources this file via:
 #   . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
@@ -104,14 +109,35 @@ function Get-DriveMetaInventory {
     return $resp.drives
 }
 
+# Safe local default destination for a media type, used when the drive-registry service is
+# unavailable or advertises no drive for the type. Keeps every script usable with no API
+# configured. Mirrors each script's own configured default so behaviour is consistent.
+function Get-FallbackMediaPath {
+    param([Parameter(Mandatory=$true)][string]$MediaType)
+    switch ($MediaType) {
+        'movie'        { return (Join-Path $HOME 'Movies') }
+        'tv'           { return (Join-Path $HOME 'TV') }
+        'anime_series' { return (Join-Path $HOME 'Anime\Series') }
+        'anime_movie'  { return (Join-Path $HOME 'Anime\Movies') }
+        'game_pc'      { return (Join-Path $HOME 'Games') }
+        'rom'          { return (Join-Path $HOME 'Emulation\roms') }
+        default        { return (Join-Path $HOME $MediaType) }
+    }
+}
+
 function Resolve-MediaPath {
     param(
         [Parameter(Mandatory=$true)]
         [ValidateSet('movie','tv','anime_series','anime_movie','game_pc','rom')]
         [string]$MediaType,
+        # Destination to use when the service can't be reached or has no drive for this type.
+        # Callers pass their configured folder; blank falls to a safe per-type home default.
+        [string]$FallbackPath = "",
         [switch]$Strict,
         [switch]$DryRun
     )
+    $fallback = if ($FallbackPath) { $FallbackPath } else { Get-FallbackMediaPath -MediaType $MediaType }
+
     $base = Get-DriveRegistryUrl
     $uri  = "$base/resolve?media=$([uri]::EscapeDataString($MediaType))"
     if ($Strict) { $uri += "&strict=1" }
@@ -121,22 +147,31 @@ function Resolve-MediaPath {
     } catch {
         $status = Get-WebErrorStatus $_
         if ($status -eq 409) {
-            # Strict mode and no connected drive advertises this media type.
+            # Strict mode and no connected drive advertises this media type. Surface it so the
+            # strict caller (e.g. dlrom) can run its own fallback.
             throw "Resolve-MediaPath: no connected drive advertises '$MediaType'."
-        } elseif ($null -eq $status) {
-            throw "Resolve-MediaPath: drive-registry API not reachable at $base - is the drive-registry service running? ($($_.Exception.Message))"
-        } else {
-            throw "Resolve-MediaPath: drive-registry API error (HTTP $status) resolving '$MediaType'. $($_.Exception.Message)"
         }
+        # Service down / timeout / API error. Strict callers want to decide for themselves;
+        # everyone else degrades to the safe default so the script still works with no API.
+        $detail = if ($null -eq $status) {
+            "drive-registry service not reachable at $base (is it running?)"
+        } else {
+            "drive-registry API error (HTTP $status) at $base"
+        }
+        if ($Strict) {
+            throw "Resolve-MediaPath: $detail resolving '$MediaType'. $($_.Exception.Message)"
+        }
+        Write-Log "[resolver] $detail - using safe default $fallback" "WARN"
+        if ($DryRun) { return $null }
+        return $fallback
     }
 
     $pick = $resp.pick
     if (-not $pick) {
-        # Non-strict, and the service reports no drive for this media type. Fall back to a
-        # home folder so the download still lands somewhere (the API is up; it just had no
-        # candidate - e.g. every target drive is disconnected).
-        $fallback = Join-Path $HOME $MediaType
-        Write-Log "[resolver] drive-registry has no drive for '$MediaType' - falling back to $fallback" "WARN"
+        # Non-strict, and the service reports no drive for this media type. Fall back so the
+        # download still lands somewhere (the API is up; it just had no candidate - e.g. every
+        # target drive is disconnected).
+        Write-Log "[resolver] drive-registry has no drive for '$MediaType' - using safe default $fallback" "WARN"
         if ($DryRun) { return $null }
         return $fallback
     }

@@ -45,7 +45,7 @@ if ($Destination) {
         exit 1
     }
 } elseif ($cfg.useDriveMetadata) {
-    $Destination = Resolve-MediaPath -MediaType 'movie'
+    $Destination = Resolve-MediaPath -MediaType 'movie' -FallbackPath $cfg.destination
 } else {
     $Destination = $cfg.destination
 }

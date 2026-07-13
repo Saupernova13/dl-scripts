@@ -61,8 +61,9 @@ if ($Destination) {
         exit 1
     }
 } elseif ($cfg.useDriveMetadata) {
-    $mediaType = if ($isAnimeSeries -eq "no") { 'anime_movie' } else { 'anime_series' }
-    $Destination = Resolve-MediaPath -MediaType $mediaType
+    $mediaType    = if ($isAnimeSeries -eq "no") { 'anime_movie' } else { 'anime_series' }
+    $fallbackDest = if ($isAnimeSeries -eq "no") { $cfg.moviesDestination } else { $cfg.seriesDestination }
+    $Destination  = Resolve-MediaPath -MediaType $mediaType -FallbackPath $fallbackDest
 } else {
     $Destination = if ($isAnimeSeries -eq "no") { $cfg.moviesDestination } else { $cfg.seriesDestination }
 }

@@ -196,10 +196,17 @@ resolves the best destination for a media type. It is a localhost HTTP API bound
 in this repo anymore.
 
 The base URL is resolved from `DRIVE_REGISTRY_URL`, then a top-level `driveRegistryUrl` key in
-`config.json`, then the `http://127.0.0.1:9600` default. If the service is unreachable, resolution
-fails with a clear error rather than guessing a path — start it by running `setup-startup.ps1` in the
-[drive-registry](../drive-registry) repo (registers it to launch at logon), or `npm start` there for
-a foreground test instance.
+`config.json`, then the `http://127.0.0.1:9600` default. To run the service, use `setup-startup.ps1`
+in the [drive-registry](../drive-registry) repo (registers it to launch at logon) or `npm start`
+there for a foreground instance.
+
+**The service is optional.** If it isn't running (or isn't installed at all), the scripts don't
+fail — each one degrades to a safe default destination: its configured `destination` (the same folder
+it uses when `useDriveMetadata` is `false`), else a per-type folder under your home directory
+(`~/Movies`, `~/TV`, `~/Games`, `~/Anime\Series`, `~/Anime\Movies`, `~/Emulation\roms`). A `WARN`
+line notes the fallback. So `dl*` works out of the box; the service just adds multi-drive routing.
+(Set `useDriveMetadata` to `false` in `config.json` to skip the service entirely and always use the
+configured `destination`.)
 
 The service computes each drive's role live from its central `policy.json`, which declares per drive
 the media it accepts, each with a priority (higher wins) and optional `last_resort`. For a media type,

@@ -77,7 +77,7 @@ if ($Destination) {
         exit 1
     }
 } elseif ($cfg.useDriveMetadata) {
-    $Destination = Resolve-MediaPath -MediaType 'game_pc'
+    $Destination = Resolve-MediaPath -MediaType 'game_pc' -FallbackPath $cfg.destination
 } else {
     $Destination = $cfg.destination
 }
