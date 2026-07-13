@@ -12,7 +12,7 @@ a same-named subfolder. The `.cmd` files only marshal arguments &mdash; all logi
 ```
 <tool>.cmd        ← arg parsing, on PATH; calls the .ps1 with -Named parameters
 <tool>/*.ps1      ← the actual logic
-lib/*.ps1         ← shared (Initialize-DlConfig; Resolve-MediaPath = drive-registry CLI client)
+lib/*.ps1         ← shared (Initialize-DlConfig; Resolve-MediaPath = drive-registry API client)
 ```
 
 `dlrom` is further split into dot-sourced modules (`Logging.ps1`, `Cdromance.ps1`,
@@ -24,7 +24,7 @@ single file.
 
 - **No hardcoded personal paths.** Anything machine-specific belongs in
   `%LOCALAPPDATA%\dlScripts\config.json` (auto-created and backfilled by `Initialize-DlConfig`),
-  resolved at runtime via the drive-registry CLI, or accepted as a parameter. Ship sensible defaults.
+  resolved at runtime via the drive-registry API, or accepted as a parameter. Ship sensible defaults.
 - **ASCII only in script content.** No box-drawing characters, smart quotes, or emoji in `.ps1` /
   `.cmd` / `.py` files &mdash; they break across terminals and editors. Plain `# --- Section ---`
   dividers are fine.
