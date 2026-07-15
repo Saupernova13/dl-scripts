@@ -9,7 +9,7 @@ the ROM, files it into the matching emulator folder, and (optionally) adds it to
 ```
 dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH]
                   [--interactive] [--no-extract] [--no-steam] [--links-only]
-                  [--verbose] [--quiet]
+                  [--no-torrent] [--torrent-pick N] [--verbose] [--quiet]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the
@@ -42,6 +42,8 @@ dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 | `--no-extract` | Keep the downloaded archive; do not extract or install. |
 | `--no-steam` | Skip the Steam ROM Manager step for this run. |
 | `--links-only` | Resolve and print the download links, then stop. Handy for confirming the Cloudflare bypass works. |
+| `--no-torrent` | Disable the PS2 torrent fallback (see below) for this run. |
+| `--torrent-pick N` | Force file index `N` from the PS2 archive torrent instead of auto-picking (use the index shown in the "closest titles" list). |
 | `--verbose` | Show detailed step-by-step debug output. |
 | `--quiet` | Show only results, warnings and errors. |
 
@@ -52,8 +54,46 @@ The CMD wrapper passes these through; you can also call the script directly:
 ```powershell
 .\dlrom\Add-ROM.ps1 -Query "Zelda" [-Platform n64] [-Region usa] [-Sort ...] `
     [-Destination "D:\roms"] [-MaxResults 10] [-Interactive] [-NoExtract] `
-    [-NoSteam] [-LinksOnly] [-Verbose] [-Quiet]
+    [-NoSteam] [-LinksOnly] [-NoTorrent] [-TorrentPick N] [-Verbose] [-Quiet]
 ```
+
+## PS2 torrent fallback
+
+cdromance is the only web source, so any cdromance failure (Cloudflare unsolved,
+FlareSolverr/Docker down, no search results, or no download links) used to end the run.
+For **PS2 games** there is now a second source: a local Redump PS2 archive `.torrent`
+that indexes the full set. When cdromance can't deliver and `--platform ps2` was given,
+dlrom looks the game up in that archive and pulls **only that one file** through
+qBittorrent's per-file selective download, then extracts and files it exactly like a
+cdromance download (and runs the Steam sync).
+
+The match is auto-picked with heuristics: every word of your query (numbers included) must
+appear in the title; demos/betas are rejected; edition/variant releases (FES, Undub,
+Director's Cut, GOTY, ...) are skipped unless you name them (so `"Persona 3"` gets the base
+game, not FES); region preference is your `--region` first, then USA, World, Europe, Japan.
+If nothing matches confidently it refuses and lists the closest titles with their file
+indices so you can re-run with `--torrent-pick N`.
+
+After the single file finishes, the torrent entry is removed from qBittorrent (no seeding
+is left running); the downloaded ROM stays on disk.
+
+**Requirements:** qBittorrent with its WebUI enabled, and the archive `.torrent`. The
+`.torrent` and its prebuilt index ship in `dlrom/data/ps2-torrent/`; the index is rebuilt
+automatically (via `ps2_torrent.py`, standard-library Python) if the `.torrent` is
+replaced. The WebUI host is auto-detected from `qBittorrent.ini` (the `WebUI\Port`, e.g.
+`8075` — note the other dl-scripts default to `8080`), or set `[rom].qbitHost` in config.
+
+**Relevant `[rom]` config keys** (`%LOCALAPPDATA%\dlScripts\config.json`):
+
+| Key | Meaning |
+|-----|---------|
+| `ps2TorrentEnabled` | Master switch for the fallback (default `true`). |
+| `ps2TorrentPath` | Path to the archive `.torrent`. Blank = the committed copy, else `Downloads`. |
+| `ps2TorrentIndexPath` | Path to the JSON index. Blank = the committed copy. |
+| `ps2TorrentStaging` | Where qBittorrent saves the file. Blank = `<romsBase>\.dlrom-torrent` (same drive as the ROM folder). |
+| `ps2TorrentTimeoutSec` | Max wait for the single-file download (default `14400`). |
+| `qbitHost` | qBittorrent WebUI base URL. Blank = auto-detect. |
+| `qbitUser` / `qbitPass` | Only needed if `WebUI\LocalHostAuth` is enabled. |
 
 ## Output verbosity
 
