@@ -15,8 +15,10 @@ $PROFILE
 __pycache__/
 *.pyc
 
-# Torrent files
+# Torrent files (temp downloads). The PS2 archive torrent used by dlrom's
+# fallback is committed on purpose, so keep that one.
 *.torrent
+!dlrom/data/ps2-torrent/*.torrent
 
 # Temporary files
 *.tmp

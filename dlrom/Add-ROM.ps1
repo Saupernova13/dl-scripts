@@ -21,7 +21,9 @@ param(
     [switch]$NoExtract,
     [switch]$NoSteam,
     [switch]$LinksOnly,
-    [switch]$Quiet
+    [switch]$Quiet,
+    [switch]$NoTorrent,
+    [int]$TorrentPick = -1
 )
 
 # Load order matters only for Logging: it must come first so the DriveResolver fallback
@@ -33,7 +35,9 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Downloaders.ps1')       # Motrix/AB/aria2c/curl/BITS/webclient + dispatcher
 . (Join-Path $PSScriptRoot 'RomFiles.ps1')          # archive extraction, ROM filing
 . (Join-Path $PSScriptRoot 'SteamRomManager.ps1')   # Steam ROM Manager sync
-. (Join-Path $PSScriptRoot 'CfSolver.ps1')          # Cloudflare bypass (Invoke-CdrWeb)
+. (Join-Path $PSScriptRoot 'CfSolver.ps1')          # Cloudflare bypass (Invoke-CdrWeb), Get-CdrFailureReason
+. (Join-Path $PSScriptRoot 'QbitTorrent.ps1')       # qBittorrent WebUI client (PS2 torrent fallback)
+. (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
@@ -59,6 +63,16 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     cfContainerName = "flaresolverr"
     cfDockerImage   = "ghcr.io/flaresolverr/flaresolverr:latest"
     cfSolverTimeoutMs = 120000  # per-challenge solve budget (ms)
+    # PS2 torrent fallback: when cdromance + direct sources fail for a PS2 game,
+    # pull just that one ROM from the local Redump PS2 archive torrent via qBittorrent.
+    ps2TorrentEnabled    = $true
+    ps2TorrentPath       = ""     # blank = repo copy (dlrom\data\ps2-torrent\*.torrent), else Downloads
+    ps2TorrentIndexPath  = ""     # blank = dlrom\data\ps2-torrent\ps2-index.json
+    ps2TorrentStaging    = ""     # blank = <romsBase>\.dlrom-torrent (same drive as the ROM dir)
+    ps2TorrentTimeoutSec = 14400  # max wait for the single-file download (seconds)
+    qbitHost             = ""     # blank = autodetect qBittorrent WebUI (qBittorrent.ini port, else :8075)
+    qbitUser             = ""     # only needed if WebUI\LocalHostAuth is enabled
+    qbitPass             = ""
 })
 
 # Read a config value with a fallback when the key is absent (stale config that missed backfill).
@@ -112,13 +126,49 @@ if ($Platform) {
     }
 }
 
+# PS2 torrent fallback is eligible only for PS2 (we must know it's PS2 to pick the
+# right archive), when enabled, and not in links-only mode.
+$script:PS2_FALLBACK = ([bool]$cfg.ps2TorrentEnabled -and -not $NoTorrent -and -not $LinksOnly -and
+    (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')))
+
+# Every cdromance dead-end funnels through here: report the real reason, try the
+# PS2 torrent fallback when eligible, and only then exit with the original code.
+function Invoke-CdrFallbackOrExit {
+    param([string]$ReasonCode, [string]$ReasonText, [int]$ExitCode)
+    if ($ReasonText) { Write-Log $ReasonText 'WARN' }
+    if ($script:PS2_FALLBACK) {
+        $ok = $false
+        try {
+            $ok = Invoke-Ps2TorrentFallback -Query $Query -Region $Region -Destination $Destination `
+                    -Cfg $cfg -NoExtract:$NoExtract -NoSteam:$NoSteam -PickIndex $TorrentPick -Reason $ReasonCode
+        } catch {
+            Write-Log "Torrent fallback error: $($_.Exception.Message)" 'ERROR'
+        }
+        if ($ok) { Write-Log "All done (PS2 torrent fallback)." 'SUCCESS'; exit 0 }
+        Write-Log "PS2 torrent fallback did not install anything." 'WARN'
+    } elseif (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')) {
+        if ($NoTorrent)             { Write-Log "PS2 torrent fallback skipped (--no-torrent)." 'INFO' }
+        elseif (-not $cfg.ps2TorrentEnabled) { Write-Log "PS2 torrent fallback disabled in config." 'INFO' }
+    } else {
+        Write-Log "Tip: pass --platform ps2 to enable the torrent fallback for PS2 games." 'INFO'
+    }
+    exit $ExitCode
+}
+
 # Search
 Write-Log "Searching for: $Query" 'INFO'
-$results = @(Invoke-CdromanceSearch -SearchQuery $Query -PlatformSlug $resolvedSlug -SearchRegion $Region -SearchSort $Sort)
+$results = @()
+try {
+    $results = @(Invoke-CdromanceSearch -SearchQuery $Query -PlatformSlug $resolvedSlug -SearchRegion $Region -SearchSort $Sort)
+} catch {
+    $reason = Get-CdrFailureReason $_.Exception.Message
+    Write-Log "cdromance search failed: $($reason.Text)" 'ERROR'
+    Invoke-CdrFallbackOrExit -ReasonCode $reason.Code -ReasonText $null -ExitCode 1
+}
 
 if ($results.Count -eq 0) {
-    Write-Log "No results found for: $Query" 'WARN'
-    exit 0
+    Write-Log "No results found on cdromance for: $Query" 'WARN'
+    Invoke-CdrFallbackOrExit -ReasonCode 'no-results' -ReasonText $null -ExitCode 0
 }
 
 $displayResults = @($results | Select-Object -First $MaxResults)
@@ -162,7 +212,7 @@ if ($allLinks.Count -eq 0) {
         $dbgResp.Content | Set-Content $debugPath -Encoding UTF8
         Write-Log "Debug HTML saved to: $debugPath" 'WARN'
     } catch { }
-    exit 1
+    Invoke-CdrFallbackOrExit -ReasonCode 'no-links' -ReasonText $null -ExitCode 1
 }
 
 Write-Log "Found $($allLinks.Count) raw link(s) on page." 'DEBUG'
@@ -170,7 +220,7 @@ $selectedLinks = @(Select-DownloadLinks -Links $allLinks)
 
 if ($selectedLinks.Count -eq 0) {
     Write-Log "No suitable links after filtering (demos removed, nothing left)." 'ERROR'
-    exit 1
+    Invoke-CdrFallbackOrExit -ReasonCode 'no-suitable-links' -ReasonText $null -ExitCode 1
 }
 
 Write-Log "Will download $($selectedLinks.Count) file(s): $(($selectedLinks | ForEach-Object { $_.Label }) -join ', ')" 'INFO'

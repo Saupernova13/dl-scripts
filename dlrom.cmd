@@ -21,6 +21,8 @@ if "%~1"=="" (
     echo   --no-extract   keep the downloaded archive; do not extract or install
     echo   --no-steam     skip adding the download to Steam via Steam ROM Manager
     echo   --links-only   resolve and print the download links, then stop without downloading
+    echo   --no-torrent   disable the PS2 torrent fallback used when cdromance fails
+    echo   --torrent-pick N   force a specific file index from the PS2 archive torrent
     echo   --verbose      show detailed step-by-step debug output
     echo   --quiet        show only results, warnings and errors
     echo.
@@ -50,20 +52,24 @@ set "NO_STEAM="
 set "LINKS_ONLY="
 set "VERBOSE="
 set "QUIET="
+set "NO_TORRENT="
+set "TORRENT_PICK="
 
 :shift_args
 shift
 if "%~1"=="" goto :build_cmd
-if /i "%~1"=="--platform"    goto :set_platform
-if /i "%~1"=="--region"      goto :set_region
-if /i "%~1"=="--sort"        goto :set_sort
-if /i "%~1"=="--dest"        goto :set_dest
-if /i "%~1"=="--interactive" ( set "INTERACTIVE=1" & goto :shift_args )
-if /i "%~1"=="--no-extract"  ( set "NO_EXTRACT=1"  & goto :shift_args )
-if /i "%~1"=="--no-steam"    ( set "NO_STEAM=1"    & goto :shift_args )
-if /i "%~1"=="--links-only"  ( set "LINKS_ONLY=1"  & goto :shift_args )
-if /i "%~1"=="--verbose"     ( set "VERBOSE=1"     & goto :shift_args )
-if /i "%~1"=="--quiet"       ( set "QUIET=1"       & goto :shift_args )
+if /i "%~1"=="--platform"     goto :set_platform
+if /i "%~1"=="--region"       goto :set_region
+if /i "%~1"=="--sort"         goto :set_sort
+if /i "%~1"=="--dest"         goto :set_dest
+if /i "%~1"=="--torrent-pick" goto :set_torrent_pick
+if /i "%~1"=="--interactive"  ( set "INTERACTIVE=1" & goto :shift_args )
+if /i "%~1"=="--no-extract"   ( set "NO_EXTRACT=1"  & goto :shift_args )
+if /i "%~1"=="--no-steam"     ( set "NO_STEAM=1"    & goto :shift_args )
+if /i "%~1"=="--links-only"   ( set "LINKS_ONLY=1"  & goto :shift_args )
+if /i "%~1"=="--no-torrent"   ( set "NO_TORRENT=1"  & goto :shift_args )
+if /i "%~1"=="--verbose"      ( set "VERBOSE=1"     & goto :shift_args )
+if /i "%~1"=="--quiet"        ( set "QUIET=1"       & goto :shift_args )
 goto :shift_args
 
 :set_platform
@@ -86,6 +92,11 @@ shift
 set "DEST=%~1"
 goto :shift_args
 
+:set_torrent_pick
+shift
+set "TORRENT_PICK=%~1"
+goto :shift_args
+
 :build_cmd
 set "PS_ARGS=-Query "%QUERY%""
 if defined PLATFORM    set "PS_ARGS=%PS_ARGS% -Platform "%PLATFORM%""
@@ -96,6 +107,8 @@ if defined INTERACTIVE set "PS_ARGS=%PS_ARGS% -Interactive"
 if defined NO_EXTRACT  set "PS_ARGS=%PS_ARGS% -NoExtract"
 if defined NO_STEAM    set "PS_ARGS=%PS_ARGS% -NoSteam"
 if defined LINKS_ONLY  set "PS_ARGS=%PS_ARGS% -LinksOnly"
+if defined NO_TORRENT  set "PS_ARGS=%PS_ARGS% -NoTorrent"
+if defined TORRENT_PICK set "PS_ARGS=%PS_ARGS% -TorrentPick %TORRENT_PICK%"
 if defined VERBOSE     set "PS_ARGS=%PS_ARGS% -Verbose"
 if defined QUIET       set "PS_ARGS=%PS_ARGS% -Quiet"
 

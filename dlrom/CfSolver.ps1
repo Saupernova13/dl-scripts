@@ -176,3 +176,24 @@ function Invoke-CdrWeb {
         Remove-Item $outFile -Force -ErrorAction SilentlyContinue
     }
 }
+
+# Classify a cdromance/Cloudflare failure message into a short reason code plus
+# human text, so the orchestrator can report the real cause (instead of a generic
+# "Cloudflare block") and decide whether to try the torrent fallback.
+function Get-CdrFailureReason {
+    param([string]$Message)
+    $m = [string]$Message
+    if ($m -match 'FlareSolverr' -or $m -match 'Docker') {
+        return @{ Code = 'flaresolverr-down'; Text = 'FlareSolverr/Docker unavailable - the Cloudflare bypass could not run (start Docker Desktop).' }
+    }
+    if ($m -match 'curl_cffi') {
+        return @{ Code = 'curlcffi-missing'; Text = 'curl_cffi (Python) is missing and could not be installed - needed for the Cloudflare bypass.' }
+    }
+    if ($m -match 'Python 3 is required') {
+        return @{ Code = 'python-missing'; Text = 'Python 3 was not found on PATH - needed for the Cloudflare bypass.' }
+    }
+    if ($m -match 'Cloudflare fetch failed') {
+        return @{ Code = 'cf-unsolved'; Text = 'Cloudflare challenge was not solved (cf_clearance mint/replay failed).' }
+    }
+    return @{ Code = 'search-error'; Text = $m }
+}

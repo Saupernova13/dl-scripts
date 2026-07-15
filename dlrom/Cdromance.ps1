@@ -112,9 +112,10 @@ function Invoke-CdromanceSearch {
     try {
         $resp = Invoke-CdrWeb -Uri $url
     } catch {
-        Write-Log "Search failed: $($_.Exception.Message)" 'ERROR'
-        Write-Log "If this is a Cloudflare block, ensure Docker Desktop is running so FlareSolverr can solve it." 'WARN'
-        exit 1
+        # Re-throw so the orchestrator can classify the cause (FlareSolverr down,
+        # CF unsolved, ...) and decide whether to try the PS2 torrent fallback
+        # instead of exiting here.
+        throw "cdromance search request failed: $($_.Exception.Message)"
     }
 
     $html    = $resp.Content
