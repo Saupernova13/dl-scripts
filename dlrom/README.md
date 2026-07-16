@@ -94,6 +94,25 @@ replaced. The WebUI host is auto-detected from `qBittorrent.ini` (the `WebUI\Por
 | `ps2TorrentTimeoutSec` | Max wait for the single-file download (default `14400`). |
 | `qbitHost` | qBittorrent WebUI base URL. Blank = auto-detect. |
 | `qbitUser` / `qbitPass` | Only needed if `WebUI\LocalHostAuth` is enabled. |
+| `ps2GameIndexPath` | PCSX2 `GameIndex.yaml` used to resolve the installed serial for the texture handoff. Blank = auto-detect. |
+
+## Edition-aware selection and the texture handoff
+
+The cdromance auto-select prefers the **base** game over an edition (it picks "Persona 3", not
+"Persona 3 FES") and honours `--region`, but never returns nothing — if only an edition exists,
+it takes it. The torrent fallback applies the same preference more strictly (it *refuses* an
+unrequested edition, since the archive always has the base).
+
+When dlrom installs a **PS2** game it prints a result block ending in a machine-readable line:
+
+```
+[HANDOFF] platform=ps2 serial=SLUS-21569 title="Shin Megami Tensei - Persona 3" texturecmd=dlps2tex "SLUS-21569"
+```
+
+The serial is resolved from `GameIndex.yaml` (the same source `dlps2tex` uses), so running the
+printed `texturecmd` fetches HD textures for the **exact version** just downloaded — base vs FES,
+USA vs PAL all line up. An agent should read the `[HANDOFF]` line and run `dlps2tex "<serial>"`
+rather than re-guessing the name.
 
 ## Output verbosity
 

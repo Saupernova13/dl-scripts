@@ -338,13 +338,14 @@ function Invoke-Ps2TorrentFallback {
     Write-Log "Downloaded: $downloaded" 'SUCCESS'
 
     $installed = $false
+    $installedRomPath = $null
     $extractDir = $null
     try {
         if ($NoExtract) {
-            Move-RomToDest -SourcePath $downloaded -DestDir $romDest | Out-Null
+            $installedRomPath = Move-RomToDest -SourcePath $downloaded -DestDir $romDest
             $installed = $true
         } elseif (-not (Test-IsArchive $downloaded)) {
-            Move-RomToDest -SourcePath $downloaded -DestDir $romDest | Out-Null
+            $installedRomPath = Move-RomToDest -SourcePath $downloaded -DestDir $romDest
             $installed = $true
         } else {
             $extractDir = Join-Path $staging ('extracted_' + [System.IO.Path]::GetFileNameWithoutExtension($downloaded) + '_' + (Get-Random))
@@ -353,7 +354,7 @@ function Invoke-Ps2TorrentFallback {
             if (-not $romFile) {
                 Write-Log "No ROM file found after extracting the torrent download." 'WARN'
             } else {
-                Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest | Out-Null
+                $installedRomPath = Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest
                 $installed = $true
             }
         }
@@ -378,5 +379,12 @@ function Invoke-Ps2TorrentFallback {
         try { Sync-RomToSteam -RomDest $romDest -RomsBase $destInfo.Base -InstalledCount 1 }
         catch { Write-Log "Steam sync failed (ROM still installed): $($_.Exception.Message)" 'WARN' }
     }
+
+    # Report the exact version installed + the matching dlps2tex command (same
+    # serial), so an agent can chain the texture download for this version.
+    $resultTitle  = if ($chosen) { $chosen.Title } else { [System.IO.Path]::GetFileNameWithoutExtension([string]$match.File.path) }
+    $resultRegion = if ($chosen -and $chosen.Regions) { @($chosen.Regions -split ',')[0] } elseif ($Region) { $Region } else { '' }
+    Write-DlromResult -Title $resultTitle -Platform 'ps2' -Region $resultRegion `
+        -Source 'torrent' -InstalledPath $installedRomPath -Cfg $Cfg
     return $true
 }

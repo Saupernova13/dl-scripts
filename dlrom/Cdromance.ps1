@@ -300,3 +300,61 @@ function Select-DownloadLinks {
     # Phase 4: tie-break - take first remaining link
     return @($working | Select-Object -First 1)
 }
+
+# Region codes for a cdromance result, read from its slug/title (cdromance puts the
+# region in the URL slug, e.g. ...-fes-usa-2/ or ...-persona-3-europe/).
+function Get-CdrRegions {
+    param([string]$Url, [string]$Title)
+    $s = (($Url + ' ' + $Title)).ToLower()
+    $r = @()
+    if ($s -match '(^|[^a-z])usa([^a-z]|$)')      { $r += 'usa' }
+    if ($s -match 'europe|europa|[-(]eur|\bpal\b'){ $r += 'europe' }
+    if ($s -match 'japan|[-(]jpn')                { $r += 'japan' }
+    if ($s -match '\bworld\b')                    { $r += 'world' }
+    if ($s -match 'korea')                        { $r += 'korea' }
+    return @($r | Select-Object -Unique)
+}
+
+# Pick the best cdromance search result. Same spirit as the torrent matcher but a
+# SOFT preference: prefer a full query match, a base release over an edition/variant
+# (FES, Undub, ...) unless the query named it, non-hack over hack, and the requested
+# region - yet ALWAYS return something. An edition beats no game at all (cdromance
+# often carries only FES, not the base). Helpers come from Ps2TorrentIndex.ps1.
+function Select-CdrResult {
+    param([object[]]$Results, [string]$Query, [string]$Region)
+    if (-not $Results -or $Results.Count -eq 0) { return $null }
+    if ($Results.Count -eq 1) { return $Results[0] }
+
+    $qtokens   = Get-Ps2Significant $Query
+    $normQuery = ConvertTo-Ps2Norm $Query
+    $requested = Resolve-Ps2RegionRequest $Region
+
+    $i = 0
+    $scored = @()
+    foreach ($r in $Results) {
+        $tn = ConvertTo-Ps2Norm $r.Title
+        $tt = Get-Ps2Significant $r.Title
+
+        $allPresent = $true
+        foreach ($qt in $qtokens) { if ($tt -notcontains $qt) { $allPresent = $false; break } }
+        $matchRank = if ($allPresent) { 0 } else { 1 }
+
+        $demo = if ($r.Title -match $script:PS2_DEMO_RX) { 1 } else { 0 }
+        $hack = if ((($r.Url + ' ' + $r.Title)) -match '(?i)(\bhack\b|\bmod\b|\bpatch\b|controllable|-hack)') { 1 } else { 0 }
+
+        $edition = 0
+        foreach ($kw in $script:PS2_EDITION_KW) {
+            if ((Test-Ps2Phrase $tn $kw) -and -not (Test-Ps2Phrase $normQuery $kw)) { $edition = 1; break }
+        }
+
+        $regions    = Get-CdrRegions $r.Url $r.Title
+        $regionRank = Get-Ps2RegionRank -Regions $regions -Requested $requested
+        $extra      = @($tt | Where-Object { $qtokens -notcontains $_ }).Count
+
+        $scored += [PSCustomObject]@{ R = $r; Demo = $demo; Match = $matchRank; Hack = $hack;
+            Edition = $edition; RegionRank = $regionRank; Extra = $extra; Idx = $i }
+        $i++
+    }
+    $best = $scored | Sort-Object Demo, Match, Hack, Edition, RegionRank, Extra, Idx | Select-Object -First 1
+    return $best.R
+}

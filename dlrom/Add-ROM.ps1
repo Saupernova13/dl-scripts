@@ -38,6 +38,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'CfSolver.ps1')          # Cloudflare bypass (Invoke-CdrWeb), Get-CdrFailureReason
 . (Join-Path $PSScriptRoot 'QbitTorrent.ps1')       # qBittorrent WebUI client (PS2 torrent fallback)
 . (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
+. (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
@@ -73,6 +74,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     qbitHost             = ""     # blank = autodetect qBittorrent WebUI (qBittorrent.ini port, else :8075)
     qbitUser             = ""     # only needed if WebUI\LocalHostAuth is enabled
     qbitPass             = ""
+    ps2GameIndexPath     = ""     # blank = autodetect PCSX2 GameIndex.yaml (serial resolution for the dlps2tex handoff)
 })
 
 # Read a config value with a fallback when the key is absent (stale config that missed backfill).
@@ -195,8 +197,10 @@ if ($Interactive -and $displayResults.Count -gt 1) {
     }
     $selected = $displayResults[$idx]
 } else {
-    $usaResult = $displayResults | Where-Object { $_.Url -imatch '\busa\b' } | Select-Object -First 1
-    $selected  = if ($usaResult) { $usaResult } else { $displayResults[0] }
+    # Edition-aware auto-select: prefer the base game over an edition (FES, ...)
+    # and the requested region, but always pick something.
+    $selected = Select-CdrResult -Results $displayResults -Query $Query -Region $Region
+    if (-not $selected) { $selected = $displayResults[0] }
     Write-Log "Auto-selecting: $($selected.Title)" 'INFO'
 }
 
@@ -286,6 +290,7 @@ if (-not (Test-Path $tempDir)) {
 # Each iteration removes its temp archive + extraction dir in a finally so nothing is
 # left behind on success OR failure (--no-extract keeps the archive, which is the deliverable).
 $installedCount = 0
+$installedPaths = @()
 foreach ($link in $selectedLinks) {
     Write-Log "Downloading: $($link.Label)" 'INFO'
 
@@ -321,7 +326,7 @@ foreach ($link in $selectedLinks) {
                 Write-Log "Download is not an archive and '$dlExt' is an unrecognised ROM type; filing as-is." 'WARN'
             }
             try {
-                Move-RomToDest -SourcePath $completedPath -DestDir $romDest | Out-Null
+                $installedPaths += (Move-RomToDest -SourcePath $completedPath -DestDir $romDest)
                 $installedCount++
             } catch {
                 Write-Log "Failed to file ROM: $($_.Exception.Message)" 'ERROR'
@@ -345,7 +350,7 @@ foreach ($link in $selectedLinks) {
         }
 
         try {
-            Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest | Out-Null
+            $installedPaths += (Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest)
             $installedCount++
         } catch {
             Write-Log "Move failed: $($_.Exception.Message)" 'ERROR'
@@ -372,6 +377,14 @@ if ($installedCount -gt 0 -and -not $NoSteam -and [bool](Get-CfgValue 'steamSync
     Sync-RomToSteam -RomDest $romDest -RomsBase $romsBase -InstalledCount $installedCount
 } elseif ($installedCount -gt 0 -and $NoSteam) {
     Write-Log "Skipping Steam sync (--no-steam)." 'INFO'
+}
+
+# Report what was installed and, for PS2, the dlps2tex command for matching textures
+# (same version). An agent can read the [HANDOFF] line to chain the texture download.
+if ($installedCount -gt 0) {
+    $resultRegion = if ($Region) { $Region } else { @(Get-CdrRegions $selected.Url $selected.Title)[0] }
+    Write-DlromResult -Title $selected.Title -Platform $platformFolder -Region $resultRegion `
+        -Source 'cdromance' -InstalledPath (@($installedPaths)[-1]) -Cfg $cfg
 }
 
 Write-Log "All done." 'SUCCESS'
