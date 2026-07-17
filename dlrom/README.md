@@ -4,12 +4,18 @@ Searches [cdromance.org](https://cdromance.org) for a console game, downloads it
 the ROM, files it into the matching emulator folder, and (optionally) adds it to Steam via
 [Steam ROM Manager](https://github.com/SteamGridDB/steam-rom-manager).
 
+**Downloads run in the background by default.** dlrom searches, resolves the links, hands
+the transfer to a detached worker and returns a job id — usually within seconds. Nothing
+about your terminal (or your agent) has to stay attached to a multi-GB ROM download.
+
 ## Command
 
 ```
 dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH]
-                  [--interactive] [--no-extract] [--no-steam] [--links-only]
-                  [--no-torrent] [--torrent-pick N] [--verbose] [--quiet]
+                  [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only]
+                  [--no-torrent] [--torrent-pick N] [--json] [--verbose] [--quiet]
+dlrom --status <jobId> [--json]
+dlrom --list [--json]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the
@@ -19,14 +25,85 @@ name contains spaces.
 `gba`, `snes`, `nes`, `gbc`, `gb`, `dreamcast`/`dc`, `saturn`, `wii`, `3ds`
 **Regions:** `usa`, `europe`, `japan`, `world`
 
+## Headless / background use
+
+This is the default path, and the one to use from a script, an agent, or any session you
+do not want to babysit.
+
+```
+$ dlrom "Gran Turismo 4" --platform ps2
+
+Download job spawned.  It will continue in the background.
+  Job ID:   a3f9c21b8e04
+  Source:   cdromance
+  Title:    Gran Turismo 4
+  Dest:     C:\Emulation\roms\ps2
+  Log:      C:\Users\you\AppData\Local\dlScripts\jobs\rom\a3f9c21b8e04.log
+  Check:    dlrom --status a3f9c21b8e04
+```
+
+The command returns there. The worker carries on downloading, extracting, filing the ROM
+and syncing to Steam on its own. Poll it whenever you like:
+
+```
+dlrom --status a3f9c21b8e04          # progress, step, and the last 20 log lines
+dlrom --status a3f9c21b8e04 --json   # the whole job record, for scripts
+dlrom --list                         # every recent job and its state
+```
+
+What happens before the job is spawned is deliberately synchronous: the search and the
+link resolution. That way "no results on cdromance" is still an immediate answer rather
+than something you only discover by polling. Only the slow half is detached.
+
+### Job states
+
+| Status | Meaning |
+|---|---|
+| `pending` | The job file is written; the worker is starting. |
+| `running` | The worker owns it. `step` says where it is: `downloading`, `extracting`, `filing`, `steam-sync`. |
+| `completed` | The ROM is installed. `installedPaths` lists the files; `handoff` carries the PS2 texture command. |
+| `failed` | It finished without installing anything. `message` says why; the log has the detail. |
+| `orphaned` | The worker's process is gone but it never recorded an outcome — killed, crashed, or the machine went down mid-download. |
+
+### Useful job fields (`--status --json`)
+
+| Field | Meaning |
+|---|---|
+| `id` | Job id. |
+| `kind` | `cdromance` or `torrent` (the PS2 archive fallback). |
+| `status` / `step` / `progress` | State, current phase, and 0-100. |
+| `installedPaths` | Every file this job filed into the ROM folder. |
+| `handoff` | The `[HANDOFF]` line for PS2 — feed its serial to `dlps2tex`. |
+| `logFile` | Full worker log. |
+| `message` | Last human-readable note, and the failure reason when `failed`. |
+
+Job files and logs live in `%LOCALAPPDATA%\dlScripts\jobs\rom\`. Finished ones are pruned
+after `jobKeepDays` (default 7); running jobs are never pruned.
+
+### Staying in the foreground
+
+`--wait` restores the old blocking behaviour — search, download, install, all in your
+terminal with a live progress bar:
+
+```
+dlrom "Gran Turismo 4" --platform ps2 --wait
+```
+
+It runs the exact same pipeline as the worker and still writes a job file, so
+`dlrom --status <id>` works for a `--wait` run too. Use it when you actually want to watch;
+do not use it from an agent.
+
 ## Usage examples
 
 ```
-dlrom "Rayman 2"
+dlrom "Rayman 2"                             # spawns a job, returns a job id
 dlrom "Final Fantasy VII" --platform ps1
 dlrom "Metal Slug" --platform ps2 --region usa
-dlrom "Zelda" --platform n64 --interactive
-dlrom "Crash Bandicoot" --links-only        # resolve and print links, download nothing
+dlrom --status a3f9c21b8e04                  # how is it going?
+dlrom --list                                 # every recent job
+dlrom "Gran Turismo 4" --platform ps2 --wait # block until installed
+dlrom "Zelda" --platform n64 --interactive   # pick from the list yourself
+dlrom "Crash Bandicoot" --links-only         # resolve and print links, download nothing
 dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 ```
 
@@ -34,14 +111,18 @@ dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 
 | Flag | Effect |
 |------|--------|
+| `--status ID` | Show a job's progress, then exit. Reads the job file only — instant, even mid-download. |
+| `--list` | List recent jobs, newest first. |
+| `--wait` | Download in the foreground instead of spawning a worker. |
+| `--json` | Machine-readable output: the job record on spawn, or the full state for `--status` / `--list`. |
 | `--platform` | Restrict the search and choose the destination console folder. Omit it and the platform is inferred from the chosen result. |
 | `--region` | Pass a region filter to the search (`usa`, `europe`, `japan`, `world`). |
 | `--sort` | Pass a sort order to the search. |
 | `--dest PATH` | Per-run override of the ROMs base directory (wins over config and the drive picker). |
-| `--interactive` | Pick from the numbered results list instead of auto-selecting. |
+| `--interactive` | Pick from the numbered results list instead of auto-selecting. Implies a human is present: it is also the only mode allowed to prompt for a missing ROMs base. |
 | `--no-extract` | Keep the downloaded archive; do not extract or install. |
 | `--no-steam` | Skip the Steam ROM Manager step for this run. |
-| `--links-only` | Resolve and print the download links, then stop. Handy for confirming the Cloudflare bypass works. |
+| `--links-only` | Resolve and print the download links, then stop. Handy for confirming the Cloudflare bypass works. Always foreground — it downloads nothing. |
 | `--no-torrent` | Disable the PS2 torrent fallback (see below) for this run. |
 | `--torrent-pick N` | Force file index `N` from the PS2 archive torrent instead of auto-picking (use the index shown in the "closest titles" list). |
 | `--verbose` | Show detailed step-by-step debug output. |
@@ -53,9 +134,15 @@ The CMD wrapper passes these through; you can also call the script directly:
 
 ```powershell
 .\dlrom\Add-ROM.ps1 -Query "Zelda" [-Platform n64] [-Region usa] [-Sort ...] `
-    [-Destination "D:\roms"] [-MaxResults 10] [-Interactive] [-NoExtract] `
-    [-NoSteam] [-LinksOnly] [-NoTorrent] [-TorrentPick N] [-Verbose] [-Quiet]
+    [-Destination "D:\roms"] [-MaxResults 10] [-Wait] [-Interactive] [-NoExtract] `
+    [-NoSteam] [-LinksOnly] [-NoTorrent] [-TorrentPick N] [-Json] [-Verbose] [-Quiet]
+
+.\dlrom\Add-ROM.ps1 -Status <jobId> [-Json]
+.\dlrom\Add-ROM.ps1 -ListJobs [-Json]
 ```
+
+`-JobFile <path>` is the worker's own entry point. It is spawned by `Start-DlromJob` and is
+not meant to be called by hand.
 
 ## PS2 torrent fallback
 
@@ -103,16 +190,25 @@ The cdromance auto-select prefers the **base** game over an edition (it picks "P
 it takes it. The torrent fallback applies the same preference more strictly (it *refuses* an
 unrequested edition, since the archive always has the base).
 
-When dlrom installs a **PS2** game it prints a result block ending in a machine-readable line:
+When dlrom **finishes installing** a **PS2** game it produces a machine-readable line:
 
 ```
 [HANDOFF] platform=ps2 serial=SLUS-21569 title="Shin Megami Tensei - Persona 3" texturecmd=dlps2tex "SLUS-21569"
 ```
 
 The serial is resolved from `GameIndex.yaml` (the same source `dlps2tex` uses), so running the
-printed `texturecmd` fetches HD textures for the **exact version** just downloaded — base vs FES,
-USA vs PAL all line up. An agent should read the `[HANDOFF]` line and run `dlps2tex "<serial>"`
-rather than re-guessing the name.
+`texturecmd` fetches HD textures for the **exact version** just downloaded — base vs FES,
+USA vs PAL all line up. Use the serial rather than re-guessing the name.
+
+Because the install happens in the worker, this line lands on the **completed job**, not in the
+output of the `dlrom` call that spawned it:
+
+```
+dlrom --status <jobId>          # printed as the [HANDOFF] line
+dlrom --status <jobId> --json   # the "handoff" field
+```
+
+(Under `--wait` it prints to your terminal at the end of the run, as it always did.)
 
 ## Output verbosity
 
@@ -125,16 +221,35 @@ strategies, ticket IDs, RPC GIDs, slug mapping) is hidden.
 
 ## How it works
 
+Steps 1-3 run in your terminal. Step 4 onward is where the time goes, so unless you passed
+`--wait` it is handed to a detached worker and the command returns.
+
 1. **Search** - queries cdromance.org and lists matching games.
 2. **Select** - auto-selects (preferring a USA result), or shows a numbered list with `--interactive`.
 3. **Resolve links** - reveals the download table (mirrors the site's "SHOW LINKS" button), then
    filters demos and prefers English/patched and USA variants. Multi-disc games queue one link per disc.
+
+   *--- a job is created here and, by default, a worker takes over from this point ---*
+
 4. **Download** - via the best available backend (see below).
 5. **Extract & install** - real archives are extracted with 7-Zip; a raw ROM download is filed as-is.
    The final file is sanitised (apostrophes etc. removed so Steam launch commands don't break) and moved
    into `<romsBase>\<console>`.
 6. **Steam sync** - adds the ROM to Steam via Steam ROM Manager unless `--no-steam` is set.
 7. **Cleanup** - the temp archive and extraction folder are removed whether the run succeeds or fails.
+8. **Report** - the result block (and the PS2 `[HANDOFF]` line) goes to the job log, and the
+   outcome is stamped on the job for `--status`.
+
+The PS2 torrent fallback is backgrounded the same way: if cdromance dead-ends, dlrom spawns
+a `torrent` job rather than pinning you for the multi-hour archive download.
+
+### Worker mechanics
+
+The worker is the same `Add-ROM.ps1` re-invoked with `-JobFile`. It is started through
+`ProcessStartInfo` with `CreateNoWindow` (no console flash) and its stdout redirected to
+the job's log file by `cmd`. Not inheriting the caller's console handles is the point: it is
+what lets `dlrom.cmd` exit instead of staying tethered to a download that runs for hours.
+`Start-DlromJob` in [`Jobs.ps1`](Jobs.ps1) has the detail.
 
 ## Download backends
 
@@ -229,7 +344,8 @@ automatically with defaults on first run.
     "cfAutoStart": true,
     "cfContainerName": "flaresolverr",
     "cfDockerImage": "ghcr.io/flaresolverr/flaresolverr:latest",
-    "cfSolverTimeoutMs": 120000
+    "cfSolverTimeoutMs": 120000,
+    "jobKeepDays": 7
   }
 }
 ```
@@ -241,6 +357,7 @@ automatically with defaults on first run.
 | `motrixRpcUrl` | `http://localhost:16800/jsonrpc` | Motrix aria2 RPC endpoint. |
 | `maxResults` | `10` | Max search results shown. |
 | `pollIntervalMs` | `2000` | Motrix progress poll interval. |
+| `jobKeepDays` | `7` | Days to keep finished job files and logs in `%LOCALAPPDATA%\dlScripts\jobs\rom`. Running jobs are never pruned. |
 | `steamSync` | `true` | Master on/off for the Steam ROM Manager step. |
 | `srmExe` | `""` | Path to `srm.exe`; blank autodetects `C:\Emulation\tools\srm.exe` then `PATH`. |
 | `srmRestartSteam` | `auto` | `auto` (restart only if running) / `never` / `always`. |
@@ -271,13 +388,18 @@ automatically with defaults on first run.
 
 | File | Responsibility |
 |------|----------------|
-| `Add-ROM.ps1` | Argument/config handling and the main flow. |
-| `Logging.ps1` | `Write-Log` (verbosity-aware) and size/speed/label formatters. |
+| `Add-ROM.ps1` | Argument/config handling, the search + link resolution, and the worker entry point. |
+| `Jobs.ps1` | Job state on disk, the detached worker spawn, `--status` / `--list` rendering, pruning. |
+| `RomPipeline.ps1` | Download -> extract -> file -> Steam. Shared by the worker and `--wait`. |
+| `Logging.ps1` | `Write-Log` (verbosity-aware), progress lines, size/speed/label formatters. |
 | `Cdromance.ps1` | Platform tables, search, and download-link discovery/selection. |
 | `Downloaders.ps1` | Motrix/AB/aria2c/curl/BITS/WebClient backends and the dispatcher. |
 | `RomFiles.ps1` | Archive detection/extraction, ROM discovery, filename safety, install. |
 | `SteamRomManager.ps1` | Steam ROM Manager sync (srm-wrapper preferred, built-in fallback). |
 | `CfSolver.ps1` + `cdr_http.py` | Cloudflare bypass (FlareSolverr + curl_cffi). |
+| `QbitTorrent.ps1` | qBittorrent WebUI client used by the PS2 torrent fallback. |
+| `Ps2TorrentIndex.ps1` + `ps2_torrent.py` | PS2 archive torrent fallback: match, selective download, install. |
+| `Ps2Serial.ps1` | PS2 serial resolution and the result block / `[HANDOFF]` line. |
 
 ## Troubleshooting
 
@@ -287,3 +409,11 @@ automatically with defaults on first run.
 - **AB download never finishes** - set `abDownloadDir` to AB's actual download folder; raise `abTimeoutSec`.
 - **ROM lands in `\roms` instead of a console folder** - pass `--platform`, or the platform couldn't be
   inferred from the search result.
+- **A job says `orphaned`** - its worker died without recording an outcome (killed, crashed, or the
+  machine went down). Nothing is running; check the job's `logFile` for how far it got, then re-run.
+- **A job sits at the same percentage** - the download backend is retrying. aria2/Motrix retry an
+  unreachable host for a long time before erroring; `dlrom --status <id>` shows the last log lines,
+  and Motrix's own UI shows the underlying task.
+- **`Cannot resolve a ROMs base directory and there is no console to ask`** - dlrom refuses to prompt
+  when nothing can answer. Pass `--dest`, set `romsBase` in the config, connect a drive advertising a
+  `rom_path`, or re-run with `--interactive`.

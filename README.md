@@ -25,6 +25,42 @@ dlrom "Zelda" --platform n64
 
 Config is stored at `%LOCALAPPDATA%\dlScripts\config.json` and is **auto-created with defaults on first run** — no manual setup required. See each subfolder's `README.md` for the full parameter reference.
 
+## Nothing here blocks on a download
+
+Every script returns as soon as the transfer is handed off. None of them sit and wait for
+gigabytes to arrive, which matters when the caller is a script, a scheduled task, or an
+agent that has better things to do.
+
+| Script | Returns when | Follow progress with |
+|--------|--------------|----------------------|
+| `dlanime` / `dlgame` / `dlmovie` / `dltv` | the torrent is queued in qBittorrent | qBittorrent (WebUI on `:8075`) |
+| `dlrom` | the links are resolved and a worker is spawned | `dlrom --status <jobId>` / `dlrom --list` |
+
+The torrent-based scripts have always behaved this way — qBittorrent owns the transfer and
+is where you watch it, so they need no job system of their own.
+
+`dlrom` is the one that downloads over HTTP itself, so it runs its own background worker and
+tracks it as a job:
+
+```
+$ dlrom "Gran Turismo 4" --platform ps2
+  Job ID:   a3f9c21b8e04
+  Check:    dlrom --status a3f9c21b8e04
+$                                          # returns here; the worker keeps going
+
+$ dlrom --status a3f9c21b8e04
+  Status:     running
+  Step:       downloading
+  Progress:   [########............] 41%
+```
+
+Pass `--wait` to `dlrom` only when you want to sit and watch it. See
+[dlrom/README.md](dlrom/#headless--background-use) for the job model, states, and JSON fields.
+
+None of these scripts prompt unless you ask for it: interactive selection is opt-in via
+`--interactive`, and without it they auto-select and carry on. A run with no console
+attached will never stop to ask a question — it fails with an explanation instead.
+
 ## Requirements
 
 - **Windows** with PowerShell 5.1+ (built into Windows 10/11).
@@ -57,7 +93,26 @@ complying with the laws of your jurisdiction and the terms of the sites involved
 
 ### What this repo is
 
-A monorepo of four independent PowerShell download scripts, each wrapped by a root-level `.cmd` file. The CMD wrappers are what gets invoked from the terminal (and from PATH). They delegate to the `.ps1` files inside each subfolder.
+A monorepo of five independent PowerShell download scripts, each wrapped by a root-level `.cmd` file. The CMD wrappers are what gets invoked from the terminal (and from PATH). They delegate to the `.ps1` files inside each subfolder.
+
+### Never block on a download (read this first)
+
+Every command here is designed to hand off and return. **Do not wait for a download to
+finish, and never wrap one in a poll-until-done loop.** Start it, report the handle, move on.
+
+- `dlanime` / `dlgame` / `dlmovie` / `dltv` — return the moment the torrent is queued in
+  qBittorrent. There is nothing to wait for; qBittorrent (`:8075`) owns the transfer.
+- `dlrom` — searches, resolves links, spawns a background worker, prints a **Job ID**, and
+  returns. Report the job id. Check it later with `dlrom --status <jobId>`
+  (add `--json` for parsing) or `dlrom --list`.
+- `--wait` on `dlrom` exists for humans who want to watch a progress bar. **Do not use it.**
+
+These downloads are ROM- and film-sized: minutes to hours. A blocked call is a session you
+cannot talk to until it ends.
+
+Interactive prompts are opt-in via `--interactive`; without it every script auto-selects.
+If a run genuinely cannot proceed without an answer (e.g. no ROMs base can be resolved) it
+fails with an explanation rather than hanging on a prompt no one can see.
 
 ### File layout
 
@@ -85,14 +140,20 @@ dl-scripts/
 │   ├── Add-TV.ps1
 │   └── README.md
 └── dlrom/
-    ├── Add-ROM.ps1          ← orchestrator (thin)
-    ├── Logging.ps1          ← Write-Log + formatters
+    ├── Add-ROM.ps1          ← orchestrator (thin) + worker entry point (-JobFile)
+    ├── Jobs.ps1             ← job state, detached spawn, --status/--list
+    ├── RomPipeline.ps1      ← download→extract→file→Steam (worker and --wait share it)
+    ├── Logging.ps1          ← Write-Log + progress lines + formatters
     ├── Cdromance.ps1        ← search + link discovery
     ├── Downloaders.ps1      ← download backends + dispatcher
     ├── RomFiles.ps1         ← extraction + ROM install
     ├── SteamRomManager.ps1  ← Steam ROM Manager sync
     ├── CfSolver.ps1         ← Cloudflare bypass
     ├── cdr_http.py          ← Cloudflare bypass (Python helper)
+    ├── QbitTorrent.ps1      ← qBittorrent WebUI client (PS2 torrent fallback)
+    ├── Ps2TorrentIndex.ps1  ← PS2 archive torrent fallback
+    ├── ps2_torrent.py       ← torrent index parser (Python helper)
+    ├── Ps2Serial.ps1        ← PS2 serial resolve + [HANDOFF] line
     └── README.md
 ```
 
@@ -109,7 +170,7 @@ All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, stru
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
   "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "cfSolverUrl": "http://localhost:8191/v1", "cfSolverMode": "auto", "cfAutoStart": true, "cfContainerName": "flaresolverr", "cfDockerImage": "ghcr.io/flaresolverr/flaresolverr:latest", "cfSolverTimeoutMs": 120000 }
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "cfSolverUrl": "http://localhost:8191/v1", "cfSolverMode": "auto", "cfAutoStart": true, "cfContainerName": "flaresolverr", "cfDockerImage": "ghcr.io/flaresolverr/flaresolverr:latest", "cfSolverTimeoutMs": 120000, "jobKeepDays": 7 }
 }
 ```
 
@@ -181,9 +242,30 @@ Each download removes its temp archive and extraction directory in a `finally`, 
 ### CMD wrapper behaviour
 
 - `%~dp0` is used to resolve the `.ps1` path relative to the CMD file, so the scripts work correctly regardless of which directory the user is in or where PATH points.
+- All wrappers invoke PowerShell with `-NoProfile`: the user's profile is irrelevant to these scripts, and loading it slows every run and prepends profile noise to stdout that a caller parsing output has to wade through.
 - `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only] [--verbose] [--quiet]`. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
+- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]`, plus the job subcommands `--status <jobId> [--json]` and `--list [--json]`. The job subcommands are matched before `%1` is treated as a game name. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
+
+### Background jobs (dlrom)
+
+`dlrom` returns after resolving links and spawning a worker; the worker is the same
+`Add-ROM.ps1` re-invoked with `-JobFile <path>`.
+
+- Job state and logs: `%LOCALAPPDATA%\dlScripts\jobs\rom\<id>.json` / `<id>.log`. Read the
+  JSON directly if `--status --json` is inconvenient.
+- The spawn uses raw `ProcessStartInfo` with `CreateNoWindow` + `UseShellExecute=$false`,
+  and `cmd`'s own `> log 2>&1` for output. Two reasons, both load-bearing: PowerShell's
+  `Start-Process` cannot express `CreateNoWindow` (so it flashes a console window), and the
+  worker must not inherit the caller's console handles — if it does, `dlrom.cmd` stays
+  tethered to the worker and the caller's terminal hangs, which is the whole bug this
+  design exists to avoid. The worker's stdin is redirected and closed, so a stray prompt
+  hits EOF and fails fast instead of blocking forever.
+- Statuses: `pending`, `running`, `completed`, `failed`, and `orphaned` (the worker's process
+  is gone but recorded no outcome — computed at read time, never stored).
+- Finished jobs are pruned after `jobKeepDays` (default 7). Running jobs are never pruned.
+- `--wait` runs the identical pipeline in the foreground and still writes a job file, so the
+  two modes cannot drift apart.
 
 ### Drive metadata (drive-registry API)
 
