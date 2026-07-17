@@ -24,7 +24,7 @@ set "MOVIE=%~1"
 set "DEST=%~2"
 
 if "%DEST%"=="" (
-    powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%MOVIE%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%MOVIE%"
 ) else (
-    powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%MOVIE%" -Destination "%DEST%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%MOVIE%" -Destination "%DEST%"
 )

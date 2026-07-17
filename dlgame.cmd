@@ -24,7 +24,7 @@ set "GAME=%~1"
 set "DEST=%~2"
 
 if "%DEST%"=="" (
-    powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%GAME%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%GAME%"
 ) else (
-    powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%GAME%" -Destination "%DEST%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%GAME%" -Destination "%DEST%"
 )

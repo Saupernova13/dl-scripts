@@ -61,14 +61,14 @@ if /i "%TYPE%"=="movie" set "IS_SERIES=no"
 REM Destination defaults are resolved from config inside the script when not specified
 if defined LIST_ONLY (
     if "%DEST%"=="" (
-        powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%" -ListOnly
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%" -ListOnly
     ) else (
-        powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%" -Destination "%DEST%" -ListOnly
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%" -Destination "%DEST%" -ListOnly
     )
 ) else (
     if "%DEST%"=="" (
-        powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%"
     ) else (
-        powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%" -Destination "%DEST%"
+        powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%ANIME%" -isAnimeSeries "%IS_SERIES%" -Destination "%DEST%"
     )
 )

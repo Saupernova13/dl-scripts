@@ -24,7 +24,7 @@ set "SHOW=%~1"
 set "DEST=%~2"
 
 if "%DEST%"=="" (
-    powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%SHOW%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%SHOW%"
 ) else (
-    powershell -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%SHOW%" -Destination "%DEST%"
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%SHOW%" -Destination "%DEST%"
 )
