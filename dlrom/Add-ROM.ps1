@@ -6,11 +6,22 @@
 #
 # Normally invoked through dlrom.cmd:
 #   dlrom "Game Name" [--platform ps2] [--region usa] [--interactive] [--verbose]
+#
+# Downloads are ROM-sized, so the default is to hand the slow half to a detached worker
+# and return a job id immediately (see Jobs.ps1 / RomPipeline.ps1):
+#   dlrom "Game Name"            search + resolve links, spawn a worker, return a job id
+#   dlrom --status <jobId>       progress of a running or finished job
+#   dlrom --list                 every recent job
+#   dlrom "Game Name" --wait     stay in the foreground until it is installed
+#
+# Modes:
+#   -JobFile <path>  internal; the worker entry point, spawned by Start-DlromJob
 
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)]
-    [string]$Query,
+    # Not Mandatory: --status/--list/-JobFile carry no query, and a mandatory parameter
+    # would make PowerShell prompt for it -- hanging any run with no console attached.
+    [string]$Query = "",
 
     [string]$Platform = "",
     [string]$Region = "",
@@ -23,7 +34,14 @@ param(
     [switch]$LinksOnly,
     [switch]$Quiet,
     [switch]$NoTorrent,
-    [int]$TorrentPick = -1
+    [int]$TorrentPick = -1,
+
+    # Background job surface
+    [switch]$Wait,
+    [string]$Status = "",
+    [switch]$ListJobs,
+    [string]$JobFile = "",
+    [switch]$Json
 )
 
 # Load order matters only for Logging: it must come first so the DriveResolver fallback
@@ -31,6 +49,7 @@ param(
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Logging.ps1')           # Write-Log, Format-*, ConvertTo-ResponseText
 . (Join-Path $repoRoot     'lib\DriveResolver.ps1') # Initialize-DlConfig, Resolve-MediaPath
+. (Join-Path $PSScriptRoot 'Jobs.ps1')             # job state, detached worker spawn, --status/--list
 . (Join-Path $PSScriptRoot 'Cdromance.ps1')         # platform tables, search, link discovery
 . (Join-Path $PSScriptRoot 'Downloaders.ps1')       # Motrix/AB/aria2c/curl/BITS/webclient + dispatcher
 . (Join-Path $PSScriptRoot 'RomFiles.ps1')          # archive extraction, ROM filing
@@ -39,10 +58,18 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'QbitTorrent.ps1')       # qBittorrent WebUI client (PS2 torrent fallback)
 . (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
 . (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
+. (Join-Path $PSScriptRoot 'RomPipeline.ps1')       # download -> extract -> file -> Steam (shared by worker and --wait)
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
 $script:LOG_QUIET   = [bool]$Quiet
+
+# ---------------------------------------------------------------------------
+# Job queries. Answered straight from the jobs dir -- no config, no network, so
+# `dlrom --status <id>` stays instant even while a download is saturating the line.
+# ---------------------------------------------------------------------------
+if ($Status)   { Show-DlromJobStatus -JobId $Status -AsJson:$Json; exit 0 }
+if ($ListJobs) { Show-DlromJobList -AsJson:$Json; exit 0 }
 
 $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     romsBase        = "C:\Emulation\roms"
@@ -75,6 +102,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     qbitUser             = ""     # only needed if WebUI\LocalHostAuth is enabled
     qbitPass             = ""
     ps2GameIndexPath     = ""     # blank = autodetect PCSX2 GameIndex.yaml (serial resolution for the dlps2tex handoff)
+    jobKeepDays          = 7      # prune finished job files + logs after this many days
 })
 
 # Read a config value with a fallback when the key is absent (stale config that missed backfill).
@@ -102,6 +130,71 @@ $script:CF_CONTAINER  = Get-CfgValue 'cfContainerName' 'flaresolverr'
 $script:CF_IMAGE      = Get-CfgValue 'cfDockerImage' 'ghcr.io/flaresolverr/flaresolverr:latest'
 $script:CF_TIMEOUT    = [int](Get-CfgValue 'cfSolverTimeoutMs' 120000)
 $script:CF_CACHE_DIR  = $tempDir
+
+# ---------------------------------------------------------------------------
+# Worker mode (internal). Runs the slow half of a job that the parent already
+# resolved, with nothing but a log file for company.
+# ---------------------------------------------------------------------------
+if ($JobFile) {
+    $script:LOG_HEADLESS = $true
+    $script:LOG_QUIET    = $false   # nobody is reading stdout; the log wants everything
+
+    if (-not (Test-Path $JobFile)) { Write-Log "Worker: job file not found: $JobFile" 'ERROR'; exit 1 }
+    $job = Get-Content -LiteralPath $JobFile -Raw | ConvertFrom-Json
+
+    # Claim the job: our own pid is what --status checks for liveness, and recording it here
+    # (rather than in the spawning parent) keeps the file single-writer from now on.
+    $job.status    = 'running'
+    $job.pid       = $PID
+    $job.startedAt = (Get-Date).ToUniversalTime().ToString('o')
+    Save-DlromJob -Job $job
+
+    $script:DOWNLOADER = Find-Downloader
+    Write-Log "Worker started for job $($job.id) [$($job.kind)] using $script:DOWNLOADER" 'INFO'
+
+    $ok = $false
+    try {
+        if ($job.kind -eq 'torrent') {
+            # The qbit wait loop reports through Write-ProgressLine; map it onto the job.
+            $script:JOB_PROGRESS_CB = {
+                param($Percent, $Line)
+                if ($Percent -lt 0) { return }
+                $job.step       = 'downloading'
+                $job.progress   = 5 + [int](85 * ($Percent / 100.0))
+                $job.lastUpdate = (Get-Date).ToUniversalTime().ToString('o')
+                Save-DlromJob -Job $job
+            }.GetNewClosure()
+
+            $ok = Invoke-Ps2TorrentFallback -Query $job.query -Region $job.region `
+                    -Destination $job.romsBase -Cfg $cfg -NoExtract:$job.noExtract `
+                    -NoSteam:$job.noSteam -PickIndex $job.torrentPick -Reason $job.reason -Job $job
+        } else {
+            $ok = Invoke-RomPipeline -Job $job -Cfg $cfg -TempDir $tempDir
+        }
+        Complete-DlromJob -Job $job -Ok ([bool]$ok) `
+            -Message $(if ($ok) { 'Installed' } else { 'Nothing was installed' })
+    } catch {
+        Write-Log "Worker failed: $($_.Exception.Message)" 'ERROR'
+        Write-Log $_.ScriptStackTrace 'DEBUG'
+        Complete-DlromJob -Job $job -Ok $false -Message $_.Exception.Message
+    } finally {
+        $script:JOB_PROGRESS_CB = $null
+    }
+
+    Write-Log "Worker finished for job $($job.id): $($job.status)" $(if ($ok) { 'SUCCESS' } else { 'ERROR' })
+    exit $(if ($ok) { 0 } else { 1 })
+}
+
+# ---------------------------------------------------------------------------
+# Parent mode: search, resolve links, then hand the download off.
+# ---------------------------------------------------------------------------
+if (-not $Query) {
+    Write-Log "No game name given." 'ERROR'
+    Write-Log 'Usage: dlrom "Game Name" [--platform ps2] | dlrom --status <jobId> | dlrom --list' 'INFO'
+    exit 1
+}
+
+Remove-OldDlromJobs -KeepDays ([int](Get-CfgValue 'jobKeepDays' 7))
 
 $script:DOWNLOADER = Find-Downloader
 
@@ -133,19 +226,57 @@ if ($Platform) {
 $script:PS2_FALLBACK = ([bool]$cfg.ps2TorrentEnabled -and -not $NoTorrent -and -not $LinksOnly -and
     (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')))
 
+# Announce a spawned job in the shape agents and humans both read: the id first, then
+# how to follow it. Mirrors ps2tex's spawn output.
+function Write-DlromJobSpawned {
+    param([PSCustomObject]$Job)
+    Write-Host ""
+    Write-Host "Download job spawned.  It will continue in the background." -ForegroundColor Green
+    Write-Host "  Job ID:   $($Job.id)" -ForegroundColor Yellow
+    Write-Host "  Source:   $($Job.kind)"
+    if ($Job.title) { Write-Host "  Title:    $($Job.title)" }
+    Write-Host "  Dest:     $($Job.romDest)"
+    Write-Host "  Log:      $($Job.logFile)"
+    Write-Host "  Check:    dlrom --status $($Job.id)"
+    Write-Host ""
+    if ($Json) {
+        $Job | ConvertTo-Json -Depth 8
+    }
+}
+
 # Every cdromance dead-end funnels through here: report the real reason, try the
 # PS2 torrent fallback when eligible, and only then exit with the original code.
 function Invoke-CdrFallbackOrExit {
     param([string]$ReasonCode, [string]$ReasonText, [int]$ExitCode)
     if ($ReasonText) { Write-Log $ReasonText 'WARN' }
     if ($script:PS2_FALLBACK) {
+        $job = New-DlromJob -Kind 'torrent' -Query $Query -Platform 'ps2' -Region $Region `
+                 -RomsBase $Destination -Reason $ReasonCode -TorrentPick $TorrentPick `
+                 -NoExtract:$NoExtract -NoSteam:$NoSteam
+
+        if (-not $Wait) {
+            # The archive match + selective download is the same multi-hour job as any
+            # other; background it rather than pinning the caller for four hours.
+            try {
+                Start-DlromJob -Job $job | Out-Null
+                Write-DlromJobSpawned -Job $job
+                exit 0
+            } catch {
+                Write-Log "Could not spawn torrent fallback worker: $($_.Exception.Message)" 'ERROR'
+                exit 1
+            }
+        }
+
+        Save-DlromJob -Job $job -Strict
         $ok = $false
         try {
             $ok = Invoke-Ps2TorrentFallback -Query $Query -Region $Region -Destination $Destination `
-                    -Cfg $cfg -NoExtract:$NoExtract -NoSteam:$NoSteam -PickIndex $TorrentPick -Reason $ReasonCode
+                    -Cfg $cfg -NoExtract:$NoExtract -NoSteam:$NoSteam -PickIndex $TorrentPick `
+                    -Reason $ReasonCode -Job $job
         } catch {
             Write-Log "Torrent fallback error: $($_.Exception.Message)" 'ERROR'
         }
+        Complete-DlromJob -Job $job -Ok ([bool]$ok)
         if ($ok) { Write-Log "All done (PS2 torrent fallback)." 'SUCCESS'; exit 0 }
         Write-Log "PS2 torrent fallback did not install anything." 'WARN'
     } elseif (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')) {
@@ -254,7 +385,7 @@ $platformFolder = if ($resolvedSlug -and $PLATFORM_FOLDERS.ContainsKey($resolved
 #   1. -Destination          explicit per-run override (always wins)
 #   2. cfg.romsBase          the configured base (C:\Emulation\roms) when it exists
 #   3. drive-meta picker      a connected drive advertising a rom_path
-#   4. manual prompt          last resort
+#   4. manual prompt          last resort, and only with a human watching
 $romsBase = $null
 if ($Destination) {
     $romsBase = $Destination
@@ -270,121 +401,58 @@ if ($Destination) {
         Write-Log "Drive picker selected ROMs base: $romsBase" 'INFO'
     } catch {
         Write-Log "No connected drive advertises a ROM path ($($_.Exception.Message))." 'DEBUG'
+        # Prompting is only safe when a human asked to be asked. An agent or a scheduled
+        # run has no console, so this would block forever on a prompt nobody can see --
+        # tell the caller how to fix it instead.
+        if (-not $Interactive) {
+            Write-Log "Cannot resolve a ROMs base directory and there is no console to ask." 'ERROR'
+            Write-Log "Fix with one of:" 'ERROR'
+            Write-Log "  dlrom `"$Query`" --dest <path>" 'ERROR'
+            Write-Log "  set romsBase in $env:LOCALAPPDATA\dlScripts\config.json" 'ERROR'
+            Write-Log "  connect a drive that advertises a rom_path, or re-run with --interactive" 'ERROR'
+            exit 1
+        }
         Write-Host "Enter ROMs base path (or press Enter for $HOME\Emulation\roms): " -NoNewline
         $alt = Read-Host
         $romsBase = if ($alt) { $alt } else { Join-Path $HOME "Emulation\roms" }
     }
 }
 
-$romDest = Join-Path $romsBase $platformFolder
-if (-not (Test-Path $romDest)) {
-    New-Item -ItemType Directory -Path $romDest -Force | Out-Null
-    Write-Log "Created ROM directory: $romDest" 'DEBUG'
-}
+$romDest      = Join-Path $romsBase $platformFolder
+$resultRegion = if ($Region) { $Region } else { @(Get-CdrRegions $selected.Url $selected.Title)[0] }
 
-if (-not (Test-Path $tempDir)) {
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-}
+$job = New-DlromJob -Kind 'cdromance' -Query $Query -Title $selected.Title `
+        -Platform $platformFolder -Region $resultRegion -RomsBase $romsBase -RomDest $romDest `
+        -Links $selectedLinks -SourceUrl $selected.Url `
+        -NoExtract:$NoExtract -NoSteam:$NoSteam
 
-# Download, extract, and install each selected link.
-# Each iteration removes its temp archive + extraction dir in a finally so nothing is
-# left behind on success OR failure (--no-extract keeps the archive, which is the deliverable).
-$installedCount = 0
-$installedPaths = @()
-foreach ($link in $selectedLinks) {
-    Write-Log "Downloading: $($link.Label)" 'INFO'
-
-    # Sanitise label for use as a Windows filename
-    $safeLabel = $link.Label -replace '[<>:"/\\|?*]', '_'
-    $outFile   = Join-Path $tempDir $safeLabel
-
-    $completedPath = $null
-    $extractDir    = $null
+# Default: hand the download to a detached worker and return now. ROM downloads run for
+# minutes to hours, and holding the caller (usually an agent) hostage for that is the
+# whole reason this exists. --wait opts back into the old blocking behaviour.
+if (-not $Wait) {
     try {
-        try {
-            $completedPath = Invoke-FileDownload -Url $link.Url -OutFile $outFile -Label $link.Label
-        } catch {
-            Write-Log "Download failed: $($_.Exception.Message)" 'ERROR'
-            continue
-        }
-
-        if ($NoExtract) {
-            Write-Log "Archive saved (--no-extract): $completedPath" 'SUCCESS'
-            continue
-        }
-
-        if (-not $completedPath -or -not (Test-Path $completedPath)) {
-            Write-Log "Downloaded file not found at: $outFile" 'ERROR'
-            continue
-        }
-
-        # Raw ROM (not a real archive): file it straight into the console folder so it can
-        # never be left behind in the downloader's folder. Only true archives get extracted.
-        if (-not (Test-IsArchive $completedPath)) {
-            $dlExt = [System.IO.Path]::GetExtension($completedPath).ToLower()
-            if ($dlExt -notin $script:ROM_EXTS) {
-                Write-Log "Download is not an archive and '$dlExt' is an unrecognised ROM type; filing as-is." 'WARN'
-            }
-            try {
-                $installedPaths += (Move-RomToDest -SourcePath $completedPath -DestDir $romDest)
-                $installedCount++
-            } catch {
-                Write-Log "Failed to file ROM: $($_.Exception.Message)" 'ERROR'
-            }
-            continue
-        }
-
-        $extractId  = [System.IO.Path]::GetFileNameWithoutExtension($safeLabel) + '_' + (Get-Random)
-        $extractDir = Join-Path $tempDir "extracted\$extractId"
-        try {
-            Expand-RomArchive -ArchivePath $completedPath -OutDir $extractDir
-        } catch {
-            Write-Log "Extraction failed: $($_.Exception.Message)" 'ERROR'
-            continue
-        }
-
-        $romFile = Find-RomFile -ExtractedDir $extractDir
-        if (-not $romFile) {
-            Write-Log "No ROM file found after extraction." 'WARN'
-            continue
-        }
-
-        try {
-            $installedPaths += (Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest)
-            $installedCount++
-        } catch {
-            Write-Log "Move failed: $($_.Exception.Message)" 'ERROR'
-        }
+        Start-DlromJob -Job $job | Out-Null
+    } catch {
+        Write-Log "Could not spawn worker: $($_.Exception.Message)" 'ERROR'
+        Write-Log "Run with --wait to download in the foreground instead." 'WARN'
+        exit 1
     }
-    finally {
-        # Always clean download artifacts (keep the archive only under --no-extract).
-        if (-not $NoExtract) {
-            if ($completedPath -and (Test-Path $completedPath)) { Remove-Item -Path $completedPath -Force -ErrorAction SilentlyContinue }
-            if (Test-Path $outFile)                              { Remove-Item -Path $outFile -Force -ErrorAction SilentlyContinue }
-            if ($extractDir -and (Test-Path $extractDir))        { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
-        }
-    }
+    Write-DlromJobSpawned -Job $job
+    exit 0
 }
 
-# Prune the extraction parent if our cleanup left it empty.
-$extractedParent = Join-Path $tempDir "extracted"
-if ((Test-Path $extractedParent) -and -not (Get-ChildItem -LiteralPath $extractedParent -Force -ErrorAction SilentlyContinue)) {
-    Remove-Item -Path $extractedParent -Force -ErrorAction SilentlyContinue
+# --wait: same pipeline, same job file, just in this process where you can watch it.
+Save-DlromJob -Job $job -Strict
+$ok = $false
+try {
+    $ok = Invoke-RomPipeline -Job $job -Cfg $cfg -TempDir $tempDir
+    Complete-DlromJob -Job $job -Ok ([bool]$ok)
+} catch {
+    Complete-DlromJob -Job $job -Ok $false -Message $_.Exception.Message
+    Write-Log "Failed: $($_.Exception.Message)" 'ERROR'
+    exit 1
 }
 
-# Add the freshly installed ROM(s) to Steam (srm-wrapper preferred, built-in fallback).
-if ($installedCount -gt 0 -and -not $NoSteam -and [bool](Get-CfgValue 'steamSync' $true)) {
-    Sync-RomToSteam -RomDest $romDest -RomsBase $romsBase -InstalledCount $installedCount
-} elseif ($installedCount -gt 0 -and $NoSteam) {
-    Write-Log "Skipping Steam sync (--no-steam)." 'INFO'
-}
-
-# Report what was installed and, for PS2, the dlps2tex command for matching textures
-# (same version). An agent can read the [HANDOFF] line to chain the texture download.
-if ($installedCount -gt 0) {
-    $resultRegion = if ($Region) { $Region } else { @(Get-CdrRegions $selected.Url $selected.Title)[0] }
-    Write-DlromResult -Title $selected.Title -Platform $platformFolder -Region $resultRegion `
-        -Source 'cdromance' -InstalledPath (@($installedPaths)[-1]) -Cfg $cfg
-}
-
+if (-not $ok) { Write-Log "Nothing was installed." 'WARN'; exit 1 }
 Write-Log "All done." 'SUCCESS'
+exit 0

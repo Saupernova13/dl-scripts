@@ -1,6 +1,12 @@
 @echo off
 REM dlrom - Download ROMs from cdromance.org and install them to your emulator folders
-REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only] [--verbose] [--quiet]
+REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+REM        dlrom --status <jobId> [--json]
+REM        dlrom --list [--json]
+REM
+REM Downloads run in the BACKGROUND by default: dlrom searches, resolves the links, spawns
+REM a worker and returns a job id straight away. Follow it with --status; use --wait only
+REM when you actually want to sit and watch the transfer.
 REM
 REM Platforms: ps2, ps1, psp, vita, n64, gamecube, nds, gba, snes, nes, gbc, gb, dreamcast, saturn, wii, 3ds
 REM Regions:   usa, europe, japan, world
@@ -8,15 +14,37 @@ REM
 REM Examples:
 REM   dlrom "Rayman 2"
 REM   dlrom "Final Fantasy VII" --platform ps1
-REM   dlrom "Metal Slug" --platform ps2 --region usa
-REM   dlrom "Zelda" --platform n64 --interactive
+REM   dlrom --status a3f9c21b8e04
+REM   dlrom --list
+
+set "SCRIPT=%~dp0dlrom\Add-ROM.ps1"
+if not exist "%SCRIPT%" (
+    echo [ERROR] Script not found: %SCRIPT%
+    echo Please ensure Add-ROM.ps1 exists in the dlrom subfolder.
+    exit /b 1
+)
+
+REM --- job queries: these carry no game name, so handle them before %1 becomes the query ---
+if /i "%~1"=="--list"   goto :job_list
+if /i "%~1"=="-list"    goto :job_list
+if /i "%~1"=="--jobs"   goto :job_list
+if /i "%~1"=="--status" goto :job_status
+if /i "%~1"=="-status"  goto :job_status
 
 if "%~1"=="" (
-    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--interactive] [--no-extract] [--no-steam] [--links-only] [--verbose] [--quiet]
+    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+    echo        dlrom --status ^<jobId^> [--json]
+    echo        dlrom --list [--json]
+    echo.
+    echo Downloads run in the BACKGROUND by default and return a job id immediately.
     echo.
     echo Platforms: ps2, ps1, psp, vita, n64, gamecube, nds, gba, snes, nes, gbc, gb, dreamcast, saturn, wii, 3ds
     echo Regions:   usa, europe, japan, world
     echo.
+    echo   --wait         stay in the foreground until the ROM is installed
+    echo   --status ID    show progress for a job
+    echo   --list         list recent jobs
+    echo   --json         machine-readable output
     echo   --interactive  pick from the results list instead of auto-selecting
     echo   --no-extract   keep the downloaded archive; do not extract or install
     echo   --no-steam     skip adding the download to Steam via Steam ROM Manager
@@ -30,14 +58,7 @@ if "%~1"=="" (
     echo   dlrom "Rayman 2"
     echo   dlrom "Final Fantasy VII" --platform ps1
     echo   dlrom "Metal Slug" --platform ps2 --region usa
-    echo   dlrom "Zelda" --platform n64 --interactive
-    exit /b 1
-)
-
-set "SCRIPT=%~dp0dlrom\Add-ROM.ps1"
-if not exist "%SCRIPT%" (
-    echo [ERROR] Script not found: %SCRIPT%
-    echo Please ensure Add-ROM.ps1 exists in the dlrom subfolder.
+    echo   dlrom --status a3f9c21b8e04
     exit /b 1
 )
 
@@ -54,6 +75,8 @@ set "VERBOSE="
 set "QUIET="
 set "NO_TORRENT="
 set "TORRENT_PICK="
+set "WAIT="
+set "JSON="
 
 :shift_args
 shift
@@ -68,6 +91,8 @@ if /i "%~1"=="--no-extract"   ( set "NO_EXTRACT=1"  & goto :shift_args )
 if /i "%~1"=="--no-steam"     ( set "NO_STEAM=1"    & goto :shift_args )
 if /i "%~1"=="--links-only"   ( set "LINKS_ONLY=1"  & goto :shift_args )
 if /i "%~1"=="--no-torrent"   ( set "NO_TORRENT=1"  & goto :shift_args )
+if /i "%~1"=="--wait"         ( set "WAIT=1"        & goto :shift_args )
+if /i "%~1"=="--json"         ( set "JSON=1"        & goto :shift_args )
 if /i "%~1"=="--verbose"      ( set "VERBOSE=1"     & goto :shift_args )
 if /i "%~1"=="--quiet"        ( set "QUIET=1"       & goto :shift_args )
 goto :shift_args
@@ -109,7 +134,27 @@ if defined NO_STEAM    set "PS_ARGS=%PS_ARGS% -NoSteam"
 if defined LINKS_ONLY  set "PS_ARGS=%PS_ARGS% -LinksOnly"
 if defined NO_TORRENT  set "PS_ARGS=%PS_ARGS% -NoTorrent"
 if defined TORRENT_PICK set "PS_ARGS=%PS_ARGS% -TorrentPick %TORRENT_PICK%"
+if defined WAIT        set "PS_ARGS=%PS_ARGS% -Wait"
+if defined JSON        set "PS_ARGS=%PS_ARGS% -Json"
 if defined VERBOSE     set "PS_ARGS=%PS_ARGS% -Verbose"
 if defined QUIET       set "PS_ARGS=%PS_ARGS% -Quiet"
 
-powershell -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+:job_list
+set "PS_ARGS=-ListJobs"
+if /i "%~2"=="--json" set "PS_ARGS=%PS_ARGS% -Json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+:job_status
+if "%~2"=="" (
+    echo Usage: dlrom --status ^<jobId^>
+    echo Run "dlrom --list" to see recent job ids.
+    exit /b 1
+)
+set "PS_ARGS=-Status "%~2""
+if /i "%~3"=="--json" set "PS_ARGS=%PS_ARGS% -Json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%

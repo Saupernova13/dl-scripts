@@ -128,9 +128,12 @@ function Resolve-Ps2Serial {
 # Print the end-of-run result and, for PS2, the dlps2tex handoff for the SAME
 # version. The machine-readable [HANDOFF] line lets an agent grab the exact
 # texture command without parsing prose.
+# Prints the human-readable result block and returns the machine-readable [HANDOFF] line
+# (empty for non-PS2), so a caller can stash it on the job for --status/--json to serve.
 function Write-DlromResult {
     param([string]$Title, [string]$Platform, [string]$Region = '', [string]$Source = '', [string]$InstalledPath = '', $Cfg)
 
+    $handoffLine = ''
     Write-Host ""
     Write-Host ("=" * 64) -ForegroundColor DarkGray
     Write-Host "dlrom installed a ROM" -ForegroundColor Green
@@ -153,8 +156,10 @@ function Write-DlromResult {
         Write-Host ""
         Write-Host "Matching HD textures for the SAME version - run:" -ForegroundColor Cyan
         Write-Host "  dlps2tex `"$handoff`""
-        Write-Host "[HANDOFF] platform=ps2 serial=$serial title=`"$Title`" texturecmd=dlps2tex `"$handoff`""
+        $handoffLine = "[HANDOFF] platform=ps2 serial=$serial title=`"$Title`" texturecmd=dlps2tex `"$handoff`""
+        Write-Host $handoffLine
     }
     Write-Host ("=" * 64) -ForegroundColor DarkGray
     Write-Host ""
+    return $handoffLine
 }

@@ -84,7 +84,9 @@ function Wait-MotrixDownload {
 
     while ($true) {
         $status = Invoke-MotrixRpc 'aria2.tellStatus' @($Gid, $fields)
-        if (-not $status) { Write-Log "Lost contact with Motrix." 'ERROR'; exit 1 }
+        # Throw rather than exit: the caller already treats a failed link as "try the next
+        # one", and a worker must be allowed to mark its job failed on the way out.
+        if (-not $status) { Stop-ProgressLine; throw "Lost contact with Motrix." }
 
         $state = $status.status
         $done  = [long]$status.completedLength
@@ -101,18 +103,17 @@ function Wait-MotrixDownload {
         $filled = [int]($pct / 5)
         $bar    = '[' + ('#' * $filled) + (' ' * (20 - $filled)) + ']'
         $line   = " $bar $pct%  $(Format-Bytes $done)/$(Format-Bytes $total)  $(Format-Speed $speed)  ETA: $eta  $shortLabel"
-        Write-Host "`r$line   " -NoNewline -ForegroundColor Cyan
+        Write-ProgressLine -Line $line -Percent $pct
 
         if ($state -eq 'complete') {
-            Write-Host ""
+            Stop-ProgressLine
             Write-Log "Download complete." 'SUCCESS'
             $filePath = if ($status.files -and $status.files[0].path) { $status.files[0].path } else { "" }
             return $filePath
         }
         if ($state -eq 'error') {
-            Write-Host ""
-            Write-Log "Motrix reported a download error for GID $Gid." 'ERROR'
-            exit 1
+            Stop-ProgressLine
+            throw "Motrix reported a download error for GID $Gid."
         }
 
         Start-Sleep -Milliseconds $PollMs
@@ -136,15 +137,16 @@ function Wait-AbFile {
         $size   = if ($exists) { (Get-Item -LiteralPath $target).Length } else { 0 }
         if ($exists -and $partials.Count -eq 0 -and $size -gt 0 -and $size -eq $lastSize) {
             $stable++
-            if ($stable -ge 2) { Write-Host ""; return $target }
+            if ($stable -ge 2) { Stop-ProgressLine; return $target }
         } else {
             $stable = 0
         }
         $lastSize = $size
-        Write-Host "`r  [AB] $(Format-Bytes $size)  $shortLabel   " -NoNewline -ForegroundColor Cyan
+        # AB reports no total, so there is no percentage to give -- bytes-so-far only.
+        Write-ProgressLine -Line "  [AB] $(Format-Bytes $size)  $shortLabel"
         Start-Sleep -Seconds 2
     }
-    Write-Host ""
+    Stop-ProgressLine
     return $null
 }
 
@@ -194,10 +196,10 @@ function Invoke-BitsDownload {
             $pct    = if ($total -gt 0) { [int]($done / $total * 100) } else { 0 }
             $filled = [int]($pct / 5)
             $bar    = '[' + ('#' * $filled) + (' ' * (20 - $filled)) + ']'
-            Write-Host "`r $bar $pct%  $(Format-Bytes $done)/$(Format-Bytes $total)  $shortLabel   " -NoNewline -ForegroundColor Cyan
+            Write-ProgressLine -Line " $bar $pct%  $(Format-Bytes $done)/$(Format-Bytes $total)  $shortLabel" -Percent $pct
             Start-Sleep -Seconds 1
         }
-        Write-Host ""
+        Stop-ProgressLine
         if ($job.JobState -in @('Error', 'TransientError')) {
             $errMsg = $job.ErrorDescription
             Remove-BitsTransfer $job -ErrorAction SilentlyContinue

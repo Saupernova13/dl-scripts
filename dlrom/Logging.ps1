@@ -3,6 +3,9 @@
 # Write-Log respects two flags that Add-ROM sets from -Verbose / -Quiet:
 #   $script:LOG_VERBOSE   also print DEBUG (per-step detail)
 #   $script:LOG_QUIET     drop routine INFO, keep results and warnings
+#
+# A background worker sets a third:
+#   $script:LOG_HEADLESS  no terminal is attached; stdout is a log file
 
 function Write-Log {
     param([string]$Message, [string]$Level = 'INFO')
@@ -20,7 +23,50 @@ function Write-Log {
         'DEBUG'   { 'Gray' }
         default   { 'White' }
     }
-    Write-Host "[$ts] [$Level] $Message" -ForegroundColor $color
+    # A worker's stdout is a redirected file with no color support, and -ForegroundColor
+    # against a non-console host throws. Plain text also keeps the log greppable.
+    if ($script:LOG_HEADLESS) { Write-Host "[$ts] [$Level] $Message" }
+    else { Write-Host "[$ts] [$Level] $Message" -ForegroundColor $color }
+}
+
+# Live progress for the download wait loops.
+#
+# On a terminal this is a carriage-return overwrite, so one line animates in place. That
+# is exactly wrong for a worker, whose stdout is a file: \r writes no newline, so a
+# multi-GB download would land as one endless line and swamp the log tail. Headless runs
+# therefore push the numbers into the job state (which is what --status reads) and emit a
+# plain line only every $PROGRESS_LOG_EVERY_SEC, leaving a readable trail behind.
+$script:PROGRESS_LOG_EVERY_SEC = 30
+$script:JOB_PROGRESS_CB        = $null   # set by the worker: { param($Percent, $Line) ... }
+$script:_lastProgressLog       = $null
+
+function Write-ProgressLine {
+    param([string]$Line, [int]$Percent = -1)
+
+    # The job is fed regardless of who is rendering: a --wait run in one terminal should
+    # still answer `dlrom --status` truthfully from another.
+    if ($script:JOB_PROGRESS_CB) {
+        try { & $script:JOB_PROGRESS_CB $Percent $Line } catch { }
+    }
+
+    if (-not $script:LOG_HEADLESS) {
+        Write-Host "`r$Line   " -NoNewline -ForegroundColor Cyan
+        return
+    }
+
+    $now = Get-Date
+    if (-not $script:_lastProgressLog -or
+        ($now - $script:_lastProgressLog).TotalSeconds -ge $script:PROGRESS_LOG_EVERY_SEC) {
+        $script:_lastProgressLog = $now
+        Write-Host "[$($now.ToString('HH:mm:ss'))] [PROG]$Line"
+    }
+}
+
+# Close off an animated progress line. On a terminal that means a newline so the next
+# message starts fresh; headless there is nothing to close.
+function Stop-ProgressLine {
+    if (-not $script:LOG_HEADLESS) { Write-Host "" }
+    $script:_lastProgressLog = $null
 }
 
 function Format-Bytes {

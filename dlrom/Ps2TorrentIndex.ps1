@@ -268,7 +268,10 @@ function Invoke-Ps2TorrentFallback {
         [switch]$NoExtract,
         [switch]$NoSteam,
         [int]$PickIndex = -1,
-        [string]$Reason = ''
+        [string]$Reason = '',
+        # Optional: when a background worker owns this run, progress and the final result
+        # are stamped onto its job. Absent (a --wait run), this behaves exactly as before.
+        [PSCustomObject]$Job = $null
     )
 
     Write-Log "PS2 torrent fallback engaged ($Reason)." 'INFO'
@@ -384,7 +387,18 @@ function Invoke-Ps2TorrentFallback {
     # serial), so an agent can chain the texture download for this version.
     $resultTitle  = if ($chosen) { $chosen.Title } else { [System.IO.Path]::GetFileNameWithoutExtension([string]$match.File.path) }
     $resultRegion = if ($chosen -and $chosen.Regions) { @($chosen.Regions -split ',')[0] } elseif ($Region) { $Region } else { '' }
-    Write-DlromResult -Title $resultTitle -Platform 'ps2' -Region $resultRegion `
+    # Capture, never let this fall through as output: Write-DlromResult returns the
+    # [HANDOFF] line, and an uncaptured string here would ride out on this function's
+    # return value alongside the $true and break the caller's boolean test.
+    $handoff = Write-DlromResult -Title $resultTitle -Platform 'ps2' -Region $resultRegion `
         -Source 'torrent' -InstalledPath $installedRomPath -Cfg $Cfg
+
+    # Mirror the outcome onto the job so --status can answer without reading the log.
+    if ($Job) {
+        $Job.title = $resultTitle
+        $Job.region = $resultRegion
+        $Job.installedPaths += $installedRomPath
+        if ($handoff) { $Job.handoff = $handoff }
+    }
     return $true
 }

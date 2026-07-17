@@ -66,10 +66,10 @@ function Expand-RomArchive {
 
     $sz = Find-7zip
     if (-not $sz) {
-        Write-Log "7z.exe is required to extract .$archType archives but was not found." 'ERROR'
         Write-Log "Install it with:  winget install 7zip.7zip" 'WARN'
         Write-Log "The archive is at: $ArchivePath" 'WARN'
-        exit 1
+        # Throw, don't exit: a background worker has to record the failure on its job.
+        throw "7z.exe is required to extract .$archType archives but was not found."
     }
 
     $proc = Start-Process -FilePath $sz -ArgumentList "x `"-o$OutDir`" -y `"$ArchivePath`"" -Wait -PassThru -NoNewWindow

@@ -198,12 +198,11 @@ function Wait-QbitFile {
 
         $pct  = [int]($prog * 100)
         $done = [long]($prog * $size)
-        Write-Host ("`r  [qbit] {0,3}%  {1}/{2}  {3}  {4}   " -f `
-            $pct, (Format-Bytes $done), (Format-Bytes $size), (Format-Speed $speed), $shortLabel) `
-            -NoNewline -ForegroundColor Cyan
+        Write-ProgressLine -Percent $pct -Line ("  [qbit] {0,3}%  {1}/{2}  {3}  {4}" -f `
+            $pct, (Format-Bytes $done), (Format-Bytes $size), (Format-Speed $speed), $shortLabel)
 
         if ($prog -ge 1.0 -and (Test-Path -LiteralPath $onDisk)) {
-            Write-Host ""
+            Stop-ProgressLine
             return $onDisk
         }
         if ($state -eq 'error' -or $state -eq 'missingFiles') {
