@@ -32,8 +32,8 @@ function Resolve-QbitBase {
     param([string]$CfgHost)
     if ($CfgHost) { return ([string]$CfgHost).TrimEnd('/') }
     $port = Get-QbitPortFromIni
-    if (-not $port) { $port = 8075 }
-    return "http://127.0.0.1:$port"
+    if (-not $port) { $port = $script:DEFAULT_QBIT_PORT }
+    return "http://$($script:LOOPBACK):$port"
 }
 
 function Initialize-Qbit {
@@ -198,8 +198,8 @@ function Wait-QbitFile {
 
         $pct  = [int]($prog * 100)
         $done = [long]($prog * $size)
-        Write-ProgressLine -Percent $pct -Line ("  [qbit] {0,3}%  {1}/{2}  {3}  {4}" -f `
-            $pct, (Format-Bytes $done), (Format-Bytes $size), (Format-Speed $speed), $shortLabel)
+        Write-ProgressLine -Percent $pct -Line (Format-TransferLine -Prefix '[qbit]' -Percent $pct `
+            -Done $done -Total $size -BytesPerSec $speed -Label $shortLabel)
 
         if ($prog -ge 1.0 -and (Test-Path -LiteralPath $onDisk)) {
             Stop-ProgressLine
@@ -245,7 +245,7 @@ function Invoke-QbitSelectiveDownload {
     if ($hash) {
         Write-Log "Torrent already present in qBittorrent (hash $hash); reusing it." 'DEBUG'
     } else {
-        $tag = 'dlrom-' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+        $tag = 'dlrom-' + (New-ShortId)
         Write-Log "Adding torrent to qBittorrent (stopped, tag $tag)..." 'DEBUG'
         Add-QbitTorrentFile -TorrentPath $TorrentPath -SavePath $SavePath -Tag $tag
         $weAdded = $true

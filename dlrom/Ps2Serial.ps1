@@ -4,12 +4,13 @@
 # to fetch matching HD textures for. Also prints dlrom's end-of-run result block
 # plus the ready-to-run dlps2tex handoff.
 #
-# Reuses ConvertTo-Ps2Norm / Get-Ps2Significant / Resolve-Ps2RegionRequest from
-# Ps2TorrentIndex.ps1 (dot-sourced into the same scope). Write-Log from Logging.
+# Reuses ConvertTo-Ps2Norm / Get-Ps2Significant from Ps2TorrentIndex.ps1 and
+# Resolve-RegionRequest / Get-CfgValue from Common.ps1 (all dot-sourced into the same
+# scope). Region codes and the demo marker come from Constants.ps1.
 
 function Get-Ps2GameIndexPath {
     param($Cfg)
-    $cfgPath = if ($Cfg.PSObject.Properties.Name -contains 'ps2GameIndexPath') { [string]$Cfg.ps2GameIndexPath } else { '' }
+    $cfgPath = [string](Get-CfgValue 'ps2GameIndexPath' '' -Cfg $Cfg)
     if ($cfgPath -and (Test-Path $cfgPath)) { return $cfgPath }
     $default = Join-Path $env:APPDATA 'EmuDeck\Emulators\PCSX2-Qt\resources\GameIndex.yaml'
     if (Test-Path $default) { return $default }
@@ -17,7 +18,7 @@ function Get-Ps2GameIndexPath {
 }
 
 function Get-Ps2GameDbCachePath {
-    return (Join-Path (Join-Path $env:LOCALAPPDATA 'dlScripts') 'ps2-gamedb.json')
+    return (Join-Path (Get-DlScriptsDataDir) 'ps2-gamedb.json')
 }
 
 # Parse GameIndex.yaml into [{Serial,Name,NameEn,Region}]. Cached to JSON keyed by
@@ -80,14 +81,10 @@ function Resolve-Ps2Serial {
         if ($d) { return $d }
     }
 
-    $regionCode = switch (Resolve-Ps2RegionRequest $Region) {
-        'usa'    { 'NTSC-U' }
-        'europe' { 'PAL' }
-        'japan'  { 'NTSC-J' }
-        'korea'  { 'NTSC-K' }
-        'world'  { 'NTSC-U' }
-        default  { '' }
-    }
+    $canonical  = Resolve-RegionRequest $Region
+    $regionCode = if ($canonical -and $script:PS2_REGION_CODES.ContainsKey($canonical)) {
+        $script:PS2_REGION_CODES[$canonical]
+    } else { '' }
 
     $qn      = ConvertTo-Ps2Norm $Title
     $qTokens = Get-Ps2Significant $Title
@@ -116,8 +113,7 @@ function Resolve-Ps2Serial {
         elseif ($e.Region -eq 'PAL')    { $score += 20 }
         elseif ($e.Region -eq 'NTSC-J') { $score += 10 }
 
-        $demoRx = '(?i)\b(trial|demo|preview|sample|kiosk)\b'
-        if (($e.Name -and $e.Name -match $demoRx) -or ($e.NameEn -and $e.NameEn -match $demoRx)) { $score -= 500 }
+        if (($e.Name -and $e.Name -match $script:DEMO_RX) -or ($e.NameEn -and $e.NameEn -match $script:DEMO_RX)) { $score -= 500 }
 
         if ($score -gt $bestScore) { $bestScore = $score; $best = $e }
     }

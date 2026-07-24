@@ -5,9 +5,8 @@
 function Find-Srm {
     param([string]$Configured)
     if ($Configured -and (Test-Path $Configured)) { return $Configured }
-    $default = "C:\Emulation\tools\srm.exe"   # EmuDeck's default install location
-    if (Test-Path $default) { return $default }
-    $cmd = Get-Command "srm.exe" -ErrorAction SilentlyContinue
+    if (Test-Path $script:DEFAULT_SRM_EXE) { return $script:DEFAULT_SRM_EXE }
+    $cmd = Get-Command 'srm.exe' -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
     return $null
 }
@@ -28,32 +27,31 @@ function Get-SrmUserDataDir {
     return Join-Path (Split-Path -Parent $SrmExe) "userData"
 }
 
+# SRM's userSettings.json, or $null. One reader: both callers below want a different key
+# out of the same file, and each used to open, parse and swallow errors on its own.
+function Get-SrmUserSettings {
+    param([string]$SrmExe)
+    $settingsPath = Join-Path (Get-SrmUserDataDir $SrmExe) 'userSettings.json'
+    if (-not (Test-Path $settingsPath)) { return $null }
+    try   { return (Get-Content $settingsPath -Raw | ConvertFrom-Json) }
+    catch { return $null }
+}
+
 function Get-SrmRomsDir {
     param([string]$SrmExe, [string]$Fallback)
-    $settingsPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userSettings.json"
-    if (Test-Path $settingsPath) {
-        try {
-            $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
-            if ($settings.environmentVariables.romsDirectory) { return $settings.environmentVariables.romsDirectory }
-        } catch { }
-    }
+    $romsDir = (Get-SrmUserSettings -SrmExe $SrmExe).environmentVariables.romsDirectory
+    if ($romsDir) { return $romsDir }
     return $Fallback
 }
 
 function Get-SrmSteamExe {
     param([string]$SrmExe)
-    $settingsPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userSettings.json"
-    if (Test-Path $settingsPath) {
-        try {
-            $settings = Get-Content $settingsPath -Raw | ConvertFrom-Json
-            $steamDir = $settings.environmentVariables.steamDirectory
-            if ($steamDir) {
-                $candidate = Join-Path $steamDir "steam.exe"
-                if (Test-Path $candidate) { return $candidate }
-            }
-        } catch { }
+    $steamDir = (Get-SrmUserSettings -SrmExe $SrmExe).environmentVariables.steamDirectory
+    if ($steamDir) {
+        $candidate = Join-Path $steamDir 'steam.exe'
+        if (Test-Path $candidate) { return $candidate }
     }
-    $fallback = Join-Path ${env:ProgramFiles(x86)} "Steam\steam.exe"
+    $fallback = Join-Path ${env:ProgramFiles(x86)} 'Steam\steam.exe'
     if (Test-Path $fallback) { return $fallback }
     return $null
 }
@@ -100,7 +98,7 @@ function Invoke-SteamRomManager {
     $srm = Find-Srm -Configured (Get-CfgValue 'srmExe' '')
     if (-not $srm) {
         Write-Log "Steam sync skipped: neither srm-wrapper nor Steam ROM Manager (srm.exe) was found." 'WARN'
-        Write-Log "Install srm-wrapper on PATH, or Steam ROM Manager (EmuDeck installs it at C:\Emulation\tools\srm.exe), to auto-add ROMs to Steam." 'WARN'
+        Write-Log "Install srm-wrapper on PATH, or Steam ROM Manager (EmuDeck installs it at $($script:DEFAULT_SRM_EXE)), to auto-add ROMs to Steam." 'WARN'
         Write-Log "The ROM is downloaded and in place at: $RomDest" 'WARN'
         return
     }

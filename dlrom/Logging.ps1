@@ -77,6 +77,59 @@ function Format-Bytes {
     return "$B B"
 }
 
+# A fixed-width [####    ] bar. Every download backend and `--status` renders one, so the
+# width and fill character are decided here instead of by whichever loop drew it last.
+function Format-ProgressBar {
+    param(
+        [int]$Percent,
+        [int]$Width = $script:PROGRESS_BAR_WIDTH,
+        [char]$Empty = ' '
+    )
+    if ($Percent -lt 0)   { $Percent = 0 }
+    if ($Percent -gt 100) { $Percent = 100 }
+    $filled = [int][Math]::Round($Width * ($Percent / 100.0))
+    return '[' + ('#' * $filled) + ([string]$Empty * ($Width - $filled)) + ']'
+}
+
+# Seconds -> "2h 5m" / "5m 3s" / "42s". Used for download ETAs.
+function Format-Duration {
+    param([int]$Seconds)
+    if ($Seconds -lt 0)    { return '--' }
+    if ($Seconds -ge 3600) { return '{0}h {1}m' -f [int]($Seconds / 3600), [int](($Seconds % 3600) / 60) }
+    if ($Seconds -ge 60)   { return '{0}m {1}s' -f [int]($Seconds / 60), ($Seconds % 60) }
+    return "${Seconds}s"
+}
+
+# Remaining time from a byte count and a rate, or '--' when it cannot be known.
+function Format-Eta {
+    param([long]$Done, [long]$Total, [long]$BytesPerSec)
+    if ($BytesPerSec -le 0 -or $Total -le $Done) { return '--' }
+    return (Format-Duration ([int](($Total - $Done) / $BytesPerSec)))
+}
+
+# The one download progress line: bar, percent, transferred/total, rate, ETA, label.
+function Format-TransferLine {
+    param(
+        [string]$Prefix = '',
+        [int]$Percent,
+        [long]$Done,
+        [long]$Total,
+        [long]$BytesPerSec = -1,
+        [string]$Label = ''
+    )
+    $parts = @()
+    if ($Prefix) { $parts += $Prefix }
+    $parts += (Format-ProgressBar -Percent $Percent)
+    $parts += ('{0,3}%' -f $Percent)
+    $parts += "$(Format-Bytes $Done)/$(Format-Bytes $Total)"
+    if ($BytesPerSec -ge 0) {
+        $parts += (Format-Speed $BytesPerSec)
+        $parts += "ETA: $(Format-Eta -Done $Done -Total $Total -BytesPerSec $BytesPerSec)"
+    }
+    if ($Label) { $parts += (Format-ShortLabel $Label) }
+    return ' ' + ($parts -join '  ')
+}
+
 function Format-Speed {
     param([long]$Bps)
     if ($Bps -eq 0) { return '--' }

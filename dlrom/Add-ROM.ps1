@@ -46,13 +46,18 @@ param(
     [switch]$Json
 )
 
-# Load order matters only for Logging: it must come first so the DriveResolver fallback
-# sees a Write-Log already defined. The rest resolve each other's calls at runtime.
+# Load order matters for the two files that define script-scope VALUES rather than just
+# functions: Constants.ps1 must come first (Logging's formatters read PROGRESS_BAR_WIDTH
+# at parse time of their default parameters), then Common.ps1, then Logging so the
+# DriveResolver fallback sees a Write-Log already defined. Everything after that is
+# functions only, and resolves each other's calls at runtime.
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'Constants.ps1')         # shared literals: job/downloader vocab, extensions, regions
+. (Join-Path $PSScriptRoot 'Common.ps1')            # Get-CfgValue, Get-UtcStamp, region helpers
 . (Join-Path $PSScriptRoot 'Logging.ps1')           # Write-Log, Format-*, ConvertTo-ResponseText
 . (Join-Path $repoRoot     'lib\DriveResolver.ps1') # Initialize-DlConfig, Resolve-MediaPath
 . (Join-Path $PSScriptRoot 'Jobs.ps1')             # job state, detached worker spawn, --status/--list
-. (Join-Path $PSScriptRoot 'RetroGameTalk.ps1')     # platform tables, login, search, link discovery
+. (Join-Path $PSScriptRoot 'RetroGameTalk.ps1')     # platform tables, search, link discovery
 . (Join-Path $PSScriptRoot 'Downloaders.ps1')       # Motrix/AB/aria2c/curl/BITS/webclient + dispatcher
 . (Join-Path $PSScriptRoot 'RomFiles.ps1')          # archive extraction, ROM filing
 . (Join-Path $PSScriptRoot 'SteamRomManager.ps1')   # Steam ROM Manager sync
@@ -73,9 +78,9 @@ if ($Status)   { Show-DlromJobStatus -JobId $Status -AsJson:$Json; exit 0 }
 if ($ListJobs) { Show-DlromJobList -AsJson:$Json; exit 0 }
 
 $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
-    romsBase        = "C:\Emulation\roms"
+    romsBase        = $script:DEFAULT_ROMS_BASE
     tempDir         = (Join-Path $env:TEMP "dlrom")
-    motrixRpcUrl    = "http://localhost:16800/jsonrpc"
+    motrixRpcUrl    = $script:DEFAULT_MOTRIX_RPC
     maxResults      = 10
     pollIntervalMs  = 2000
     steamSync       = $true     # after a successful install, add the ROM to Steam via Steam ROM Manager
@@ -83,7 +88,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     srmRestartSteam = "auto"    # auto (restart only if running) | never | always
     srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
-    abPort          = 15151     # AB Download Manager integration port (used when Motrix isn't running)
+    abPort          = $script:DEFAULT_AB_PORT   # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
     # PS2 torrent fallback: when The Repo + direct sources fail for a PS2 game,
@@ -100,19 +105,16 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     jobKeepDays          = 7      # prune finished job files + logs after this many days
 })
 
-# Read a config value with a fallback when the key is absent (stale config that missed backfill).
-function Get-CfgValue {
-    param([string]$Name, $Default)
-    if ($cfg.PSObject.Properties.Name -contains $Name -and $null -ne $cfg.$Name) { return $cfg.$Name }
-    return $Default
-}
+# Publish the section so every module's Get-CfgValue (Common.ps1) reads the same config
+# without it being threaded through signatures that do not otherwise need it.
+Set-DlromConfig $cfg
 
-if ($MaxResults -eq 0) { $MaxResults = [int]$cfg.maxResults }
-$script:MOTRIX_URL = $cfg.motrixRpcUrl
-$tempDir           = $cfg.tempDir
+if ($MaxResults -eq 0) { $MaxResults = [int](Get-CfgValue 'maxResults' 10) }
+$script:MOTRIX_URL = Get-CfgValue 'motrixRpcUrl' $script:DEFAULT_MOTRIX_RPC
+$tempDir           = Get-CfgValue 'tempDir' (Join-Path $env:TEMP 'dlrom')
 
 # AB Download Manager settings (resolved before downloader selection)
-$script:AB_PORT    = [int](Get-CfgValue 'abPort' 15151)
+$script:AB_PORT    = [int](Get-CfgValue 'abPort' $script:DEFAULT_AB_PORT)
 $script:AB_TIMEOUT = [int](Get-CfgValue 'abTimeoutSec' 1800)
 $abDirCfg          = Get-CfgValue 'abDownloadDir' ''
 $script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
@@ -130,9 +132,9 @@ if ($JobFile) {
 
     # Claim the job: our own pid is what --status checks for liveness, and recording it here
     # (rather than in the spawning parent) keeps the file single-writer from now on.
-    $job.status    = 'running'
+    $job.status    = $script:JOB_STATUS_RUNNING
     $job.pid       = $PID
-    $job.startedAt = (Get-Date).ToUniversalTime().ToString('o')
+    $job.startedAt = (Get-UtcStamp)
     Save-DlromJob -Job $job
 
     $script:DOWNLOADER = Find-Downloader
@@ -140,14 +142,14 @@ if ($JobFile) {
 
     $ok = $false
     try {
-        if ($job.kind -eq 'torrent') {
+        if ($job.kind -eq $script:JOB_KIND_TORRENT) {
             # The qbit wait loop reports through Write-ProgressLine; map it onto the job.
             $script:JOB_PROGRESS_CB = {
                 param($Percent, $Line)
                 if ($Percent -lt 0) { return }
                 $job.step       = 'downloading'
                 $job.progress   = 5 + [int](85 * ($Percent / 100.0))
-                $job.lastUpdate = (Get-Date).ToUniversalTime().ToString('o')
+                $job.lastUpdate = (Get-UtcStamp)
                 Save-DlromJob -Job $job
             }.GetNewClosure()
 
@@ -184,14 +186,9 @@ Remove-OldDlromJobs -KeepDays ([int](Get-CfgValue 'jobKeepDays' 7))
 
 $script:DOWNLOADER = Find-Downloader
 
-$downloaderLabel = switch ($script:DOWNLOADER) {
-    'motrix'    { 'Motrix (aria2 RPC)'                          }
-    'ab'        { "AB Download Manager (port $script:AB_PORT)"  }
-    'aria2c'    { 'aria2c (standalone)'                         }
-    'curl'      { 'curl.exe (Windows built-in)'                 }
-    'bits'      { 'BITS (Background Intelligent Transfer)'      }
-    'webclient' { 'PowerShell Invoke-WebRequest (last resort)'  }
-}
+$downloaderLabel = $script:DOWNLOADER_LABELS[$script:DOWNLOADER]
+if (-not $downloaderLabel) { $downloaderLabel = $script:DOWNLOADER }
+if ($script:DOWNLOADER -eq $script:DL_AB) { $downloaderLabel += " (port $script:AB_PORT)" }
 Write-Log "Downloader: $downloaderLabel" 'INFO'
 
 # Resolve platform slug
@@ -209,7 +206,7 @@ if ($Platform) {
 
 # PS2 torrent fallback is eligible only for PS2 (we must know it's PS2 to pick the
 # right archive), when enabled, and not in links-only mode.
-$script:PS2_FALLBACK = ([bool]$cfg.ps2TorrentEnabled -and -not $NoTorrent -and -not $LinksOnly -and
+$script:PS2_FALLBACK = ([bool](Get-CfgValue 'ps2TorrentEnabled' $true) -and -not $NoTorrent -and -not $LinksOnly -and
     (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')))
 
 # Announce a spawned job in the shape agents and humans both read: the id first, then
@@ -236,7 +233,7 @@ function Invoke-RgtFallbackOrExit {
     param([string]$ReasonCode, [string]$ReasonText, [int]$ExitCode)
     if ($ReasonText) { Write-Log $ReasonText 'WARN' }
     if ($script:PS2_FALLBACK) {
-        $job = New-DlromJob -Kind 'torrent' -Query $Query -Platform 'ps2' -Region $Region `
+        $job = New-DlromJob -Kind $script:JOB_KIND_TORRENT -Query $Query -Platform 'ps2' -Region $Region `
                  -RomsBase $Destination -Reason $ReasonCode -TorrentPick $TorrentPick `
                  -NoExtract:$NoExtract -NoSteam:$NoSteam
 
@@ -267,7 +264,7 @@ function Invoke-RgtFallbackOrExit {
         Write-Log "PS2 torrent fallback did not install anything." 'WARN'
     } elseif (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')) {
         if ($NoTorrent)             { Write-Log "PS2 torrent fallback skipped (--no-torrent)." 'INFO' }
-        elseif (-not $cfg.ps2TorrentEnabled) { Write-Log "PS2 torrent fallback disabled in config." 'INFO' }
+        elseif (-not (Get-CfgValue 'ps2TorrentEnabled' $true)) { Write-Log "PS2 torrent fallback disabled in config." 'INFO' }
     } else {
         Write-Log "Tip: pass --platform ps2 to enable the torrent fallback for PS2 games." 'INFO'
     }
@@ -375,12 +372,13 @@ $platformFolder = if ($resolvedSlug -and $PLATFORM_FOLDERS.ContainsKey($resolved
 $romsBase = $null
 if ($Destination) {
     $romsBase = $Destination
-} elseif ($cfg.romsBase -and (Test-Path $cfg.romsBase)) {
-    $romsBase = $cfg.romsBase
+} elseif ((Get-CfgValue 'romsBase' '') -and (Test-Path (Get-CfgValue 'romsBase' ''))) {
+    $romsBase = Get-CfgValue 'romsBase' ''
     Write-Log "ROMs base: $romsBase" 'DEBUG'
 } else {
-    if ($cfg.romsBase) {
-        Write-Log "Configured ROMs base not available: $($cfg.romsBase) - falling back to drive picker." 'WARN'
+    $configuredBase = Get-CfgValue 'romsBase' ''
+    if ($configuredBase) {
+        Write-Log "Configured ROMs base not available: $configuredBase - falling back to drive picker." 'WARN'
     }
     try {
         $romsBase = Resolve-MediaPath -MediaType 'rom' -Strict
@@ -407,7 +405,7 @@ if ($Destination) {
 $romDest      = Join-Path $romsBase $platformFolder
 $resultRegion = if ($Region) { $Region } else { @(Get-RgtRegions $selected.Url $selected.Title)[0] }
 
-$job = New-DlromJob -Kind 'retrogametalk' -Query $Query -Title $selected.Title `
+$job = New-DlromJob -Kind $script:JOB_KIND_WEB -Query $Query -Title $selected.Title `
         -Platform $platformFolder -Region $resultRegion -RomsBase $romsBase -RomDest $romDest `
         -Links $selectedLinks -SourceUrl $selected.Url `
         -NoExtract:$NoExtract -NoSteam:$NoSteam

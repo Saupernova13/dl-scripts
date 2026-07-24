@@ -3,7 +3,8 @@
 # (aria2c -> curl -> BITS -> Invoke-WebRequest). Falls through on failure.
 #
 # Add-ROM sets the script-scope values we read: MOTRIX_URL, AB_PORT, AB_TIMEOUT,
-# AB_DOWNLOAD_DIR, DOWNLOADER, HTTP_HEADERS, and cfg.pollIntervalMs.
+# AB_DOWNLOAD_DIR and DOWNLOADER. Backend ids, labels, HTTP_HEADERS and the partial-file
+# suffixes come from Constants.ps1; progress rendering from Logging.ps1.
 
 # Motrix speaks aria2's JSON-RPC. (RPC plumbing carried over from dlmotrix.)
 function Invoke-MotrixRpc {
@@ -28,10 +29,14 @@ function Test-MotrixRunning {
 # AB Download Manager's local API (default port 15151): POST /ping -> "pong",
 # POST /add { items:[...], options:{...} }. There's no status/completion endpoint, so
 # we hand it a suggestedName and watch its download folder instead (Wait-AbFile).
+function Get-AbBaseUrl {
+    $port = if ($script:AB_PORT) { $script:AB_PORT } else { $script:DEFAULT_AB_PORT }
+    return "http://$($script:LOOPBACK):$port"
+}
+
 function Test-AbRunning {
-    $port = if ($script:AB_PORT) { $script:AB_PORT } else { 15151 }
     try {
-        $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$port/ping" -Method POST -Body 'null' `
+        $resp = Invoke-WebRequest -Uri "$(Get-AbBaseUrl)/ping" -Method POST -Body 'null' `
             -ContentType 'application/json' -UseBasicParsing -TimeoutSec 3 -ErrorAction Stop
         return ((ConvertTo-ResponseText $resp.Content) -match '(?i)pong')
     } catch { return $false }
@@ -39,7 +44,6 @@ function Test-AbRunning {
 
 function Add-AbDownload {
     param([string]$Url, [string]$SuggestedName = $null, [string]$Referer = $null, [hashtable]$Headers = $null)
-    $port = if ($script:AB_PORT) { $script:AB_PORT } else { 15151 }
     $item = [ordered]@{
         link          = $Url
         downloadPage  = $Referer
@@ -49,30 +53,31 @@ function Add-AbDownload {
         type          = 'http'
     }
     $body = @{ items = @($item); options = @{ silentAdd = $true; silentStart = $true } } | ConvertTo-Json -Depth 6
-    Invoke-WebRequest -Uri "http://127.0.0.1:$port/add" -Method POST -Body $body `
+    Invoke-WebRequest -Uri "$(Get-AbBaseUrl)/add" -Method POST -Body $body `
         -ContentType 'application/json' -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop | Out-Null
 }
 
 # The direct, synchronous tiers in preference order - used both as the initial pick
 # (no manager running) and as the fallback once Motrix/AB are out.
 function Get-DirectDownloader {
-    if (Get-Command 'aria2c.exe' -ErrorAction SilentlyContinue) { return 'aria2c' }
-    if (Get-Command 'aria2c'     -ErrorAction SilentlyContinue) { return 'aria2c' }
-    if (Get-Command 'curl.exe'   -ErrorAction SilentlyContinue) { return 'curl'   }
-    if (Get-Command 'Start-BitsTransfer' -ErrorAction SilentlyContinue) { return 'bits' }
-    return 'webclient'
+    foreach ($name in @('aria2c.exe', 'aria2c')) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) { return $script:DL_ARIA2C }
+    }
+    if (Get-Command 'curl.exe' -ErrorAction SilentlyContinue)           { return $script:DL_CURL }
+    if (Get-Command 'Start-BitsTransfer' -ErrorAction SilentlyContinue) { return $script:DL_BITS }
+    return $script:DL_WEBCLIENT
 }
 
 # A running manager first, then the best direct tier.
 function Find-Downloader {
-    if (Test-MotrixRunning) { return 'motrix' }
-    if (Test-AbRunning)     { return 'ab'     }
+    if (Test-MotrixRunning) { return $script:DL_MOTRIX }
+    if (Test-AbRunning)     { return $script:DL_AB     }
     return (Get-DirectDownloader)
 }
 
 # When Motrix fails: prefer AB next, then the direct tiers.
 function Get-FallbackDownloader {
-    if (Test-AbRunning) { return 'ab' }
+    if (Test-AbRunning) { return $script:DL_AB }
     return Get-DirectDownloader
 }
 
@@ -93,17 +98,8 @@ function Wait-MotrixDownload {
         $total = [long]$status.totalLength
         $speed = [long]$status.downloadSpeed
         $pct   = if ($total -gt 0) { [int](($done / $total) * 100) } else { 0 }
-        $eta   = if ($speed -gt 0 -and $total -gt $done) {
-            $secs = [int](($total - $done) / $speed)
-            if ($secs -ge 3600) { '{0}h {1}m' -f [int]($secs / 3600), [int](($secs % 3600) / 60) }
-            elseif ($secs -ge 60) { '{0}m {1}s' -f [int]($secs / 60), ($secs % 60) }
-            else { "${secs}s" }
-        } else { '--' }
-
-        $filled = [int]($pct / 5)
-        $bar    = '[' + ('#' * $filled) + (' ' * (20 - $filled)) + ']'
-        $line   = " $bar $pct%  $(Format-Bytes $done)/$(Format-Bytes $total)  $(Format-Speed $speed)  ETA: $eta  $shortLabel"
-        Write-ProgressLine -Line $line -Percent $pct
+        Write-ProgressLine -Percent $pct -Line (Format-TransferLine -Percent $pct -Done $done `
+            -Total $total -BytesPerSec $speed -Label $shortLabel)
 
         if ($state -eq 'complete') {
             Stop-ProgressLine
@@ -128,11 +124,10 @@ function Wait-AbFile {
     $deadline   = (Get-Date).AddSeconds($TimeoutSec)
     $lastSize   = -1
     $stable     = 0
-    $partialExt = @('.part', '.tmp', '.download', '.crdownload', '.abdownload', '.bak')
     $shortLabel = Format-ShortLabel $Label
     while ((Get-Date) -lt $deadline) {
         $partials = @(Get-ChildItem -LiteralPath $Dir -Filter "$Name*" -File -ErrorAction SilentlyContinue |
-                      Where-Object { $partialExt -contains $_.Extension.ToLower() })
+                      Where-Object { $script:PARTIAL_EXTS -contains $_.Extension.ToLower() })
         $exists = Test-Path -LiteralPath $target
         $size   = if ($exists) { (Get-Item -LiteralPath $target).Length } else { 0 }
         if ($exists -and $partials.Count -eq 0 -and $size -gt 0 -and $size -eq $lastSize) {
@@ -193,10 +188,9 @@ function Invoke-BitsDownload {
         while ($job.JobState -notin @('Transferred', 'Error', 'TransientError')) {
             $done   = $job.BytesTransferred
             $total  = $job.BytesTotal
-            $pct    = if ($total -gt 0) { [int]($done / $total * 100) } else { 0 }
-            $filled = [int]($pct / 5)
-            $bar    = '[' + ('#' * $filled) + (' ' * (20 - $filled)) + ']'
-            Write-ProgressLine -Line " $bar $pct%  $(Format-Bytes $done)/$(Format-Bytes $total)  $shortLabel" -Percent $pct
+            $pct = if ($total -gt 0) { [int]($done / $total * 100) } else { 0 }
+            Write-ProgressLine -Percent $pct -Line (Format-TransferLine -Percent $pct -Done $done `
+                -Total $total -Label $shortLabel)
             Start-Sleep -Seconds 1
         }
         Stop-ProgressLine
@@ -232,7 +226,7 @@ function Invoke-AbDownload {
     param([string]$Url, [string]$OutFile, [string]$Label)
     $name = [System.IO.Path]::GetFileName($OutFile)
     Write-Log "Handing download to AB Download Manager (port $script:AB_PORT): $Label" 'DEBUG'
-    Add-AbDownload -Url $Url -SuggestedName $name -Referer 'https://retrogametalk.com/repo/' -Headers @{ 'User-Agent' = $HTTP_HEADERS['User-Agent'] }
+    Add-AbDownload -Url $Url -SuggestedName $name -Referer "$RGT_REPO_URL/" -Headers @{ 'User-Agent' = $HTTP_HEADERS['User-Agent'] }
     Write-Log "Queued in AB; watching $script:AB_DOWNLOAD_DIR for '$name'..." 'DEBUG'
     $done = Wait-AbFile -Dir $script:AB_DOWNLOAD_DIR -Name $name -TimeoutSec $script:AB_TIMEOUT -Label $Label
     if (-not $done) {
@@ -247,7 +241,7 @@ function Invoke-AbDownload {
 # Run the chosen downloader, falling through Motrix -> AB -> direct tiers on failure.
 function Invoke-FileDownload {
     param([string]$Url, [string]$OutFile, [string]$Label = "")
-    if ($script:DOWNLOADER -eq 'motrix') {
+    if ($script:DOWNLOADER -eq $script:DL_MOTRIX) {
         try {
             return Invoke-MotrixDownload -Url $Url -OutFile $OutFile -Label $Label
         } catch {
@@ -256,7 +250,7 @@ function Invoke-FileDownload {
             Write-Log "Falling back to: $script:DOWNLOADER" 'WARN'
         }
     }
-    if ($script:DOWNLOADER -eq 'ab') {
+    if ($script:DOWNLOADER -eq $script:DL_AB) {
         try {
             return Invoke-AbDownload -Url $Url -OutFile $OutFile -Label $Label
         } catch {
@@ -266,10 +260,10 @@ function Invoke-FileDownload {
         }
     }
     switch ($script:DOWNLOADER) {
-        'aria2c'    { return Invoke-Aria2cDownload    -Url $Url -OutFile $OutFile -Label $Label }
-        'curl'      { return Invoke-CurlDownload      -Url $Url -OutFile $OutFile -Label $Label }
-        'bits'      { return Invoke-BitsDownload      -Url $Url -OutFile $OutFile -Label $Label }
-        'webclient' { return Invoke-WebClientDownload -Url $Url -OutFile $OutFile -Label $Label }
-        default     { throw "No supported downloader found." }
+        $script:DL_ARIA2C    { return Invoke-Aria2cDownload    -Url $Url -OutFile $OutFile -Label $Label }
+        $script:DL_CURL      { return Invoke-CurlDownload      -Url $Url -OutFile $OutFile -Label $Label }
+        $script:DL_BITS      { return Invoke-BitsDownload      -Url $Url -OutFile $OutFile -Label $Label }
+        $script:DL_WEBCLIENT { return Invoke-WebClientDownload -Url $Url -OutFile $OutFile -Label $Label }
+        default              { throw "No supported downloader found." }
     }
 }

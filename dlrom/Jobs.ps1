@@ -8,13 +8,7 @@
 # console output beside them in <id>.log.
 
 function Get-DlromJobsDir {
-    $dir = Join-Path $env:LOCALAPPDATA 'dlScripts\jobs\rom'
-    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    return $dir
-}
-
-function New-DlromJobId {
-    return [guid]::NewGuid().ToString('N').Substring(0, 12)
+    return (Get-DlScriptsDataDir 'jobs\rom')
 }
 
 function Get-DlromJobPath {
@@ -64,13 +58,13 @@ function Update-DlromJob {
     if ($Progress -ge 0){ $Job.progress = $Progress }
     if ($PSBoundParameters.ContainsKey('Message')) { $Job.message = $Message }
     if ($InstalledPath) { $Job.installedPaths += $InstalledPath }
-    $Job.lastUpdate = (Get-Date).ToUniversalTime().ToString('o')
+    $Job.lastUpdate = (Get-UtcStamp)
     Save-DlromJob -Job $Job
 }
 
 function New-DlromJob {
     param(
-        [string]$Kind,          # 'retrogametalk' | 'torrent'
+        [string]$Kind,          # JOB_KIND_WEB | JOB_KIND_TORRENT
         [string]$Query,
         [string]$Title,
         [string]$Platform,
@@ -84,11 +78,11 @@ function New-DlromJob {
         [bool]  $NoExtract = $false,
         [bool]  $NoSteam = $false
     )
-    $id = New-DlromJobId
+    $id = New-ShortId
     return [PSCustomObject]@{
         id             = $id
         kind           = $Kind
-        status         = 'pending'
+        status         = $script:JOB_STATUS_PENDING
         step           = ''
         progress       = 0
         message        = ''
@@ -107,7 +101,7 @@ function New-DlromJob {
         installedPaths = @()
         handoff        = ''
         pid            = 0
-        createdAt      = (Get-Date).ToUniversalTime().ToString('o')
+        createdAt      = (Get-UtcStamp)
         startedAt      = ''
         completedAt    = ''
         lastUpdate     = ''
@@ -129,7 +123,7 @@ function New-DlromJob {
 function Start-DlromJob {
     param([PSCustomObject]$Job)
 
-    $Job.status = 'pending'
+    $Job.status = $script:JOB_STATUS_PENDING
     Save-DlromJob -Job $Job -Strict
 
     $psExe     = (Get-Process -Id $PID).Path        # re-run the same PowerShell we are on
@@ -163,10 +157,10 @@ function Start-DlromJob {
 # is a complete record either way.
 function Complete-DlromJob {
     param([PSCustomObject]$Job, [bool]$Ok, [string]$Message = '')
-    $Job.status = if ($Ok) { 'completed' } else { 'failed' }
-    if ($Ok) { $Job.progress = 100; $Job.step = 'done' }
+    $Job.status = if ($Ok) { $script:JOB_STATUS_COMPLETED } else { $script:JOB_STATUS_FAILED }
+    if ($Ok) { $Job.progress = 100; $Job.step = $script:JOB_STEP_DONE }
     if ($Message) { $Job.message = $Message }
-    $Job.completedAt = (Get-Date).ToUniversalTime().ToString('o')
+    $Job.completedAt = (Get-UtcStamp)
     $Job.lastUpdate  = $Job.completedAt
     Save-DlromJob -Job $Job
 }
@@ -175,10 +169,10 @@ function Complete-DlromJob {
 # forever. If the pid is gone and nothing wrote an outcome, say so rather than lying.
 function Resolve-DlromJobStatus {
     param([PSCustomObject]$Job)
-    if ($Job.status -notin @('running', 'pending')) { return $Job.status }
+    if ($Job.status -notin $script:JOB_STATUS_ACTIVE) { return $Job.status }
     if (-not $Job.pid) { return $Job.status }
     if (Get-Process -Id $Job.pid -ErrorAction SilentlyContinue) { return $Job.status }
-    return 'orphaned'
+    return $script:JOB_STATUS_ORPHANED
 }
 
 function Show-DlromJobStatus {
@@ -207,8 +201,8 @@ function Show-DlromJobStatus {
     Write-Host "  Status:     $($job.status)" -ForegroundColor Cyan
     if ($job.step)     { Write-Host "  Step:       $($job.step)" -ForegroundColor Cyan }
     if ($job.progress -gt 0) {
-        $bar = ('#' * [int]($job.progress / 5)).PadRight(20, '.')
-        Write-Host "  Progress:   [$bar] $($job.progress)%" -ForegroundColor Cyan
+        $bar = Format-ProgressBar -Percent $job.progress -Empty '.'
+        Write-Host "  Progress:   $bar $($job.progress)%" -ForegroundColor Cyan
     }
     Write-Host "  Source:     $($job.kind)"
     Write-Host "  Query:      $($job.query)"
@@ -254,11 +248,11 @@ function Show-DlromJobList {
     Write-Host ("-" * 96) -ForegroundColor DarkGray
     foreach ($j in $jobs) {
         $color = switch ($j.status) {
-            'completed' { 'Green'  }
-            'failed'    { 'Red'    }
-            'orphaned'  { 'Red'    }
-            'running'   { 'Yellow' }
-            default     { 'Gray'   }
+            $script:JOB_STATUS_COMPLETED { 'Green'  }
+            $script:JOB_STATUS_FAILED    { 'Red'    }
+            $script:JOB_STATUS_ORPHANED  { 'Red'    }
+            $script:JOB_STATUS_RUNNING   { 'Yellow' }
+            default                      { 'Gray'   }
         }
         $title = if ($j.title) { $j.title } else { $j.query }
         if ($title.Length -gt 40) { $title = $title.Substring(0, 37) + '...' }
@@ -279,7 +273,7 @@ function Remove-OldDlromJobs {
         Where-Object { $_.LastWriteTime -lt $cutoff } |
         ForEach-Object {
             $j = Read-DlromJob ([System.IO.Path]::GetFileNameWithoutExtension($_.Name))
-            if ($j -and (Resolve-DlromJobStatus $j) -in @('running', 'pending')) { return }
+            if ($j -and (Resolve-DlromJobStatus $j) -in $script:JOB_STATUS_ACTIVE) { return }
             Remove-Item -LiteralPath $_.FullName -Force -ErrorAction SilentlyContinue
             $log = [System.IO.Path]::ChangeExtension($_.FullName, '.log')
             if (Test-Path $log) { Remove-Item -LiteralPath $log -Force -ErrorAction SilentlyContinue }
