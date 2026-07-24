@@ -1,5 +1,5 @@
 # Ps2TorrentIndex.ps1
-# The PS2 torrent fallback for dlrom: when cdromance and the direct downloaders
+# The PS2 torrent fallback for dlrom: when RetroGameTalk and the direct downloaders
 # can't produce a PS2 ROM, look the game up in the local Redump PS2 archive
 # torrent's index and fetch just that one file via qBittorrent's selective
 # download, then hand it to dlrom's normal extract/file/Steam pipeline.
@@ -15,10 +15,10 @@
 #     Japan, Korea; and the closest-to-base title wins ties.
 #   - if nothing matches, it refuses and lists near-misses rather than guessing.
 #
-# Depends on helpers already dot-sourced by Add-ROM.ps1: Resolve-PythonExe
-# (CfSolver), Resolve-MediaPath (DriveResolver), Test-IsArchive / Expand-RomArchive
-# / Find-RomFile / Move-RomToDest (RomFiles), Sync-RomToSteam (SteamRomManager),
-# and the qBittorrent client (QbitTorrent.ps1). Write-Log/Format-* from Logging.
+# Depends on helpers already dot-sourced by Add-ROM.ps1: Resolve-MediaPath
+# (DriveResolver), Test-IsArchive / Expand-RomArchive / Find-RomFile / Move-RomToDest
+# (RomFiles), Sync-RomToSteam (SteamRomManager), and the qBittorrent client
+# (QbitTorrent.ps1). Write-Log/Format-* from Logging.
 
 $script:PS2_ROMAN = @{ 'i'='1'; 'ii'='2'; 'iii'='3'; 'iv'='4'; 'v'='5'; 'vi'='6'; 'vii'='7'; 'viii'='8'; 'ix'='9'; 'x'='10' }
 $script:PS2_STOP  = @('the','of','a','an','and','to','in','for','vs','de','la')
@@ -207,6 +207,21 @@ function Get-Ps2IndexPath {
     $cfgIdx = if ($Cfg.PSObject.Properties.Name -contains 'ps2TorrentIndexPath') { [string]$Cfg.ps2TorrentIndexPath } else { '' }
     if ($cfgIdx) { return $cfgIdx }
     return (Join-Path $PSScriptRoot 'data\ps2-torrent\ps2-index.json')
+}
+
+# Locate a Python 3 interpreter for ps2_torrent.py. Returns @{ Exe; Pre } so callers can
+# splat the prefix args that the `py` launcher needs and `python` does not.
+$script:PS2_PY = $null
+
+function Resolve-PythonExe {
+    if ($script:PS2_PY) { return $script:PS2_PY }
+    foreach ($name in @('python', 'python3')) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd -and $cmd.Source) { $script:PS2_PY = @{ Exe = $cmd.Source; Pre = @() }; return $script:PS2_PY }
+    }
+    $py = Get-Command 'py' -ErrorAction SilentlyContinue
+    if ($py) { $script:PS2_PY = @{ Exe = $py.Source; Pre = @('-3') }; return $script:PS2_PY }
+    return $null
 }
 
 # Ensure the JSON index exists and is current. Builds it from the .torrent via

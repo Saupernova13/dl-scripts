@@ -232,7 +232,7 @@ function Invoke-AbDownload {
     param([string]$Url, [string]$OutFile, [string]$Label)
     $name = [System.IO.Path]::GetFileName($OutFile)
     Write-Log "Handing download to AB Download Manager (port $script:AB_PORT): $Label" 'DEBUG'
-    Add-AbDownload -Url $Url -SuggestedName $name -Referer 'https://cdromance.org/' -Headers @{ 'User-Agent' = $HTTP_HEADERS['User-Agent'] }
+    Add-AbDownload -Url $Url -SuggestedName $name -Referer 'https://retrogametalk.com/repo/' -Headers @{ 'User-Agent' = $HTTP_HEADERS['User-Agent'] }
     Write-Log "Queued in AB; watching $script:AB_DOWNLOAD_DIR for '$name'..." 'DEBUG'
     $done = Wait-AbFile -Dir $script:AB_DOWNLOAD_DIR -Name $name -TimeoutSec $script:AB_TIMEOUT -Label $Label
     if (-not $done) {

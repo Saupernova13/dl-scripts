@@ -1,5 +1,5 @@
 @echo off
-REM dlrom - Download ROMs from cdromance.org and install them to your emulator folders
+REM dlrom - Download ROMs from RetroGameTalk's Repo and install them to your emulator folders
 REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
 REM        dlrom --status <jobId> [--json]
 REM        dlrom --list [--json]
@@ -8,7 +8,13 @@ REM Downloads run in the BACKGROUND by default: dlrom searches, resolves the lin
 REM a worker and returns a job id straight away. Follow it with --status; use --wait only
 REM when you actually want to sit and watch the transfer.
 REM
-REM Platforms: ps2, ps1, psp, vita, n64, gamecube, nds, gba, snes, nes, gbc, gb, dreamcast, saturn, wii, 3ds
+REM Source: https://retrogametalk.com/repo/ (the former cdromance catalogue). No account
+REM is required - The Repo serves anonymous clients in full.
+REM
+REM Platforms: ps2, ps1/psx, psp, eboot, vita, n64, gamecube, wii, nds, gba, snes, nes, fds,
+REM            gbc, gb, dreamcast, saturn, segacd, genesis, 32x, sms, gamegear, pico, 3do,
+REM            amiga, arcade, msx, dos, windows, scummvm, neogeocd, ngp, pc88, pc98, pcfx,
+REM            tg16, tgcd, wonderswan
 REM Regions:   usa, europe, japan, world
 REM
 REM Examples:
@@ -38,7 +44,10 @@ if "%~1"=="" (
     echo.
     echo Downloads run in the BACKGROUND by default and return a job id immediately.
     echo.
-    echo Platforms: ps2, ps1, psp, vita, n64, gamecube, nds, gba, snes, nes, gbc, gb, dreamcast, saturn, wii, 3ds
+    echo Platforms: ps2, ps1/psx, psp, eboot, vita, n64, gamecube, wii, nds, gba, snes, nes,
+    echo            fds, gbc, gb, dreamcast, saturn, segacd, genesis, 32x, sms, gamegear, pico,
+    echo            3do, amiga, arcade, msx, dos, windows, scummvm, neogeocd, ngp, pc88, pc98,
+    echo            pcfx, tg16, tgcd, wonderswan
     echo Regions:   usa, europe, japan, world
     echo.
     echo   --wait         stay in the foreground until the ROM is installed
@@ -49,7 +58,7 @@ if "%~1"=="" (
     echo   --no-extract   keep the downloaded archive; do not extract or install
     echo   --no-steam     skip adding the download to Steam via Steam ROM Manager
     echo   --links-only   resolve and print the download links, then stop without downloading
-    echo   --no-torrent   disable the PS2 torrent fallback used when cdromance fails
+    echo   --no-torrent   disable the PS2 torrent fallback used when RetroGameTalk fails
     echo   --torrent-pick N   force a specific file index from the PS2 archive torrent
     echo   --verbose      show detailed step-by-step debug output
     echo   --quiet        show only results, warnings and errors

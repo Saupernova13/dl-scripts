@@ -70,7 +70,7 @@ function Update-DlromJob {
 
 function New-DlromJob {
     param(
-        [string]$Kind,          # 'cdromance' | 'torrent'
+        [string]$Kind,          # 'retrogametalk' | 'torrent'
         [string]$Query,
         [string]$Title,
         [string]$Platform,

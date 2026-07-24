@@ -1,8 +1,10 @@
-# Search cdromance.org for a game, download it, extract and file the ROM into the right
-# console folder, then optionally add it to Steam via Steam ROM Manager.
+# Search RetroGameTalk's ROM repository (https://retrogametalk.com/repo/) for a game,
+# download it, extract and file the ROM into the right console folder, then optionally add
+# it to Steam via Steam ROM Manager.
 #
 # This is the orchestrator; the real work lives in the sibling modules it dot-sources.
-# Settings come from %LOCALAPPDATA%\dlScripts\config.json (created on first run).
+# Settings come from %LOCALAPPDATA%\dlScripts\config.json (created on first run). The Repo
+# needs no account, so there are no credentials to configure.
 #
 # Normally invoked through dlrom.cmd:
 #   dlrom "Game Name" [--platform ps2] [--region usa] [--interactive] [--verbose]
@@ -50,11 +52,10 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Logging.ps1')           # Write-Log, Format-*, ConvertTo-ResponseText
 . (Join-Path $repoRoot     'lib\DriveResolver.ps1') # Initialize-DlConfig, Resolve-MediaPath
 . (Join-Path $PSScriptRoot 'Jobs.ps1')             # job state, detached worker spawn, --status/--list
-. (Join-Path $PSScriptRoot 'Cdromance.ps1')         # platform tables, search, link discovery
+. (Join-Path $PSScriptRoot 'RetroGameTalk.ps1')     # platform tables, login, search, link discovery
 . (Join-Path $PSScriptRoot 'Downloaders.ps1')       # Motrix/AB/aria2c/curl/BITS/webclient + dispatcher
 . (Join-Path $PSScriptRoot 'RomFiles.ps1')          # archive extraction, ROM filing
 . (Join-Path $PSScriptRoot 'SteamRomManager.ps1')   # Steam ROM Manager sync
-. (Join-Path $PSScriptRoot 'CfSolver.ps1')          # Cloudflare bypass (Invoke-CdrWeb), Get-CdrFailureReason
 . (Join-Path $PSScriptRoot 'QbitTorrent.ps1')       # qBittorrent WebUI client (PS2 torrent fallback)
 . (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
 . (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
@@ -85,13 +86,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     abPort          = 15151     # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
-    cfSolverUrl     = "http://localhost:8191/v1"  # FlareSolverr endpoint
-    cfSolverMode    = "auto"    # auto (solve only when blocked) | always | never
-    cfAutoStart     = $true     # docker start/run the solver container on demand (never opens a window)
-    cfContainerName = "flaresolverr"
-    cfDockerImage   = "ghcr.io/flaresolverr/flaresolverr:latest"
-    cfSolverTimeoutMs = 120000  # per-challenge solve budget (ms)
-    # PS2 torrent fallback: when cdromance + direct sources fail for a PS2 game,
+    # PS2 torrent fallback: when The Repo + direct sources fail for a PS2 game,
     # pull just that one ROM from the local Redump PS2 archive torrent via qBittorrent.
     ps2TorrentEnabled    = $true
     ps2TorrentPath       = ""     # blank = repo copy (dlrom\data\ps2-torrent\*.torrent), else Downloads
@@ -121,15 +116,6 @@ $script:AB_PORT    = [int](Get-CfgValue 'abPort' 15151)
 $script:AB_TIMEOUT = [int](Get-CfgValue 'abTimeoutSec' 1800)
 $abDirCfg          = Get-CfgValue 'abDownloadDir' ''
 $script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
-
-# Cloudflare bypass settings (consumed by CfSolver.ps1 / Invoke-CdrWeb)
-$script:CF_SOLVER_URL = Get-CfgValue 'cfSolverUrl' 'http://localhost:8191/v1'
-$script:CF_MODE       = (Get-CfgValue 'cfSolverMode' 'auto').ToString().ToLower()
-$script:CF_AUTOSTART  = [bool](Get-CfgValue 'cfAutoStart' $true)
-$script:CF_CONTAINER  = Get-CfgValue 'cfContainerName' 'flaresolverr'
-$script:CF_IMAGE      = Get-CfgValue 'cfDockerImage' 'ghcr.io/flaresolverr/flaresolverr:latest'
-$script:CF_TIMEOUT    = [int](Get-CfgValue 'cfSolverTimeoutMs' 120000)
-$script:CF_CACHE_DIR  = $tempDir
 
 # ---------------------------------------------------------------------------
 # Worker mode (internal). Runs the slow half of a job that the parent already
@@ -244,9 +230,9 @@ function Write-DlromJobSpawned {
     }
 }
 
-# Every cdromance dead-end funnels through here: report the real reason, try the
+# Every Repo dead-end funnels through here: report the real reason, try the
 # PS2 torrent fallback when eligible, and only then exit with the original code.
-function Invoke-CdrFallbackOrExit {
+function Invoke-RgtFallbackOrExit {
     param([string]$ReasonCode, [string]$ReasonText, [int]$ExitCode)
     if ($ReasonText) { Write-Log $ReasonText 'WARN' }
     if ($script:PS2_FALLBACK) {
@@ -292,16 +278,16 @@ function Invoke-CdrFallbackOrExit {
 Write-Log "Searching for: $Query" 'INFO'
 $results = @()
 try {
-    $results = @(Invoke-CdromanceSearch -SearchQuery $Query -PlatformSlug $resolvedSlug -SearchRegion $Region -SearchSort $Sort)
+    $results = @(Invoke-RgtSearch -SearchQuery $Query -PlatformSlug $resolvedSlug -SearchRegion $Region -SearchSort $Sort)
 } catch {
-    $reason = Get-CdrFailureReason $_.Exception.Message
-    Write-Log "cdromance search failed: $($reason.Text)" 'ERROR'
-    Invoke-CdrFallbackOrExit -ReasonCode $reason.Code -ReasonText $null -ExitCode 1
+    $reason = Get-RgtFailureReason $_.Exception.Message
+    Write-Log "RetroGameTalk search failed: $($reason.Text)" 'ERROR'
+    Invoke-RgtFallbackOrExit -ReasonCode $reason.Code -ReasonText $null -ExitCode 1
 }
 
 if ($results.Count -eq 0) {
-    Write-Log "No results found on cdromance for: $Query" 'WARN'
-    Invoke-CdrFallbackOrExit -ReasonCode 'no-results' -ReasonText $null -ExitCode 0
+    Write-Log "No results found on RetroGameTalk for: $Query" 'WARN'
+    Invoke-RgtFallbackOrExit -ReasonCode 'no-results' -ReasonText $null -ExitCode 0
 }
 
 $displayResults = @($results | Select-Object -First $MaxResults)
@@ -330,24 +316,24 @@ if ($Interactive -and $displayResults.Count -gt 1) {
 } else {
     # Edition-aware auto-select: prefer the base game over an edition (FES, ...)
     # and the requested region, but always pick something.
-    $selected = Select-CdrResult -Results $displayResults -Query $Query -Region $Region
+    $selected = Select-RgtResult -Results $displayResults -Query $Query -Region $Region
     if (-not $selected) { $selected = $displayResults[0] }
     Write-Log "Auto-selecting: $($selected.Title)" 'INFO'
 }
 
-# Get download links (reveals the "SHOW LINKS" table)
+# Get download links (reveals the "Show Links" table)
 Write-Log "Fetching download links for: $($selected.Title)" 'DEBUG'
-$allLinks = @(Get-DownloadLinks -GamePageUrl $selected.Url)
+$allLinks = @(Get-RgtDownloadLinks -GamePageUrl $selected.Url)
 
 if ($allLinks.Count -eq 0) {
     Write-Log "No download links found on the game page." 'ERROR'
     $debugPath = Join-Path $env:TEMP "dlrom-debug.html"
     try {
-        $dbgResp = Invoke-CdrWeb -Uri $selected.Url
+        $dbgResp = Invoke-RgtWeb -Uri $selected.Url
         $dbgResp.Content | Set-Content $debugPath -Encoding UTF8
         Write-Log "Debug HTML saved to: $debugPath" 'WARN'
     } catch { }
-    Invoke-CdrFallbackOrExit -ReasonCode 'no-links' -ReasonText $null -ExitCode 1
+    Invoke-RgtFallbackOrExit -ReasonCode 'no-links' -ReasonText $null -ExitCode 1
 }
 
 Write-Log "Found $($allLinks.Count) raw link(s) on page." 'DEBUG'
@@ -355,7 +341,7 @@ $selectedLinks = @(Select-DownloadLinks -Links $allLinks)
 
 if ($selectedLinks.Count -eq 0) {
     Write-Log "No suitable links after filtering (demos removed, nothing left)." 'ERROR'
-    Invoke-CdrFallbackOrExit -ReasonCode 'no-suitable-links' -ReasonText $null -ExitCode 1
+    Invoke-RgtFallbackOrExit -ReasonCode 'no-suitable-links' -ReasonText $null -ExitCode 1
 }
 
 Write-Log "Will download $($selectedLinks.Count) file(s): $(($selectedLinks | ForEach-Object { $_.Label }) -join ', ')" 'INFO'
@@ -419,9 +405,9 @@ if ($Destination) {
 }
 
 $romDest      = Join-Path $romsBase $platformFolder
-$resultRegion = if ($Region) { $Region } else { @(Get-CdrRegions $selected.Url $selected.Title)[0] }
+$resultRegion = if ($Region) { $Region } else { @(Get-RgtRegions $selected.Url $selected.Title)[0] }
 
-$job = New-DlromJob -Kind 'cdromance' -Query $Query -Title $selected.Title `
+$job = New-DlromJob -Kind 'retrogametalk' -Query $Query -Title $selected.Title `
         -Platform $platformFolder -Region $resultRegion -RomsBase $romsBase -RomDest $romDest `
         -Links $selectedLinks -SourceUrl $selected.Url `
         -NoExtract:$NoExtract -NoSteam:$NoSteam
