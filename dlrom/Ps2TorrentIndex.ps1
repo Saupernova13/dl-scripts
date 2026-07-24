@@ -16,21 +16,14 @@
 #   - if nothing matches, it refuses and lists near-misses rather than guessing.
 #
 # Depends on helpers already dot-sourced by Add-ROM.ps1: Resolve-MediaPath
-# (DriveResolver), Test-IsArchive / Expand-RomArchive / Find-RomFile / Move-RomToDest
-# (RomFiles), Sync-RomToSteam (SteamRomManager), and the qBittorrent client
-# (QbitTorrent.ps1). Write-Log/Format-* from Logging.
+# (DriveResolver), Install-RomFromDownload (RomFiles), Sync-RomToSteam (SteamRomManager),
+# and the qBittorrent client (QbitTorrent.ps1). Write-Log/Format-* from Logging;
+# release-marker tables, region ranking and Get-CfgValue from Constants/Common.
 
 $script:PS2_ROMAN = @{ 'i'='1'; 'ii'='2'; 'iii'='3'; 'iv'='4'; 'v'='5'; 'vi'='6'; 'vii'='7'; 'viii'='8'; 'ix'='9'; 'x'='10' }
 $script:PS2_STOP  = @('the','of','a','an','and','to','in','for','vs','de','la')
-$script:PS2_ARCHIVE_RX = '\.(zip|7z|rar|iso|bin|chd)$'
-
-# Always-reject markers (not the game the user wants to play).
-$script:PS2_DEMO_RX = '(?i)\b(demo|trade\s*demo|beta|proto|prototype|sample|kiosk|promo|trial|preview|test\s*disc)\b'
-# Edition/variant markers: different content, reject unless the query asked for them.
-$script:PS2_EDITION_KW = @('fes','undub','append','goty','game of the year','directors cut','director cut',
-                           'collector','collectors','deluxe','complete','premium','limited edition')
-# Budget reprints: same content, allowed but deprioritised.
-$script:PS2_BUDGET_KW  = @('greatest hits','players choice','the best','platinum','not for resale','reprint')
+# Redump entries are always one of the container formats, never a bare ROM.
+$script:PS2_ARCHIVE_RX = '\.(' + ($script:DOWNLOAD_EXTS -join '|') + ')$'
 
 function ConvertTo-Ps2Norm { param([string]$Text) return (($Text -replace '[^A-Za-z0-9]+',' ').Trim().ToLower()) }
 
@@ -49,19 +42,6 @@ function Get-Ps2Significant {
     return @(Get-Ps2Tokens $Text | Where-Object { $script:PS2_STOP -notcontains $_ } | Select-Object -Unique)
 }
 
-# --region synonym -> canonical region code.
-function Resolve-Ps2RegionRequest {
-    param([string]$Region)
-    switch -Regex (($Region + '').ToLower()) {
-        '^(usa|us|ntsc-?u|america|american)$'      { return 'usa' }
-        '^(europe|eu|pal|uk|england)$'             { return 'europe' }
-        '^(japan|jp|ntsc-?j|jpn)$'                 { return 'japan' }
-        '^(world)$'                                { return 'world' }
-        '^(korea|kr)$'                             { return 'korea' }
-        default                                    { return '' }
-    }
-}
-
 # Region codes present in a Redump filename's parentheticals.
 function Get-Ps2Regions {
     param([string]$FileName)
@@ -78,20 +58,6 @@ function Get-Ps2Regions {
     return @($regions | Select-Object -Unique)
 }
 
-function Get-Ps2RegionRank {
-    param([string[]]$Regions, [string]$Requested)
-    if ($Requested -and ($Regions -contains $Requested)) { return 0 }
-    foreach ($pair in @(@('usa',1), @('world',2), @('europe',3), @('japan',4), @('korea',5), @('asia',6))) {
-        if ($Regions -contains $pair[0]) { return [int]$pair[1] }
-    }
-    return 9
-}
-
-function Test-Ps2Phrase {
-    param([string]$NormText, [string]$Phrase)
-    return ($NormText -match ('\b' + [regex]::Escape($Phrase) + '\b'))
-}
-
 # Score/qualify one index entry against the query. Returns $null (reject) or a
 # ranking record. Lower sort keys are better.
 function Get-Ps2Candidate {
@@ -102,7 +68,7 @@ function Get-Ps2Candidate {
     if ($path -notmatch $script:PS2_ARCHIVE_RX)       { return $null }
 
     $fileName  = Split-Path $path -Leaf
-    if ($fileName -match $script:PS2_DEMO_RX) { return $null }
+    if ($fileName -match $script:DEMO_RX) { return $null }
 
     $titlePart = ($fileName -replace $script:PS2_ARCHIVE_RX, '')
     $titlePart = ($titlePart -replace '\s*\(.*$', '')          # drop region/disc/flag parentheticals
@@ -113,17 +79,17 @@ function Get-Ps2Candidate {
     foreach ($qt in $QueryTokens) { if ($titleToks -notcontains $qt) { return $null } }
 
     # Edition rule: reject unrequested edition/variant markers.
-    foreach ($kw in $script:PS2_EDITION_KW) {
-        if ((Test-Ps2Phrase $normTitle $kw) -and -not (Test-Ps2Phrase $NormQuery $kw)) { return $null }
+    foreach ($kw in $script:EDITION_KW) {
+        if ((Test-Phrase $normTitle $kw) -and -not (Test-Phrase $NormQuery $kw)) { return $null }
     }
 
     $budgetPenalty = 0
-    foreach ($kw in $script:PS2_BUDGET_KW) {
-        if ((Test-Ps2Phrase $normTitle $kw) -and -not (Test-Ps2Phrase $NormQuery $kw)) { $budgetPenalty = 1; break }
+    foreach ($kw in $script:BUDGET_KW) {
+        if ((Test-Phrase $normTitle $kw) -and -not (Test-Phrase $NormQuery $kw)) { $budgetPenalty = 1; break }
     }
 
     $regions   = Get-Ps2Regions $fileName
-    $regionRnk = Get-Ps2RegionRank -Regions $regions -Requested $Requested
+    $regionRnk = Get-RegionRank -Regions $regions -Requested $Requested
     $extra     = @($titleToks | Where-Object { $QueryTokens -notcontains $_ }).Count
     $disc      = 1
     $dm = [regex]::Match($fileName, '(?i)\(Disc\s*(\d+)\)')
@@ -159,7 +125,7 @@ function Find-Ps2TorrentMatch {
     $qtokens = Get-Ps2Significant $Query
     if ($qtokens.Count -eq 0) { return @{ File = $null; Reason = 'query has no usable words' } }
     $normQuery = ConvertTo-Ps2Norm $Query
-    $requested = Resolve-Ps2RegionRequest $Region
+    $requested = Resolve-RegionRequest $Region
 
     $cands = @()
     foreach ($f in $files) {
@@ -190,7 +156,7 @@ function Find-Ps2TorrentMatch {
 
 function Get-Ps2TorrentPath {
     param($Cfg)
-    $cfgPath = if ($Cfg.PSObject.Properties.Name -contains 'ps2TorrentPath') { [string]$Cfg.ps2TorrentPath } else { '' }
+    $cfgPath = [string](Get-CfgValue 'ps2TorrentPath' '' -Cfg $Cfg)
     if ($cfgPath -and (Test-Path $cfgPath)) { return $cfgPath }
     $repoCopy = Join-Path $PSScriptRoot 'data\ps2-torrent'
     if (Test-Path $repoCopy) {
@@ -204,7 +170,7 @@ function Get-Ps2TorrentPath {
 
 function Get-Ps2IndexPath {
     param($Cfg)
-    $cfgIdx = if ($Cfg.PSObject.Properties.Name -contains 'ps2TorrentIndexPath') { [string]$Cfg.ps2TorrentIndexPath } else { '' }
+    $cfgIdx = [string](Get-CfgValue 'ps2TorrentIndexPath' '' -Cfg $Cfg)
     if ($cfgIdx) { return $cfgIdx }
     return (Join-Path $PSScriptRoot 'data\ps2-torrent\ps2-index.json')
 }
@@ -260,11 +226,11 @@ function Resolve-Ps2RomDest {
     $base = $null
     if ($Destination) {
         $base = $Destination
-    } elseif ($Cfg.romsBase -and (Test-Path $Cfg.romsBase)) {
-        $base = $Cfg.romsBase
+    } elseif ((Get-CfgValue 'romsBase' '' -Cfg $Cfg) -and (Test-Path (Get-CfgValue 'romsBase' '' -Cfg $Cfg))) {
+        $base = Get-CfgValue 'romsBase' '' -Cfg $Cfg
     } else {
         try { $base = Resolve-MediaPath -MediaType 'rom' -Strict } catch { $base = $null }
-        if (-not $base) { $base = if ($Cfg.romsBase) { $Cfg.romsBase } else { Join-Path $HOME 'Emulation\roms' } }
+        if (-not $base) { $base = Get-CfgValue 'romsBase' (Join-Path $HOME 'Emulation\roms') -Cfg $Cfg }
     }
     $dest = Join-Path $base 'ps2'
     if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }
@@ -320,10 +286,9 @@ function Invoke-Ps2TorrentFallback {
     }
 
     # qBittorrent must be reachable; we don't launch it (avoids popping a window).
-    $qhostCfg = if ($Cfg.PSObject.Properties.Name -contains 'qbitHost') { [string]$Cfg.qbitHost } else { '' }
-    $qbase = Resolve-QbitBase -CfgHost $qhostCfg
-    $quser = if ($Cfg.PSObject.Properties.Name -contains 'qbitUser') { [string]$Cfg.qbitUser } else { '' }
-    $qpass = if ($Cfg.PSObject.Properties.Name -contains 'qbitPass') { [string]$Cfg.qbitPass } else { '' }
+    $qbase = Resolve-QbitBase -CfgHost ([string](Get-CfgValue 'qbitHost' '' -Cfg $Cfg))
+    $quser = [string](Get-CfgValue 'qbitUser' '' -Cfg $Cfg)
+    $qpass = [string](Get-CfgValue 'qbitPass' '' -Cfg $Cfg)
     Initialize-Qbit -Base $qbase -User $quser -Pass $qpass
     if (-not (Test-QbitRunning)) {
         Write-Log "qBittorrent WebUI not reachable at $qbase - start qBittorrent (or set [rom].qbitHost)." 'ERROR'
@@ -332,11 +297,10 @@ function Invoke-Ps2TorrentFallback {
 
     $destInfo = Resolve-Ps2RomDest -Destination $Destination -Cfg $Cfg
     $romDest  = $destInfo.Dest
-    $stagingCfg = if ($Cfg.PSObject.Properties.Name -contains 'ps2TorrentStaging') { [string]$Cfg.ps2TorrentStaging } else { '' }
-    $staging  = if ($stagingCfg) { $stagingCfg } else { Join-Path $destInfo.Base '.dlrom-torrent' }
+    $staging = [string](Get-CfgValue 'ps2TorrentStaging' (Join-Path $destInfo.Base '.dlrom-torrent') -Cfg $Cfg)
     if (-not (Test-Path $staging)) { New-Item -ItemType Directory -Path $staging -Force | Out-Null }
 
-    $timeout = if ($Cfg.PSObject.Properties.Name -contains 'ps2TorrentTimeoutSec') { [int]$Cfg.ps2TorrentTimeoutSec } else { 14400 }
+    $timeout = [int](Get-CfgValue 'ps2TorrentTimeoutSec' 14400 -Cfg $Cfg)
 
     Write-Log "Downloading via qBittorrent to $staging ..." 'INFO'
     $downloaded = $null
@@ -355,45 +319,24 @@ function Invoke-Ps2TorrentFallback {
     }
     Write-Log "Downloaded: $downloaded" 'SUCCESS'
 
-    $installed = $false
+    # Same extract/find/file/cleanup decision tree as a web download, so it is the same
+    # function. This used to be a second copy that had already drifted: it never warned
+    # about an unrecognised raw extension, and its cleanup ran on a different condition.
     $installedRomPath = $null
-    $extractDir = $null
     try {
-        if ($NoExtract) {
-            $installedRomPath = Move-RomToDest -SourcePath $downloaded -DestDir $romDest
-            $installed = $true
-        } elseif (-not (Test-IsArchive $downloaded)) {
-            $installedRomPath = Move-RomToDest -SourcePath $downloaded -DestDir $romDest
-            $installed = $true
-        } else {
-            $extractDir = Join-Path $staging ('extracted_' + [System.IO.Path]::GetFileNameWithoutExtension($downloaded) + '_' + (Get-Random))
-            Expand-RomArchive -ArchivePath $downloaded -OutDir $extractDir
-            $romFile = Find-RomFile -ExtractedDir $extractDir
-            if (-not $romFile) {
-                Write-Log "No ROM file found after extracting the torrent download." 'WARN'
-            } else {
-                $installedRomPath = Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest
-                $installed = $true
-            }
-        }
+        $installedRomPath = Install-RomFromDownload -DownloadedPath $downloaded -RomDest $romDest `
+                                -WorkDir $staging -NoExtract:$NoExtract
     } catch {
         Write-Log "Install from torrent download failed: $($_.Exception.Message)" 'ERROR'
     } finally {
-        if (-not $NoExtract) {
-            if (Test-Path $downloaded) { Remove-Item -LiteralPath $downloaded -Force -ErrorAction SilentlyContinue }
-            if ($extractDir -and (Test-Path $extractDir)) { Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
-            # Prune the (now empty) torrent-root folders under staging.
-            Get-ChildItem $staging -Directory -ErrorAction SilentlyContinue | ForEach-Object {
-                if (-not (Get-ChildItem $_.FullName -Recurse -File -ErrorAction SilentlyContinue)) {
-                    Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
-                }
-            }
-        }
+        # qBittorrent recreates the torrent's root folder under staging; drop it once the
+        # single file we asked for has been consumed.
+        if (-not $NoExtract) { Remove-EmptyDirectory -Path $staging -Recurse }
     }
 
-    if (-not $installed) { return $false }
+    if (-not $installedRomPath) { return $false }
 
-    if (-not $NoSteam -and [bool]($Cfg.steamSync)) {
+    if (-not $NoSteam -and [bool](Get-CfgValue 'steamSync' $true -Cfg $Cfg)) {
         try { Sync-RomToSteam -RomDest $romDest -RomsBase $destInfo.Base -InstalledCount 1 }
         catch { Write-Log "Steam sync failed (ROM still installed): $($_.Exception.Message)" 'WARN' }
     }

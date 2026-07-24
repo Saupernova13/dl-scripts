@@ -43,7 +43,7 @@ function Invoke-RomPipeline {
                   [int](($script:P_DOWNLOAD_END - $script:P_DOWNLOAD_START) * (($linkIndex + 1) / $linkCount))
         $linkIndex++
 
-        Update-DlromJob -Job $Job -Status 'running' -Step 'downloading' -Progress $bandLo `
+        Update-DlromJob -Job $Job -Status $script:JOB_STATUS_RUNNING -Step $script:JOB_STEP_DOWNLOADING -Progress $bandLo `
                         -Message "Downloading $($link.Label) ($linkIndex/$linkCount)"
         Write-Log "Downloading: $($link.Label)" 'INFO'
 
@@ -53,7 +53,7 @@ function Invoke-RomPipeline {
             param($Percent, $Line)
             if ($Percent -lt 0) { return }
             $Job.progress   = $bandLo + [int](($bandHi - $bandLo) * ($Percent / 100.0))
-            $Job.lastUpdate = (Get-Date).ToUniversalTime().ToString('o')
+            $Job.lastUpdate = (Get-UtcStamp)
             Save-DlromJob -Job $Job
         }.GetNewClosure()
 
@@ -62,7 +62,6 @@ function Invoke-RomPipeline {
         $outFile   = Join-Path $TempDir $safeLabel
 
         $completedPath = $null
-        $extractDir    = $null
         try {
             try {
                 $completedPath = Invoke-FileDownload -Url $link.Url -OutFile $outFile -Label $link.Label
@@ -73,83 +72,42 @@ function Invoke-RomPipeline {
                 $script:JOB_PROGRESS_CB = $null
             }
 
-            if ($Job.noExtract) {
-                Write-Log "Archive saved (--no-extract): $completedPath" 'SUCCESS'
-                Update-DlromJob -Job $Job -InstalledPath $completedPath
-                $installedCount++
-                continue
-            }
-
-            if (-not $completedPath -or -not (Test-Path $completedPath)) {
-                Write-Log "Downloaded file not found at: $outFile" 'ERROR'
-                continue
-            }
-
-            # Raw ROM (not a real archive): file it straight into the console folder so it can
-            # never be left behind in the downloader's folder. Only true archives get extracted.
-            if (-not (Test-IsArchive $completedPath)) {
-                $dlExt = [System.IO.Path]::GetExtension($completedPath).ToLower()
-                if ($dlExt -notin $script:ROM_EXTS) {
-                    Write-Log "Download is not an archive and '$dlExt' is an unrecognised ROM type; filing as-is." 'WARN'
+            # Extraction, ROM discovery, filing and cleanup are identical for a web
+            # download and a torrent one, so both go through Install-RomFromDownload.
+            # The callback maps its step names onto this job's progress bands.
+            $onStep = {
+                param($Step)
+                $pct = switch ($Step) {
+                    $script:JOB_STEP_EXTRACTING { $script:P_EXTRACT }
+                    $script:JOB_STEP_FILING     { $script:P_FILE }
+                    default                     { -1 }
                 }
-                Update-DlromJob -Job $Job -Step 'filing' -Progress $script:P_FILE
-                try {
-                    $moved = Move-RomToDest -SourcePath $completedPath -DestDir $romDest
-                    Update-DlromJob -Job $Job -InstalledPath $moved
-                    $installedCount++
-                } catch {
-                    Write-Log "Failed to file ROM: $($_.Exception.Message)" 'ERROR'
-                }
-                continue
-            }
+                Update-DlromJob -Job $Job -Step $Step -Progress $pct
+            }.GetNewClosure()
 
-            Update-DlromJob -Job $Job -Step 'extracting' -Progress $script:P_EXTRACT -Message "Extracting $($link.Label)"
-            $extractId  = [System.IO.Path]::GetFileNameWithoutExtension($safeLabel) + '_' + (Get-Random)
-            $extractDir = Join-Path $TempDir "extracted\$extractId"
-            try {
-                Expand-RomArchive -ArchivePath $completedPath -OutDir $extractDir
-            } catch {
-                Write-Log "Extraction failed: $($_.Exception.Message)" 'ERROR'
-                continue
-            }
-
-            $romFile = Find-RomFile -ExtractedDir $extractDir
-            if (-not $romFile) {
-                Write-Log "No ROM file found after extraction." 'WARN'
-                continue
-            }
-
-            Update-DlromJob -Job $Job -Step 'filing' -Progress $script:P_FILE
-            try {
-                $moved = Move-RomToDest -SourcePath $romFile.FullName -DestDir $romDest
+            $moved = Install-RomFromDownload -DownloadedPath $completedPath -RomDest $romDest `
+                        -WorkDir $TempDir -NoExtract:([bool]$Job.noExtract) -OnStep $onStep
+            if ($moved) {
                 Update-DlromJob -Job $Job -InstalledPath $moved
                 $installedCount++
-            } catch {
-                Write-Log "Move failed: $($_.Exception.Message)" 'ERROR'
             }
-        }
-        finally {
+        } catch {
+            Write-Log "Install failed: $($_.Exception.Message)" 'ERROR'
+        } finally {
             $script:JOB_PROGRESS_CB = $null
-            # Always clean download artifacts (keep the archive only under --no-extract).
-            if (-not $Job.noExtract) {
-                if ($completedPath -and (Test-Path $completedPath)) { Remove-Item -Path $completedPath -Force -ErrorAction SilentlyContinue }
-                if (Test-Path $outFile)                              { Remove-Item -Path $outFile -Force -ErrorAction SilentlyContinue }
-                if ($extractDir -and (Test-Path $extractDir))        { Remove-Item -Path $extractDir -Recurse -Force -ErrorAction SilentlyContinue }
+            # Install-RomFromDownload removes what it consumed; this catches the case
+            # where the downloader wrote somewhere other than the path it returned.
+            if ((-not $Job.noExtract) -and (Test-Path $outFile)) {
+                Remove-Item -LiteralPath $outFile -Force -ErrorAction SilentlyContinue
             }
         }
-    }
-
-    # Prune the extraction parent if our cleanup left it empty.
-    $extractedParent = Join-Path $TempDir "extracted"
-    if ((Test-Path $extractedParent) -and -not (Get-ChildItem -LiteralPath $extractedParent -Force -ErrorAction SilentlyContinue)) {
-        Remove-Item -Path $extractedParent -Force -ErrorAction SilentlyContinue
     }
 
     if ($installedCount -eq 0) { return $false }
 
     # Add the freshly installed ROM(s) to Steam (srm-wrapper preferred, built-in fallback).
     if (-not $Job.noSteam -and [bool](Get-CfgValue 'steamSync' $true)) {
-        Update-DlromJob -Job $Job -Step 'steam-sync' -Progress $script:P_STEAM -Message 'Adding to Steam'
+        Update-DlromJob -Job $Job -Step $script:JOB_STEP_STEAM_SYNC -Progress $script:P_STEAM -Message 'Adding to Steam'
         try {
             Sync-RomToSteam -RomDest $romDest -RomsBase $Job.romsBase -InstalledCount $installedCount
         } catch {

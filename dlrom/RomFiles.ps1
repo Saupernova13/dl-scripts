@@ -1,48 +1,67 @@
 # Local-file side of things: spotting and extracting archives, finding the ROM inside one,
 # cleaning up filenames so Steam launch commands don't choke, and filing the ROM into its
 # console folder.
+#
+# Extension and signature tables come from Constants.ps1; there is exactly one of each.
 
 function Find-7zip {
-    $fromPath = Get-Command "7z.exe" -ErrorAction SilentlyContinue
+    $fromPath = Get-Command '7z.exe' -ErrorAction SilentlyContinue
     if ($fromPath) { return $fromPath.Source }
-    $pf   = Join-Path $env:ProgramFiles "7-Zip\7z.exe"
-    $pf86 = Join-Path ${env:ProgramFiles(x86)} "7-Zip\7z.exe"
-    if (Test-Path $pf)   { return $pf }
-    if (Test-Path $pf86) { return $pf86 }
+    foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        if (-not $root) { continue }
+        $candidate = Join-Path $root '7-Zip\7z.exe'
+        if (Test-Path $candidate) { return $candidate }
+    }
     return $null
 }
 
-function Get-ArchiveType {
-    param([string]$FilePath)
+# Read the leading bytes of a file as an uppercase hex string. One reader for both the
+# archive test and the type sniffer, which used to open the file two different ways and
+# compare against two different signature tables.
+function Get-FileHeaderHex {
+    param([string]$Path, [int]$Length = 8)
     try {
-        $bytes = [System.IO.File]::ReadAllBytes($FilePath)
-        $head  = ($bytes | Select-Object -First 8 | ForEach-Object { $_.ToString("X2") }) -join ""
-        if ($head -match "^504B")       { return "zip" }
-        if ($head -match "^377ABCAF")   { return "7z"  }
-        if ($head -match "^526172211A") { return "rar" }
-    } catch { }
-    $ext = [System.IO.Path]::GetExtension($FilePath).TrimStart('.').ToLower()
-    if ($ext -in @("7z", "rar", "zip")) { return $ext }
-    return "zip"
+        $fs = [System.IO.File]::OpenRead($Path)
+        try {
+            $buf = New-Object byte[] $Length
+            $n   = $fs.Read($buf, 0, $Length)
+        } finally { $fs.Dispose() }
+        if ($n -le 0) { return '' }
+        return (($buf[0..($n - 1)] | ForEach-Object { $_.ToString('X2') }) -join '')
+    } catch { return '' }
 }
 
-# True only if the file really begins with a zip/7z/rar signature. This drives the
-# extract-or-file-directly decision; Get-ArchiveType always returns a type, so it can't.
+# The archive type a file's signature says it is, or '' when it is not an archive.
+function Get-ArchiveSignatureType {
+    param([string]$Path)
+    $hex = Get-FileHeaderHex -Path $Path
+    if (-not $hex) { return '' }
+    foreach ($sig in $script:ARCHIVE_SIGNATURES) {
+        foreach ($prefix in $sig.Hex) {
+            if ($hex.StartsWith($prefix)) { return $sig.Type }
+        }
+    }
+    return ''
+}
+
+# True only when the file really begins with an archive signature. This drives the
+# extract-or-file-directly decision, so it must never guess from the extension: a ROM
+# named .zip that isn't one has to be filed, not handed to 7-Zip.
 function Test-IsArchive {
     param([string]$Path)
-    try {
-        $fs  = [System.IO.File]::OpenRead($Path)
-        try {
-            $buf = New-Object byte[] 8
-            $n   = $fs.Read($buf, 0, 8)
-        } finally { $fs.Dispose() }
-        if ($n -lt 4) { return $false }
-        $hex = ($buf[0..($n - 1)] | ForEach-Object { $_.ToString('X2') }) -join ''
-        if ($hex -match '^504B0304' -or $hex -match '^504B0506' -or $hex -match '^504B0708') { return $true }  # zip
-        if ($hex -match '^377ABCAF271C') { return $true }  # 7z
-        if ($hex -match '^526172211A07') { return $true }  # rar4/rar5
-        return $false
-    } catch { return $false }
+    return [bool](Get-ArchiveSignatureType -Path $Path)
+}
+
+# Which extractor a file needs. Signature first; the extension is only a fallback for a
+# truncated read, and 'zip' is the last resort because Expand-Archive can handle it
+# without 7-Zip installed.
+function Get-ArchiveType {
+    param([string]$FilePath)
+    $bySignature = Get-ArchiveSignatureType -Path $FilePath
+    if ($bySignature) { return $bySignature }
+    $ext = [System.IO.Path]::GetExtension($FilePath).TrimStart('.').ToLower()
+    if ($script:ARCHIVE_EXTS -contains ".$ext") { return $ext }
+    return 'zip'
 }
 
 function Expand-RomArchive {
@@ -52,48 +71,36 @@ function Expand-RomArchive {
     $archType = Get-ArchiveType -FilePath $ArchivePath
     Write-Log "Extracting .$archType archive..." 'INFO'
 
-    if ($archType -eq 'zip') {
-        $sz = Find-7zip
-        if ($sz) {
-            $proc = Start-Process -FilePath $sz -ArgumentList "x `"-o$OutDir`" -y `"$ArchivePath`"" -Wait -PassThru -NoNewWindow
-            if ($proc.ExitCode -ne 0) { throw "7z.exe exited with code $($proc.ExitCode)" }
-        } else {
-            Write-Log "7z.exe not found; using built-in Expand-Archive for .zip" 'WARN'
-            Expand-Archive -Path $ArchivePath -DestinationPath $OutDir -Force
-        }
+    $sz = Find-7zip
+    if ($sz) {
+        $proc = Start-Process -FilePath $sz -ArgumentList "x `"-o$OutDir`" -y `"$ArchivePath`"" -Wait -PassThru -NoNewWindow
+        if ($proc.ExitCode -ne 0) { throw "7z.exe exited with code $($proc.ExitCode)" }
         return
     }
 
-    $sz = Find-7zip
-    if (-not $sz) {
-        Write-Log "Install it with:  winget install 7zip.7zip" 'WARN'
-        Write-Log "The archive is at: $ArchivePath" 'WARN'
-        # Throw, don't exit: a background worker has to record the failure on its job.
-        throw "7z.exe is required to extract .$archType archives but was not found."
+    # Only .zip has a built-in fallback; .7z and .rar genuinely need 7-Zip.
+    if ($archType -eq 'zip') {
+        Write-Log "7z.exe not found; using built-in Expand-Archive for .zip" 'WARN'
+        Expand-Archive -Path $ArchivePath -DestinationPath $OutDir -Force
+        return
     }
 
-    $proc = Start-Process -FilePath $sz -ArgumentList "x `"-o$OutDir`" -y `"$ArchivePath`"" -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ne 0) { throw "7z.exe exited with code $($proc.ExitCode)" }
+    Write-Log "Install it with:  winget install 7zip.7zip" 'WARN'
+    Write-Log "The archive is at: $ArchivePath" 'WARN'
+    # Throw, don't exit: a background worker has to record the failure on its job.
+    throw "7z.exe is required to extract .$archType archives but was not found."
 }
 
-# Biggest matching file in the extract is almost always the ROM.
+# Biggest ROM-shaped file in the extract is almost always the ROM. Searches the same
+# extension table used to recognise a raw download, so anything dlrom will file directly
+# is also something it can find inside an archive.
 function Find-RomFile {
     param([string]$ExtractedDir)
-
-    $romExts = @('.iso', '.bin', '.img', '.nds', '.gba', '.z64', '.n64', '.v64',
-                 '.sfc', '.smc', '.nes', '.gb', '.gbc', '.gg', '.cue', '.chd', '.pbp')
-
     return Get-ChildItem -Path $ExtractedDir -Recurse -File |
-        Where-Object { $romExts -contains $_.Extension.ToLower() } |
+        Where-Object { $script:ROM_EXTS -contains $_.Extension.ToLower() } |
         Sort-Object Length -Descending |
         Select-Object -First 1
 }
-
-# Extensions we treat as an already-installable ROM (download was a raw ROM, not an archive).
-$script:ROM_EXTS = @('.iso', '.bin', '.cue', '.img', '.chd', '.pbp', '.gdi',
-                     '.nds', '.3ds', '.cia', '.gba', '.gb', '.gbc', '.gg',
-                     '.z64', '.n64', '.v64', '.sfc', '.smc', '.nes',
-                     '.rvz', '.wbfs', '.gcm', '.cso')
 
 # Drop characters that are illegal in Windows filenames or that break Steam launches.
 # SRM wraps each launch path in a single-quoted PowerShell string, so an apostrophe or
@@ -159,4 +166,77 @@ function Move-RomToDest {
         }
     }
     return $final
+}
+
+# Turn one completed download into an installed ROM.
+#
+# The web pipeline and the PS2 torrent fallback both had their own copy of this decision
+# tree and had already drifted - only one of them warned about an unrecognised raw
+# extension, and only one pruned its extraction directory. It is the same problem in both
+# cases (a file arrived; put a ROM in the console folder), so it is one function.
+#
+# Returns the installed path, or $null when nothing could be installed. Callers decide
+# what that means for their job. Cleanup always runs, except under -NoExtract where
+# keeping the downloaded archive is the whole point.
+function Install-RomFromDownload {
+    param(
+        [Parameter(Mandatory)][string]$DownloadedPath,
+        [Parameter(Mandatory)][string]$RomDest,
+        [string]$WorkDir,
+        [switch]$NoExtract,
+        # Invoked as { param($Step) } before extraction and filing, so a caller with a job
+        # can report progress without this function knowing what a job is.
+        [scriptblock]$OnStep
+    )
+
+    if (-not (Test-Path -LiteralPath $DownloadedPath)) {
+        Write-Log "Downloaded file not found at: $DownloadedPath" 'ERROR'
+        return $null
+    }
+
+    $report = { param($Step) if ($OnStep) { try { & $OnStep $Step } catch { } } }
+
+    # -NoExtract keeps the archive as downloaded; file it and stop.
+    if ($NoExtract) {
+        & $report $script:JOB_STEP_FILING
+        Write-Log "Archive kept (--no-extract): $DownloadedPath" 'SUCCESS'
+        return (Move-RomToDest -SourcePath $DownloadedPath -DestDir $RomDest)
+    }
+
+    # A raw ROM (not a container): file it as-is rather than failing extraction and
+    # leaving it behind in the downloader's folder.
+    if (-not (Test-IsArchive $DownloadedPath)) {
+        $ext = [System.IO.Path]::GetExtension($DownloadedPath).ToLower()
+        if ($script:ROM_EXTS -notcontains $ext) {
+            Write-Log "Download is not an archive and '$ext' is an unrecognised ROM type; filing as-is." 'WARN'
+        }
+        & $report $script:JOB_STEP_FILING
+        return (Move-RomToDest -SourcePath $DownloadedPath -DestDir $RomDest)
+    }
+
+    if (-not $WorkDir) { $WorkDir = [System.IO.Path]::GetDirectoryName($DownloadedPath) }
+    $extractDir = Join-Path $WorkDir ('extracted\{0}_{1}' -f
+                    [System.IO.Path]::GetFileNameWithoutExtension($DownloadedPath), (New-ShortId 8))
+
+    try {
+        & $report $script:JOB_STEP_EXTRACTING
+        Expand-RomArchive -ArchivePath $DownloadedPath -OutDir $extractDir
+
+        $romFile = Find-RomFile -ExtractedDir $extractDir
+        if (-not $romFile) {
+            Write-Log "No ROM file found after extraction." 'WARN'
+            return $null
+        }
+
+        & $report $script:JOB_STEP_FILING
+        return (Move-RomToDest -SourcePath $romFile.FullName -DestDir $RomDest)
+    } finally {
+        if (Test-Path -LiteralPath $DownloadedPath) {
+            Remove-Item -LiteralPath $DownloadedPath -Force -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $extractDir) {
+            Remove-Item -LiteralPath $extractDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        Remove-EmptyDirectory (Join-Path $WorkDir 'extracted')
+    }
 }

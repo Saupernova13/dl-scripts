@@ -21,12 +21,11 @@
 # the query string is the authorisation), which is what lets Motrix/AB/aria2c fetch them
 # with no cookie of their own.
 #
-# Dot-sourced by Add-ROM.ps1. Write-Log and ConvertTo-ResponseText come from Logging.ps1.
+# Dot-sourced by Add-ROM.ps1. Write-Log and ConvertTo-ResponseText come from Logging.ps1;
+# the base URL, HTTP headers, download extensions and release-marker tables from
+# Constants.ps1; region ranking and phrase matching from Common.ps1.
 
 Add-Type -AssemblyName System.Web
-
-$RGT_BASE_URL = 'https://retrogametalk.com'
-$RGT_REPO_URL = "$RGT_BASE_URL/repo"
 
 # Platform alias -> Repo category slug used in the search URL and game page paths.
 # These are NOT the old cdromance slugs: gba/snes/gbc/gb/dreamcast/saturn/wii all
@@ -145,13 +144,6 @@ $RGT_NON_GAME_SLUGS = @('page', 'category', 'tag', 'author', 'guides', 'news', '
     'platforms', 'recent-comments', 'contact', 'dmca', 'privacy-policy', 'user-agreement',
     'sitemap', 'bios-files', 'wp-content', 'wp-admin', 'wp-includes', 'cdn-cgi')
 
-# Browser-like headers reused for every request (and the User-Agent handed to downloaders).
-$HTTP_HEADERS = @{
-    'User-Agent'      = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
-    'Accept'          = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    'Accept-Language' = 'en-US,en;q=0.5'
-}
-
 # --- Session ------------------------------------------------------------------
 #
 # One cookie jar for the whole run. There is no login: The Repo serves anonymous HTTP
@@ -221,7 +213,7 @@ function Invoke-RgtWeb {
 function Get-LinksFromHtml {
     param([string]$Html)
     $links = @()
-    $archExts = '7z|zip|rar|iso|bin|img|chd|pbp'
+    $archExts = $script:DOWNLOAD_EXTS_RX
 
     # Primary: anchor text is the filename. The Repo's reveal table is built this way -
     # the href is a download.php?file=... redirector, so only the text carries the name.
@@ -442,16 +434,15 @@ function Select-DownloadLinks {
 
     if ($Links.Count -eq 0) { return @() }
 
-    # Phase 1: filter demos
-    $filtered = @($Links | Where-Object { $_.Label -notmatch '(?i)\b(demo|trial|sampler|preview)\b' })
+    # Phase 1: filter demos, betas and prototypes
+    $filtered = @($Links | Where-Object { $_.Label -notmatch $script:DEMO_RX })
     if ($filtered.Count -eq 0) {
         Write-Log "All links appear to be demos; taking first link as fallback." 'WARN'
         return @($Links[0])
     }
 
     # Phase 2: prefer English/patched/undub variants
-    $englishPat = '(?i)\b(english|undub|undubbed|patched|dub)\b|\(eng\)'
-    $english    = @($filtered | Where-Object { $_.Label -imatch $englishPat })
+    $english = @($filtered | Where-Object { $_.Label -imatch $script:ENGLISH_RX })
     $working    = if ($english.Count -gt 0) {
         Write-Log "English/patched variant(s) detected: $($english.Count) link(s)" 'DEBUG'
         $english
@@ -496,11 +487,11 @@ function Get-RgtRegions {
     param([string]$Url, [string]$Title)
     $s = (($Url + ' ' + $Title)).ToLower()
     $r = @()
-    if ($s -match '(^|[^a-z])usa([^a-z]|$)')      { $r += 'usa' }
-    if ($s -match 'europe|europa|[-(]eur|\bpal\b'){ $r += 'europe' }
-    if ($s -match 'japan|[-(]jpn')                { $r += 'japan' }
-    if ($s -match '\bworld\b')                    { $r += 'world' }
-    if ($s -match 'korea')                        { $r += 'korea' }
+    if ($s -match '(^|[^a-z])usa([^a-z]|$)')       { $r += 'usa' }
+    if ($s -match 'europe|europa|[-(]eur|\bpal\b') { $r += 'europe' }
+    if ($s -match 'japan|[-(]jpn')                 { $r += 'japan' }
+    if ($s -match '\bworld\b')                     { $r += 'world' }
+    if ($s -match 'korea')                         { $r += 'korea' }
     return @($r | Select-Object -Unique)
 }
 
@@ -516,7 +507,7 @@ function Select-RgtResult {
 
     $qtokens   = Get-Ps2Significant $Query
     $normQuery = ConvertTo-Ps2Norm $Query
-    $requested = Resolve-Ps2RegionRequest $Region
+    $requested = Resolve-RegionRequest $Region
 
     $i = 0
     $scored = @()
@@ -528,16 +519,16 @@ function Select-RgtResult {
         foreach ($qt in $qtokens) { if ($tt -notcontains $qt) { $allPresent = $false; break } }
         $matchRank = if ($allPresent) { 0 } else { 1 }
 
-        $demo = if ($r.Title -match $script:PS2_DEMO_RX) { 1 } else { 0 }
-        $hack = if ((($r.Url + ' ' + $r.Title)) -match '(?i)(\bhack\b|\bmod\b|\bpatch\b|controllable|-hack)') { 1 } else { 0 }
+        $demo = if ($r.Title -match $script:DEMO_RX) { 1 } else { 0 }
+        $hack = if ((($r.Url + ' ' + $r.Title)) -match $script:HACK_RX) { 1 } else { 0 }
 
         $edition = 0
-        foreach ($kw in $script:PS2_EDITION_KW) {
-            if ((Test-Ps2Phrase $tn $kw) -and -not (Test-Ps2Phrase $normQuery $kw)) { $edition = 1; break }
+        foreach ($kw in $script:EDITION_KW) {
+            if ((Test-Phrase $tn $kw) -and -not (Test-Phrase $normQuery $kw)) { $edition = 1; break }
         }
 
         $regions    = Get-RgtRegions $r.Url $r.Title
-        $regionRank = Get-Ps2RegionRank -Regions $regions -Requested $requested
+        $regionRank = Get-RegionRank -Regions $regions -Requested $requested
         $extra      = @($tt | Where-Object { $qtokens -notcontains $_ }).Count
 
         $scored += [PSCustomObject]@{ R = $r; Demo = $demo; Match = $matchRank; Hack = $hack;
