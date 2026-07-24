@@ -397,6 +397,7 @@ Needs Pester 5+ (`Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -
 
 | Suite | What it covers |
 |-------|----------------|
+| `Shared.Tests.ps1` | The shared foundation: that there is exactly one ROM extension table (and that it covers every console `PLATFORM_SLUGS` advertises), one archive signature table that `Test-IsArchive` and `Get-ArchiveType` agree on, one reject regex, one region vocabulary; plus `Get-CfgValue` edge cases, the formatters, filename safety and `Install-RomFromDownload`. |
 | `RetroGameTalk.Tests.ps1` | The real functions with only `Invoke-WebRequest` mocked: search URL construction for every platform and filter, result parsing, the nonce reveal POST, link extraction, demo/region/multi-disc selection, region detection, edition-aware picking, and failure classification. Fixtures in `tests/fixtures/` are trimmed captures of real Repo pages. |
 | `RetroGameTalk.Live.Tests.ps1` (tag `Live`) | The live catalogue: every platform slug has a category page, every search filter is accepted and does not leak other platforms, 14 known ROMs across the major consoles resolve to real `download.php?...&key=` URLs, and one of those URLs is range-fetched to prove it serves bytes with no cookies. |
 
@@ -410,13 +411,15 @@ else &mdash; that class of breakage is what ended the cdromance integration.
 
 | File | Responsibility |
 |------|----------------|
+| `Constants.ps1` | Every shared literal: job/downloader vocabularies, ROM and archive extension tables, archive signatures, release markers, region preference, default endpoints. Loaded first. |
+| `Common.ps1` | Dependency-free helpers: `Get-CfgValue`, `Get-UtcStamp`, `Get-DlScriptsDataDir`, `New-ShortId`, `Remove-EmptyDirectory`, region resolution/ranking. |
 | `Add-ROM.ps1` | Argument/config handling, the search + link resolution, and the worker entry point. |
 | `Jobs.ps1` | Job state on disk, the detached worker spawn, `--status` / `--list` rendering, pruning. |
 | `RomPipeline.ps1` | Download -> extract -> file -> Steam. Shared by the worker and `--wait`. |
 | `Logging.ps1` | `Write-Log` (verbosity-aware), progress lines, size/speed/label formatters. |
 | `RetroGameTalk.ps1` | Platform tables, search, and download-link discovery/selection. |
 | `Downloaders.ps1` | Motrix/AB/aria2c/curl/BITS/WebClient backends and the dispatcher. |
-| `RomFiles.ps1` | Archive detection/extraction, ROM discovery, filename safety, install. |
+| `RomFiles.ps1` | Archive detection/extraction, ROM discovery, filename safety, and `Install-RomFromDownload` - the one download-to-installed-ROM path, shared by the web pipeline and the torrent fallback. |
 | `SteamRomManager.ps1` | Steam ROM Manager sync (srm-wrapper preferred, built-in fallback). |
 | `QbitTorrent.ps1` | qBittorrent WebUI client used by the PS2 torrent fallback. |
 | `Ps2TorrentIndex.ps1` + `ps2_torrent.py` | PS2 archive torrent fallback: match, selective download, install. |

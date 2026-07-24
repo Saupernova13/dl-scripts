@@ -15,10 +15,15 @@ a same-named subfolder. The `.cmd` files only marshal arguments &mdash; all logi
 lib/*.ps1         ← shared (Initialize-DlConfig; Resolve-MediaPath = drive-registry API client)
 ```
 
-`dlrom` is further split into dot-sourced modules (`Logging.ps1`, `RetroGameTalk.ps1`,
-`Downloaders.ps1`, `RomFiles.ps1`, `SteamRomManager.ps1`) with `Add-ROM.ps1` as a
-thin orchestrator. New, self-contained concerns should follow that pattern rather than growing a
-single file.
+`dlrom` is further split into dot-sourced modules (`Constants.ps1`, `Common.ps1`, `Logging.ps1`,
+`RetroGameTalk.ps1`, `Downloaders.ps1`, `RomFiles.ps1`, `SteamRomManager.ps1`) with `Add-ROM.ps1`
+as a thin orchestrator. New, self-contained concerns should follow that pattern rather than
+growing a single file.
+
+`Constants.ps1` loads first and owns every literal more than one module depends on - job
+states, downloader ids, ROM/archive extensions, release markers, region preference. If you
+find yourself writing a second copy of a table or a regex, it belongs there instead; the
+tables that are in there now each started life as two or three copies that drifted apart.
 
 ## Conventions
 

@@ -13,6 +13,10 @@ BeforeAll {
     $script:ModuleRoot  = Split-Path -Parent $PSScriptRoot
     $script:FixtureRoot = Join-Path $PSScriptRoot 'fixtures'
 
+    # Same order Add-ROM.ps1 uses: Constants defines the values Logging's formatter
+    # defaults and every table below read, Common the helpers they call.
+    . (Join-Path $ModuleRoot 'Constants.ps1')
+    . (Join-Path $ModuleRoot 'Common.ps1')
     . (Join-Path $ModuleRoot 'Logging.ps1')
     . (Join-Path $ModuleRoot 'RetroGameTalk.ps1')
     . (Join-Path $ModuleRoot 'Ps2TorrentIndex.ps1')   # Select-RgtResult borrows its matchers

@@ -14,6 +14,8 @@
 # The platform tables therefore have to be loaded here as well, or the per-platform cases
 # below silently expand to nothing and the suite reports success having tested no platform.
 BeforeDiscovery {
+    . (Join-Path (Split-Path -Parent $PSScriptRoot) 'Constants.ps1')
+    . (Join-Path (Split-Path -Parent $PSScriptRoot) 'Common.ps1')
     . (Join-Path (Split-Path -Parent $PSScriptRoot) 'Logging.ps1')
     . (Join-Path (Split-Path -Parent $PSScriptRoot) 'RetroGameTalk.ps1')
     $script:AllSlugs = @($PLATFORM_SLUGS.Values | Select-Object -Unique | Sort-Object)
@@ -21,6 +23,8 @@ BeforeDiscovery {
 
 BeforeAll {
     $script:ModuleRoot = Split-Path -Parent $PSScriptRoot
+    . (Join-Path $ModuleRoot 'Constants.ps1')
+    . (Join-Path $ModuleRoot 'Common.ps1')
     . (Join-Path $ModuleRoot 'Logging.ps1')
     . (Join-Path $ModuleRoot 'RetroGameTalk.ps1')
     . (Join-Path $ModuleRoot 'Ps2TorrentIndex.ps1')

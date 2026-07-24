@@ -140,18 +140,21 @@ dl-scripts/
 │   ├── Add-TV.ps1
 │   └── README.md
 └── dlrom/
+    ├── Constants.ps1        ← shared literals (job/downloader vocab, extensions, regions)
+    ├── Common.ps1           ← shared helpers (config access, timestamps, region ranking)
     ├── Add-ROM.ps1          ← orchestrator (thin) + worker entry point (-JobFile)
     ├── Jobs.ps1             ← job state, detached spawn, --status/--list
     ├── RomPipeline.ps1      ← download→extract→file→Steam (worker and --wait share it)
     ├── Logging.ps1          ← Write-Log + progress lines + formatters
     ├── RetroGameTalk.ps1    ← search + link discovery
     ├── Downloaders.ps1      ← download backends + dispatcher
-    ├── RomFiles.ps1         ← extraction + ROM install
+    ├── RomFiles.ps1         ← extraction + ROM install (Install-RomFromDownload)
     ├── SteamRomManager.ps1  ← Steam ROM Manager sync
     ├── QbitTorrent.ps1      ← qBittorrent WebUI client (PS2 torrent fallback)
     ├── Ps2TorrentIndex.ps1  ← PS2 archive torrent fallback
     ├── ps2_torrent.py       ← torrent index parser (Python helper)
     ├── Ps2Serial.ps1        ← PS2 serial resolve + [HANDOFF] line
+    ├── tests/               ← Pester suites + fixtures (Invoke-Tests.ps1)
     └── README.md
 ```
 
