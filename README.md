@@ -8,7 +8,7 @@ PowerShell scripts for searching and downloading media with automatic extraction
 | [dlgame](dlgame/) | `dlgame.cmd` | appnetica.com | qBittorrent | PC games (Steam folder versions) |
 | [dlmovie](dlmovie/) | `dlmovie.cmd` | YTS | qBittorrent | Movies |
 | [dltv](dltv/) | `dltv.cmd` | The Pirate Bay | qBittorrent | TV shows |
-| [dlrom](dlrom/) | `dlrom.cmd` | cdromance.org | Motrix / AB / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs + auto-add to Steam via Steam ROM Manager) |
+| [dlrom](dlrom/) | `dlrom.cmd` | retrogametalk.com/repo | Motrix / AB / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs + auto-add to Steam via Steam ROM Manager) |
 
 ## Setup
 
@@ -65,7 +65,7 @@ attached will never stop to ask a question — it fails with an explanation inst
 
 - **Windows** with PowerShell 5.1+ (built into Windows 10/11).
 - A torrent client (**qBittorrent** with the Web UI enabled) for `dlanime`/`dlgame`/`dlmovie`/`dltv`.
-- `dlrom` additionally uses **Docker Desktop** + **Python 3** (Cloudflare bypass) and **7-Zip** (extraction); a download manager (Motrix / AB) and Steam ROM Manager are optional — see [`dlrom/README.md`](dlrom/).
+- `dlrom` additionally uses **7-Zip** (extraction); a download manager (Motrix / AB), Steam ROM Manager and **Python 3** (only to rebuild the PS2 torrent index) are optional — see [`dlrom/README.md`](dlrom/).
 
 Nothing here is hardcoded to one machine: paths come from `config.json` (auto-created), runtime drive
 detection, or command-line overrides, so the scripts work on a fresh setup.
@@ -144,12 +144,10 @@ dl-scripts/
     ├── Jobs.ps1             ← job state, detached spawn, --status/--list
     ├── RomPipeline.ps1      ← download→extract→file→Steam (worker and --wait share it)
     ├── Logging.ps1          ← Write-Log + progress lines + formatters
-    ├── Cdromance.ps1        ← search + link discovery
+    ├── RetroGameTalk.ps1    ← search + link discovery
     ├── Downloaders.ps1      ← download backends + dispatcher
     ├── RomFiles.ps1         ← extraction + ROM install
     ├── SteamRomManager.ps1  ← Steam ROM Manager sync
-    ├── CfSolver.ps1         ← Cloudflare bypass
-    ├── cdr_http.py          ← Cloudflare bypass (Python helper)
     ├── QbitTorrent.ps1      ← qBittorrent WebUI client (PS2 torrent fallback)
     ├── Ps2TorrentIndex.ps1  ← PS2 archive torrent fallback
     ├── ps2_torrent.py       ← torrent index parser (Python helper)
@@ -170,13 +168,13 @@ All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, stru
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
   "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "cfSolverUrl": "http://localhost:8191/v1", "cfSolverMode": "auto", "cfAutoStart": true, "cfContainerName": "flaresolverr", "cfDockerImage": "ghcr.io/flaresolverr/flaresolverr:latest", "cfSolverTimeoutMs": 120000, "jobKeepDays": 7 }
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "jobKeepDays": 7 }
 }
 ```
 
 Each script self-bootstraps: if the file or its section is missing, it is created with defaults and execution continues. No crash, no manual step. New keys (e.g. `useDriveMetadata`) are automatically backfilled into existing sections on next run.
 
-`dlgame` additionally requires a `.settings` file in the `dlgame/` subfolder for appnetica.com credentials (Email, Password). All other settings for dlgame come from `config.json`.
+`dlgame` additionally requires a `.settings` file in the `dlgame/` subfolder for appnetica.com credentials (Email, Password); it is gitignored. `dlrom` needs no credentials at all. All other settings come from `config.json`.
 
 **`useDriveMetadata` (default: `true`)** — when true, destination is resolved at runtime from `drive-meta.json` files on connected drives instead of the hardcoded `destination` field. Set to `false` to re-enable the explicit `destination` field (e.g. for a pinned path you always want to use).
 
@@ -199,22 +197,17 @@ The ROM is filed under `<romsBase>\<console>` (EmuDeck layout). When `--platform
 
 Whatever the downloader (Motrix, AB, etc.) drops the file as, the final ROM is always moved into `<romsBase>\<console>`: real archives (zip/7z/rar, detected by signature) are extracted first; a **raw ROM** download (`.iso`/`.chd`/`.nds`/…) is filed directly instead of failing extraction and being left behind in the downloader's folder.
 
-### Cloudflare bypass (dlrom)
+### The Repo needs no account (dlrom)
 
-cdromance.org sits behind Cloudflare, which rejects plain script requests (HTTP 403) because their TLS fingerprint isn't a browser's. dlrom gets past this automatically, with nothing shown on screen:
+The ROM catalogue that used to live at cdromance.org is now **The Repo**, a WordPress catalogue mounted under the RetroGameTalk forum at `retrogametalk.com/repo/`.
 
-1. **FlareSolverr** (headless Chromium in Docker) solves the challenge and mints a `cf_clearance` cookie + matching User-Agent. This is the only step that needs a real browser. dlrom auto-`docker start`s (or creates) the container on demand; it never launches Docker Desktop itself, so no window ever appears.
-2. **`cdr_http.py`** (Python + `curl_cffi`) replays that cookie while impersonating Chrome's TLS/HTTP2 fingerprint, so Cloudflare accepts it — and, unlike a browser navigation, it can send headers like `X-Requested-With` that the link-reveal endpoint requires. `curl_cffi` is auto-installed on first use.
+It advertises a members-only gate, but that gate is enforced entirely in the browser — `if (!document.cookie.includes("xf_online=1")) location.replace("/login/")` — and a script never executes it. Browsing, searching, the "Show Links" reveal and the file transfer all work anonymously, so dlrom has **no login and stores no credentials**.
 
-The `cf_clearance` is cached under `%TEMP%\dlrom\cf_session.json` and reused across runs (the first run mints it, ~15-100s; later runs are instant). A `403`/`503`/`429` triggers one automatic re-mint + retry. Only the page scraping uses this path — the actual file download is a normal direct URL that isn't Cloudflare-gated, so it stays on Motrix/AB/aria2.
+dlrom keeps one cookie jar per run for a narrower reason: the reveal call must present the WordPress nonce scraped from the game page, and WordPress ties that nonce to the `PHPSESSID` it was minted under. An empty reveal makes dlrom discard the jar and retry once with a fresh nonce.
 
-**One-time setup** (dlrom will also do this for you on demand):
-```
-docker run -d --name flaresolverr -p 8191:8191 --restart unless-stopped ghcr.io/flaresolverr/flaresolverr:latest
-```
-The `--restart unless-stopped` policy means it comes back automatically after a reboot (once Docker Desktop is running).
+Unlike cdromance, retrogametalk.com serves plain HTTP clients without a Cloudflare challenge, so there is **no Docker, FlareSolverr or `curl_cffi` dependency any more** — `Invoke-WebRequest` is enough. The resolved `dl*.retrogametalk.com/download.php?…&key=…` URLs carry their own authorisation in the query string and need no cookie, so Motrix/AB/aria2 fetch them directly.
 
-Config keys (`[rom]` section): `cfSolverUrl` (default `http://localhost:8191/v1`), `cfSolverMode` (`auto` = solve only when blocked / `always` / `never`), `cfAutoStart`, `cfContainerName`, `cfDockerImage`, `cfSolverTimeoutMs`. Requires Docker and Python 3 on PATH. Use `--links-only` to resolve and print the download links without downloading (handy for confirming the bypass works).
+Use `--links-only` to resolve and print the download links without downloading.
 
 ### Steam ROM Manager integration (dlrom)
 
@@ -231,7 +224,7 @@ If **neither** the wrapper nor `srm.exe` is found, `dlrom` does **not** crash �
 Config keys (`[rom]` section): `steamSync` (master on/off, default `true`), `srmWrapperCmd` (blank = autodetect on PATH), `srmExe`, `srmRestartSteam` (`auto`/`never`/`always`), `srmEnableParser`. Skip per-run with `--no-steam`.
 
 Notes:
-- Platform folders match EmuDeck's layout (e.g. PS1 → `psx`, GameCube → `gc`, 3DS → `n3ds`, Vita → `psvita`) so both the emulators and SRM's parsers find the files.
+- Platform folders match EmuDeck's layout (e.g. PS1 → `psx`, GameCube → `gc`, Master System → `mastersystem`, Vita → `psvita`) so both the emulators and SRM's parsers find the files.
 - `srm add` runs **all** currently-enabled parsers, so the first sync may add a backlog of everything already on disk — SRM dedupes, so this is safe.
 - Requires SRM configured once (EmuDeck does this) with its parsers pointing at `romsBase`.
 
@@ -315,5 +308,5 @@ powershell -File lib\DriveResolver.ps1
 - `Initialize-DlConfig` lives in `lib\DriveResolver.ps1` and is dot-sourced by each script. The function signature is unchanged.
 - `Resolve-MediaPath` (same file) is a client for the drive-registry API — it does no drive scanning or scoring itself. To change how drives are ranked or add a drive, edit the [drive-registry](../drive-registry) policy, not these scripts.
 - All scripts use identical logging via `Write-Log` with levels: `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`. In dlrom, `DEBUG` is hidden unless `--verbose`/`-Verbose` is passed, and `--quiet`/`-Quiet` hides routine `INFO`.
-- **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `Cdromance.ps1` (scraping: `Invoke-CdromanceSearch`, `Get-DownloadLinks`, `Select-DownloadLinks` — multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
+- **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `RetroGameTalk.ps1` (scraping: `Invoke-RgtSearch`, `Get-RgtDownloadLinks`, `Select-DownloadLinks` — multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
 

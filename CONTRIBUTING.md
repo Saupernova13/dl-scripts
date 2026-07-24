@@ -15,8 +15,8 @@ a same-named subfolder. The `.cmd` files only marshal arguments &mdash; all logi
 lib/*.ps1         ← shared (Initialize-DlConfig; Resolve-MediaPath = drive-registry API client)
 ```
 
-`dlrom` is further split into dot-sourced modules (`Logging.ps1`, `Cdromance.ps1`,
-`Downloaders.ps1`, `RomFiles.ps1`, `SteamRomManager.ps1`, `CfSolver.ps1`) with `Add-ROM.ps1` as a
+`dlrom` is further split into dot-sourced modules (`Logging.ps1`, `RetroGameTalk.ps1`,
+`Downloaders.ps1`, `RomFiles.ps1`, `SteamRomManager.ps1`) with `Add-ROM.ps1` as a
 thin orchestrator. New, self-contained concerns should follow that pattern rather than growing a
 single file.
 
@@ -39,9 +39,23 @@ single file.
 
 ## Testing changes
 
-There's no test framework; before opening a PR, please:
+`dlrom` has a [Pester](https://pester.dev) suite; the other tools do not yet. Before opening a PR:
 
-1. Parse-check every script you touched:
+1. Run the `dlrom` tests (needs Pester 5+:
+   `Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck`):
+   ```powershell
+   .\dlrom\tests\Invoke-Tests.ps1          # offline, ~2s - run this every time
+   .\dlrom\tests\Invoke-Tests.ps1 -Live    # also hits retrogametalk.com, ~90s
+   ```
+   The offline suite mocks exactly one thing, `Invoke-WebRequest`, and drives the real
+   functions against trimmed captures of real Repo pages in `dlrom/tests/fixtures/`. Add
+   cases there when you touch URL building, parsing or selection.
+
+   The `Live` suite is the one that catches the site changing underneath us - a renamed
+   category, a filter value that stops matching, a login appearing. Run it before shipping
+   anything that touches `RetroGameTalk.ps1`, and when `dlrom` starts finding nothing.
+
+2. Parse-check every script you touched (the tests only cover `dlrom`):
    ```powershell
    Get-ChildItem .\dlrom\*.ps1 | ForEach-Object {
        $e = $null
@@ -49,8 +63,8 @@ There's no test framework; before opening a PR, please:
        if ($e) { "$($_.Name):"; $e }
    }
    ```
-2. Run the tool end-to-end against a real query, and once with `--verbose` to confirm the detailed path.
-3. For `dlrom`, `--links-only` is a quick way to exercise search + Cloudflare bypass without downloading.
+3. Run the tool end-to-end against a real query, and once with `--verbose` to confirm the detailed path.
+4. For `dlrom`, `--links-only` is a quick way to exercise search + link reveal without downloading.
 
 ## Scope and legality
 

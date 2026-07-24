@@ -1,8 +1,13 @@
 # dlrom
 
-Searches [cdromance.org](https://cdromance.org) for a console game, downloads it, extracts
-the ROM, files it into the matching emulator folder, and (optionally) adds it to Steam via
+Searches [The Repo](https://retrogametalk.com/repo/) on RetroGameTalk for a console game,
+downloads it, extracts the ROM, files it into the matching emulator folder, and
+(optionally) adds it to Steam via
 [Steam ROM Manager](https://github.com/SteamGridDB/steam-rom-manager).
+
+> The catalogue formerly published at cdromance.org now lives at
+> `retrogametalk.com/repo/`, behind the forum. dlrom targets that address; the old
+> cdromance domain (and the Cloudflare bypass it needed) is gone.
 
 **Downloads run in the background by default.** dlrom searches, resolves the links, hands
 the transfer to a detached worker and returns a job id — usually within seconds. Nothing
@@ -21,9 +26,15 @@ dlrom --list [--json]
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the
 name contains spaces.
 
-**Platforms:** `ps2`, `ps1`/`psx`, `psp`, `vita`, `n64`, `gamecube`/`gc`, `nds`/`ds`,
-`gba`, `snes`, `nes`, `gbc`, `gb`, `dreamcast`/`dc`, `saturn`, `wii`, `3ds`
+**Platforms:** `ps2`, `ps1`/`psx`, `psp`, `eboot`, `vita`, `n64`, `gamecube`/`gc`, `wii`,
+`nds`/`ds`, `gba`, `snes`, `nes`, `fds`, `gbc`, `gb`, `dreamcast`/`dc`, `saturn`, `segacd`,
+`genesis`/`megadrive`, `32x`, `sms`/`mastersystem`, `gamegear`/`gg`, `pico`, `3do`, `amiga`,
+`arcade`, `msx`, `dos`/`msdos`, `windows`, `scummvm`, `neogeocd`, `ngp`/`ngpc`, `pc88`,
+`pc98`, `pcfx`, `tg16`/`pcengine`, `tgcd`, `wonderswan`/`ws`
 **Regions:** `usa`, `europe`, `japan`, `world`
+
+> The Repo carries no 3DS section, so the old `3ds` alias is gone. Everything else that
+> cdromance hosted came across, plus a good deal more.
 
 ## Headless / background use
 
@@ -35,7 +46,7 @@ $ dlrom "Gran Turismo 4" --platform ps2
 
 Download job spawned.  It will continue in the background.
   Job ID:   a3f9c21b8e04
-  Source:   cdromance
+  Source:   retrogametalk
   Title:    Gran Turismo 4
   Dest:     C:\Emulation\roms\ps2
   Log:      C:\Users\you\AppData\Local\dlScripts\jobs\rom\a3f9c21b8e04.log
@@ -52,7 +63,7 @@ dlrom --list                         # every recent job and its state
 ```
 
 What happens before the job is spawned is deliberately synchronous: the search and the
-link resolution. That way "no results on cdromance" is still an immediate answer rather
+link resolution. That way "no results on The Repo" is still an immediate answer rather
 than something you only discover by polling. Only the slow half is detached.
 
 ### Job states
@@ -70,7 +81,7 @@ than something you only discover by polling. Only the slow half is detached.
 | Field | Meaning |
 |---|---|
 | `id` | Job id. |
-| `kind` | `cdromance` or `torrent` (the PS2 archive fallback). |
+| `kind` | `retrogametalk` or `torrent` (the PS2 archive fallback). |
 | `status` / `step` / `progress` | State, current phase, and 0-100. |
 | `installedPaths` | Every file this job filed into the ROM folder. |
 | `handoff` | The `[HANDOFF]` line for PS2 — feed its serial to `dlps2tex`. |
@@ -122,7 +133,7 @@ dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 | `--interactive` | Pick from the numbered results list instead of auto-selecting. Implies a human is present: it is also the only mode allowed to prompt for a missing ROMs base. |
 | `--no-extract` | Keep the downloaded archive; do not extract or install. |
 | `--no-steam` | Skip the Steam ROM Manager step for this run. |
-| `--links-only` | Resolve and print the download links, then stop. Handy for confirming the Cloudflare bypass works. Always foreground — it downloads nothing. |
+| `--links-only` | Resolve and print the download links, then stop. Handy for confirming search and link reveal work. Always foreground — it downloads nothing. |
 | `--no-torrent` | Disable the PS2 torrent fallback (see below) for this run. |
 | `--torrent-pick N` | Force file index `N` from the PS2 archive torrent instead of auto-picking (use the index shown in the "closest titles" list). |
 | `--verbose` | Show detailed step-by-step debug output. |
@@ -146,13 +157,12 @@ not meant to be called by hand.
 
 ## PS2 torrent fallback
 
-cdromance is the only web source, so any cdromance failure (Cloudflare unsolved,
-FlareSolverr/Docker down, no search results, or no download links) used to end the run.
-For **PS2 games** there is now a second source: a local Redump PS2 archive `.torrent`
-that indexes the full set. When cdromance can't deliver and `--platform ps2` was given,
-dlrom looks the game up in that archive and pulls **only that one file** through
-qBittorrent's per-file selective download, then extracts and files it exactly like a
-cdromance download (and runs the Steam sync).
+The Repo is the only web source, so any failure there (site unreachable, rate-limited, no
+search results, or no download links) used to end the run. For **PS2 games** there is now
+a second source: a local Redump PS2 archive `.torrent` that indexes the full set. When The
+Repo can't deliver and `--platform ps2` was given, dlrom looks the game up in that archive
+and pulls **only that one file** through qBittorrent's per-file selective download, then
+extracts and files it exactly like a web download (and runs the Steam sync).
 
 The match is auto-picked with heuristics: every word of your query (numbers included) must
 appear in the title; demos/betas are rejected; edition/variant releases (FES, Undub,
@@ -185,7 +195,7 @@ replaced. The WebUI host is auto-detected from `qBittorrent.ini` (the `WebUI\Por
 
 ## Edition-aware selection and the texture handoff
 
-The cdromance auto-select prefers the **base** game over an edition (it picks "Persona 3", not
+The Repo auto-select prefers the **base** game over an edition (it picks "Persona 3", not
 "Persona 3 FES") and honours `--region`, but never returns nothing — if only an edition exists,
 it takes it. The torrent fallback applies the same preference more strictly (it *refuses* an
 unrequested edition, since the archive always has the base).
@@ -224,7 +234,7 @@ strategies, ticket IDs, RPC GIDs, slug mapping) is hidden.
 Steps 1-3 run in your terminal. Step 4 onward is where the time goes, so unless you passed
 `--wait` it is handed to a detached worker and the command returns.
 
-1. **Search** - queries cdromance.org and lists matching games.
+1. **Search** - queries The Repo and lists matching games.
 2. **Select** - auto-selects (preferring a USA result), or shows a numbered list with `--interactive`.
 3. **Resolve links** - reveals the download table (mirrors the site's "SHOW LINKS" button), then
    filters demos and prefers English/patched and USA variants. Multi-disc games queue one link per disc.
@@ -240,7 +250,7 @@ Steps 1-3 run in your terminal. Step 4 onward is where the time goes, so unless 
 8. **Report** - the result block (and the PS2 `[HANDOFF]` line) goes to the job log, and the
    outcome is stamped on the job for `--status`.
 
-The PS2 torrent fallback is backgrounded the same way: if cdromance dead-ends, dlrom spawns
+The PS2 torrent fallback is backgrounded the same way: if The Repo dead-ends, dlrom spawns
 a `torrent` job rather than pinning you for the multi-hour archive download.
 
 ### Worker mechanics
@@ -278,30 +288,32 @@ The base directory is resolved in priority order, so a local emulation library a
 4. **Manual prompt** - last resort.
 
 The ROM is filed under `<romsBase>\<console>`. Folder names match EmuDeck's layout
-(PS1 -> `psx`, GameCube -> `gc`, 3DS -> `n3ds`, Vita -> `psvita`) so both the emulators
+(PS1 -> `psx`, GameCube -> `gc`, Master System -> `mastersystem`, Vita -> `psvita`) so both the emulators
 and Steam ROM Manager's parsers find the files.
 
-## Cloudflare bypass
+## No account needed
 
-cdromance.org sits behind Cloudflare, which rejects plain script requests. dlrom gets past this
-automatically, with nothing shown on screen:
+The Repo advertises a members-only gate, but it is enforced entirely in the browser:
 
-1. **FlareSolverr** (headless Chromium in Docker) solves the challenge and mints a `cf_clearance`
-   cookie. dlrom `docker start`s (or creates) the container on demand; it never launches Docker Desktop
-   itself, so no window appears.
-2. **`cdr_http.py`** (Python + `curl_cffi`) replays that cookie while impersonating Chrome's
-   TLS/HTTP2 fingerprint, so Cloudflare accepts it and the link-reveal endpoint can be called with the
-   headers it needs. `curl_cffi` is auto-installed on first use.
-
-The session is cached under `%TEMP%\dlrom\cf_session.json` and reused across runs (the first run mints
-it, ~15-100s; later runs are instant). Only page scraping uses this path - the actual file download
-is a normal direct URL that isn't Cloudflare-gated.
-
-One-time container setup (dlrom will also do this for you on demand):
-
+```js
+if (!document.cookie.includes("xf_online=1")) { window.location.replace(".../login/") }
 ```
-docker run -d --name flaresolverr -p 8191:8191 --restart unless-stopped ghcr.io/flaresolverr/flaresolverr:latest
-```
+
+A script never executes that, so every step dlrom performs — browsing, searching, the
+"Show Links" reveal, and the file transfer itself — works anonymously. dlrom therefore has
+no login, stores no credentials, and needs no forum account.
+
+It keeps one cookie jar per run for a narrower reason: the reveal call must present the
+WordPress nonce scraped from the game page, and WordPress ties that nonce to the
+`PHPSESSID` it was minted under. If a reveal comes back empty, dlrom discards the jar and
+retries once with a freshly minted nonce.
+
+The resolved `dl*.retrogametalk.com/download.php?…&key=…` URLs carry their own
+authorisation in the query string and need no cookie at all, which is what lets Motrix, AB
+Download Manager and aria2c fetch them directly.
+
+No Docker, no FlareSolverr, no `curl_cffi`: unlike cdromance, retrogametalk.com serves
+plain HTTP clients without a Cloudflare challenge, so `Invoke-WebRequest` is enough.
 
 ## Steam ROM Manager integration
 
@@ -339,12 +351,6 @@ automatically with defaults on first run.
     "abPort": 15151,
     "abDownloadDir": "",
     "abTimeoutSec": 1800,
-    "cfSolverUrl": "http://localhost:8191/v1",
-    "cfSolverMode": "auto",
-    "cfAutoStart": true,
-    "cfContainerName": "flaresolverr",
-    "cfDockerImage": "ghcr.io/flaresolverr/flaresolverr:latest",
-    "cfSolverTimeoutMs": 120000,
     "jobKeepDays": 7
   }
 }
@@ -353,7 +359,7 @@ automatically with defaults on first run.
 | Key | Default | Description |
 |-----|---------|-------------|
 | `romsBase` | `C:\Emulation\roms` | ROMs base directory. Used when it exists; otherwise the drive picker runs. |
-| `tempDir` | `%TEMP%\dlrom` | Working directory for downloads, extraction, and the Cloudflare cache. |
+| `tempDir` | `%TEMP%\dlrom` | Working directory for downloads and extraction. |
 | `motrixRpcUrl` | `http://localhost:16800/jsonrpc` | Motrix aria2 RPC endpoint. |
 | `maxResults` | `10` | Max search results shown. |
 | `pollIntervalMs` | `2000` | Motrix progress poll interval. |
@@ -366,21 +372,37 @@ automatically with defaults on first run.
 | `abPort` | `15151` | AB Download Manager integration port. |
 | `abDownloadDir` | `""` | AB's download folder; blank autodetects `%USERPROFILE%\Downloads\ABDM`. |
 | `abTimeoutSec` | `1800` | How long to wait for an AB download before giving up. |
-| `cfSolverUrl` | `http://localhost:8191/v1` | FlareSolverr endpoint. |
-| `cfSolverMode` | `auto` | `auto` (solve only when blocked) / `always` / `never`. |
-| `cfAutoStart` | `true` | `docker start`/`run` the solver container on demand. |
-| `cfContainerName` | `flaresolverr` | Docker container name to start/create. |
-| `cfDockerImage` | `ghcr.io/...` | FlareSolverr image used when creating the container. |
-| `cfSolverTimeoutMs` | `120000` | Per-challenge solve budget. |
+| `rgtLogin` | `true` | Log in to RetroGameTalk before searching. `false` (or `--no-login`) browses as a guest. |
+| `rgtSessionCache` | `""` | Where the `xf_*` cookies are cached; blank uses `%LOCALAPPDATA%\dlScripts\rgt-session.json`. |
+
+Credentials are **not** config keys — see [Signing in to RetroGameTalk](#signing-in-to-retrogametalk).
 
 ## Requirements
 
 - **Windows** with PowerShell 5.1+ (ships with Windows 10/11).
-- **Docker Desktop** + **Python 3** on `PATH` - for the Cloudflare bypass.
 - **7-Zip** (`winget install 7zip.7zip`) - to extract `.7z`/`.rar` archives.
+- Optional: **Python 3** on `PATH` - only to rebuild the PS2 archive torrent index.
 - Optional: **Motrix** or **AB Download Manager** for faster, resumable downloads (any of the
   built-in fallbacks work without them).
 - Optional: **Steam ROM Manager** (or `srm-wrapper`) for the Steam step.
+
+## Tests
+
+```powershell
+.\dlrom\tests\Invoke-Tests.ps1          # offline suite, ~2s
+.\dlrom\tests\Invoke-Tests.ps1 -Live    # plus the live site, ~90s
+```
+
+Needs Pester 5+ (`Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck`).
+
+| Suite | What it covers |
+|-------|----------------|
+| `RetroGameTalk.Tests.ps1` | The real functions with only `Invoke-WebRequest` mocked: search URL construction for every platform and filter, result parsing, the nonce reveal POST, link extraction, demo/region/multi-disc selection, region detection, edition-aware picking, and failure classification. Fixtures in `tests/fixtures/` are trimmed captures of real Repo pages. |
+| `RetroGameTalk.Live.Tests.ps1` (tag `Live`) | The live catalogue: every platform slug has a category page, every search filter is accepted and does not leak other platforms, 14 known ROMs across the major consoles resolve to real `download.php?...&key=` URLs, and one of those URLs is range-fetched to prove it serves bytes with no cookies. |
+
+The live suite is what notices the site changing under us. A category rename, a filter value
+that silently stops matching, or a login appearing server-side all fail there and nowhere
+else &mdash; that class of breakage is what ended the cdromance integration.
 
 ## Module layout
 
@@ -392,20 +414,19 @@ automatically with defaults on first run.
 | `Jobs.ps1` | Job state on disk, the detached worker spawn, `--status` / `--list` rendering, pruning. |
 | `RomPipeline.ps1` | Download -> extract -> file -> Steam. Shared by the worker and `--wait`. |
 | `Logging.ps1` | `Write-Log` (verbosity-aware), progress lines, size/speed/label formatters. |
-| `Cdromance.ps1` | Platform tables, search, and download-link discovery/selection. |
+| `RetroGameTalk.ps1` | Platform tables, search, and download-link discovery/selection. |
 | `Downloaders.ps1` | Motrix/AB/aria2c/curl/BITS/WebClient backends and the dispatcher. |
 | `RomFiles.ps1` | Archive detection/extraction, ROM discovery, filename safety, install. |
 | `SteamRomManager.ps1` | Steam ROM Manager sync (srm-wrapper preferred, built-in fallback). |
-| `CfSolver.ps1` + `cdr_http.py` | Cloudflare bypass (FlareSolverr + curl_cffi). |
 | `QbitTorrent.ps1` | qBittorrent WebUI client used by the PS2 torrent fallback. |
 | `Ps2TorrentIndex.ps1` + `ps2_torrent.py` | PS2 archive torrent fallback: match, selective download, install. |
 | `Ps2Serial.ps1` | PS2 serial resolution and the result block / `[HANDOFF]` line. |
 
 ## Troubleshooting
 
-- **Search fails / Cloudflare block** - make sure Docker Desktop is running so FlareSolverr can
-  solve the challenge. Try `dlrom "..." --links-only --verbose`.
+- **Search fails** - try `dlrom "..." --links-only --verbose` to see the request and the reason.
 - **No download links found** - dlrom saves the page HTML to `%TEMP%\dlrom-debug.html` for inspection.
+  A `403` from the reveal endpoint would mean the site started gating The Repo server-side.
 - **AB download never finishes** - set `abDownloadDir` to AB's actual download folder; raise `abTimeoutSec`.
 - **ROM lands in `\roms` instead of a console folder** - pass `--platform`, or the platform couldn't be
   inferred from the search result.
