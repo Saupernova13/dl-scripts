@@ -246,13 +246,24 @@ Notes:
 
 Each download removes its temp archive and extraction directory in a `finally`, so nothing is left in `%TEMP%\dlrom` whether the download **succeeds or fails**. Only the installed ROM remains at its destination. `--no-extract` is the one exception: it intentionally keeps the downloaded archive (that's the deliverable) and does not extract. A PS Vita **Vita3K** build takes that same path automatically, since the emulator installs the `.zip` itself.
 
+A worker that is *killed* — reboot, task manager, power cut — never reaches that `finally`, so `dlrom --clean` exists to sweep up after it:
+
+```
+dlrom --clean             # temp files, abandoned partials (.aria2/.part/...), caches
+dlrom --clean --dry-run   # preview only
+dlrom --clean --all       # also clear finished job records and logs
+```
+
+It will **never** delete something a live job is downloading (identity comes from the active jobs' link labels, not from the file), and it does not touch your download manager's folder or `~\Downloads`. Details in [`dlrom/README.md`](dlrom/#housekeeping--clean).
+
 ### CMD wrapper behaviour
 
 - `%~dp0` is used to resolve the `.ps1` path relative to the CMD file, so the scripts work correctly regardless of which directory the user is in or where PATH points.
 - All wrappers invoke PowerShell with `-NoProfile`: the user's profile is irrelevant to these scripts, and loading it slows every run and prepends profile noise to stdout that a caller parsing output has to wade through.
+- **The `.cmd` files must keep CRLF line endings** (enforced by `.gitattributes`). `cmd.exe` resolves `goto` by seeking to a byte offset, and with LF-only endings that seek lands mid-line once the file is long enough — the label is then reported "not found". It fails positionally, so it surfaces as one subcommand breaking after an unrelated edit made the file longer.
 - `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]`, plus the job subcommands `--status <jobId> [--json]` and `--list [--json]`. The job subcommands are matched before `%1` is treated as a game name. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
+- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]`, plus the subcommands `--status <jobId> [--json]`, `--list [--json]` and `--clean [--all] [--dry-run] [--json]`. These are matched before `%1` is treated as a game name, since none of them carry one. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
 
 ### Background jobs (dlrom)
 

@@ -22,6 +22,7 @@ dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
                   [--json] [--verbose] [--quiet]
 dlrom --status <jobId> [--json]
 dlrom --list [--json]
+dlrom --clean [--all] [--dry-run] [--json]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the
@@ -134,6 +135,9 @@ dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 |------|--------|
 | `--status ID` | Show a job's progress, then exit. Reads the job file only — instant, even mid-download. |
 | `--list` | List recent jobs, newest first. |
+| `--clean` | Delete temp files, abandoned partials and caches. Never touches what a running job is using. See [Housekeeping](#housekeeping--clean). |
+| `--all` | With `--clean`: also delete finished job records and logs. |
+| `--dry-run` | With `--clean`: report what would be removed and delete nothing. |
 | `--wait` | Download in the foreground instead of spawning a worker. |
 | `--json` | Machine-readable output: the job record on spawn, or the full state for `--status` / `--list`. |
 | `--platform` | Restrict the search and choose the destination console folder. Omit it and the platform is inferred from the chosen result. |
@@ -161,10 +165,48 @@ The CMD wrapper passes these through; you can also call the script directly:
 
 .\dlrom\Add-ROM.ps1 -Status <jobId> [-Json]
 .\dlrom\Add-ROM.ps1 -ListJobs [-Json]
+.\dlrom\Add-ROM.ps1 -Clean [-All] [-DryRun] [-Json]
 ```
 
 `-JobFile <path>` is the worker's own entry point. It is spawned by `Start-DlromJob` and is
 not meant to be called by hand.
+
+## Housekeeping — `--clean`
+
+A ROM download that dies mid-transfer leaves its part-file behind; a crash between
+extraction and filing leaves an `extracted\` tree. Neither is ever revisited, and both are
+ROM-sized. `--clean` reclaims them:
+
+```
+dlrom --clean             # temp files, abandoned partials, caches
+dlrom --clean --dry-run   # show what would go, delete nothing
+dlrom --clean --all       # also clear finished job records and logs
+dlrom --clean --json      # machine-readable result
+```
+
+| Category | What goes |
+|---|---|
+| `work` | Everything in `tempDir` — interrupted downloads and `extracted\` working trees — plus `%TEMP%\dlrom-debug.html` and anything stranded in the PS2 torrent staging dir. |
+| `partial` | `.aria2` / `.part` / `.tmp` / … control files in the AB download folder. |
+| `cache` | `ps2-gamedb.json` (re-parsed from `GameIndex.yaml` on demand) and the obsolete `cf_session.json`. |
+| `job` | **Only with `--all`:** the finished job records and logs under `jobs\rom`. |
+
+**Nothing a live job owns is ever deleted.** A running worker's part-file is indistinguishable
+from an abandoned one by looking at the file, so identity comes from the job: every active
+(`pending`/`running`) job's link labels are excluded by name, and active job records are
+skipped even under `--all`. It says so when it skips something:
+
+```
+[INFO] Keeping Danganronpa V3 (USA)(PCSE01100)[NoNpDrm].zip - a running job is downloading it.
+[INFO] Keeping job 8a1cf5cfaa7e - it is still running.
+```
+
+`--clean` deliberately does **not** touch your download manager's folder (Motrix's, or
+`~\Downloads` generally). Those belong to the manager and to you; the AB watch folder is the
+one exception, because dlrom is what told AB to use it.
+
+Finished jobs are also pruned by age on every normal run (`jobKeepDays`, default 7).
+`--clean --all` is the on-demand version.
 
 ## PS Vita: emulator vs console builds
 
@@ -482,6 +524,7 @@ else &mdash; that class of breakage is what ended the cdromance integration.
 | `Common.ps1` | Dependency-free helpers: `Get-CfgValue`, `Get-UtcStamp`, `Get-DlScriptsDataDir`, `New-ShortId`, `Remove-EmptyDirectory`, region resolution/ranking. |
 | `Add-ROM.ps1` | Argument/config handling, the search + link resolution, and the worker entry point. |
 | `Jobs.ps1` | Job state on disk, the detached worker spawn, `--status` / `--list` rendering, pruning. |
+| `Clean.ps1` | `--clean`: finds temp files, abandoned partials, caches and job history, and refuses to remove anything a live job owns. |
 | `RomPipeline.ps1` | Download -> extract -> file -> Steam. Shared by the worker and `--wait`. |
 | `Logging.ps1` | `Write-Log` (verbosity-aware), progress lines, size/speed/label formatters. |
 | `RetroGameTalk.ps1` | Platform tables, search, and download-link discovery/selection. |
