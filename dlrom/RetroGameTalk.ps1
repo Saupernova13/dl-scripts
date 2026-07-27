@@ -427,18 +427,57 @@ function Invoke-RgtLinkReveal {
 
 # --- Selection ----------------------------------------------------------------
 
+# Narrow a Vita game's links to the build that will actually run on the target.
+#
+# Returns just the requested build when the page carries it. When it does not - a fair few
+# older titles are console-only, and a handful are unmarked entirely - it hands back
+# everything it was given rather than nothing, because a build you have to convert still
+# beats no download at all. That fallback is safe because the caller re-reads the winning
+# link's own marker (Get-VitaLinksBuild) instead of trusting the request, so a NoNpDrm dump
+# returned here is never mistaken for a Vita3K one.
+function Select-VitaLinks {
+    param([object[]]$Links, [string]$Build)
+
+    if ($Links.Count -eq 0) { return @() }
+    if (-not $Build -or $Build -eq $script:VITA_BUILD_ANY) { return @($Links) }
+
+    $wanted = @($Links | Where-Object { (Get-VitaLinkBuild $_.Label) -eq $Build })
+    if ($wanted.Count -gt 0) {
+        Write-Log "Vita: taking the $($script:VITA_BUILD_LABELS[$Build]) build." 'INFO'
+        return $wanted
+    }
+
+    Write-Log ("Vita: this game has no {0} build on The Repo - falling back to what it does offer." -f
+        $script:VITA_BUILD_LABELS[$Build]) 'WARN'
+    return @($Links)
+}
+
 # Narrow a list of candidate links down to what we actually want to grab:
-# skip demos, prefer English/USA, and keep one link per disc for multi-disc sets.
+# choose the Vita build, skip demos, prefer English/USA, and keep one link per disc for
+# multi-disc sets.
+#
+# -PlatformSlug is the Repo category the game came from; it only changes anything for Vita.
 function Select-DownloadLinks {
-    param([object[]]$Links)
+    param([object[]]$Links, [string]$PlatformSlug = '', [string]$VitaBuild = '')
 
     if ($Links.Count -eq 0) { return @() }
 
+    # Phase 0: Vita - the console and emulator builds are separate downloads of the same
+    # game, so that choice has to be made before any later preference gets a say (both
+    # builds carry identical region and language markers, so the phases below cannot tell
+    # them apart and would just take whichever the page listed first). It also drops the
+    # unmarked extras some pages carry - manuals, "AR Cards.zip" - which nothing else rejects.
+    $candidates = if ($PlatformSlug -eq $script:VITA_SLUG) {
+        @(Select-VitaLinks -Links $Links -Build $VitaBuild)
+    } else {
+        @($Links)
+    }
+
     # Phase 1: filter demos, betas and prototypes
-    $filtered = @($Links | Where-Object { $_.Label -notmatch $script:DEMO_RX })
+    $filtered = @($candidates | Where-Object { $_.Label -notmatch $script:DEMO_RX })
     if ($filtered.Count -eq 0) {
         Write-Log "All links appear to be demos; taking first link as fallback." 'WARN'
-        return @($Links[0])
+        return @($candidates[0])
     }
 
     # Phase 2: prefer English/patched/undub variants

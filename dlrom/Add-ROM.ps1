@@ -29,6 +29,9 @@ param(
     [string]$Region = "",
     [string]$Sort = "",
     [string]$Destination = "",
+    # PS Vita only: which of the two builds to take - 'emu' (Vita3K) or 'console'
+    # (NoNpDrm). Blank uses the [rom].vitaBuild config default, which is 'emu'.
+    [string]$VitaBuild = "",
     [int]$MaxResults = 0,
     [switch]$Interactive,
     [switch]$NoExtract,
@@ -91,6 +94,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     abPort          = $script:DEFAULT_AB_PORT   # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
+    vitaBuild       = $script:VITA_BUILD_DEFAULT  # PS Vita: 'emu' (Vita3K) or 'console' (NoNpDrm)
     # PS2 torrent fallback: when The Repo + direct sources fail for a PS2 game,
     # pull just that one ROM from the local Redump PS2 archive torrent via qBittorrent.
     ps2TorrentEnabled    = $true
@@ -190,6 +194,26 @@ $downloaderLabel = $script:DOWNLOADER_LABELS[$script:DOWNLOADER]
 if (-not $downloaderLabel) { $downloaderLabel = $script:DOWNLOADER }
 if ($script:DOWNLOADER -eq $script:DL_AB) { $downloaderLabel += " (port $script:AB_PORT)" }
 Write-Log "Downloader: $downloaderLabel" 'INFO'
+
+# --- PS Vita build preference -------------------------------------------------
+# Vita games are published twice (NoNpDrm for a modded console, Vita3K for the emulator)
+# and the two will not run on each other's target. --vita decides; the config sets the
+# house default; emulation wins when neither says otherwise.
+$requestedVitaBuild = Resolve-VitaBuild $VitaBuild
+if ($VitaBuild -and -not $requestedVitaBuild) {
+    Write-Log "Unknown --vita value '$VitaBuild' (expected emu, console or any) - ignoring it." 'WARN'
+}
+if (-not $requestedVitaBuild) {
+    $requestedVitaBuild = Resolve-VitaBuild (Get-CfgValue 'vitaBuild' $script:VITA_BUILD_DEFAULT)
+}
+if (-not $requestedVitaBuild) { $requestedVitaBuild = $script:VITA_BUILD_DEFAULT }
+
+# --vita is only meaningful for a Vita game, so asking for a build is also a statement of
+# which catalogue to search. An explicit --platform still wins.
+if ($VitaBuild -and -not $Platform) {
+    $Platform = $script:VITA_SLUG
+    Write-Log "--vita given without --platform: searching the Vita catalogue." 'INFO'
+}
 
 # Resolve platform slug
 $resolvedSlug = ""
@@ -318,6 +342,11 @@ if ($Interactive -and $displayResults.Count -gt 1) {
     Write-Log "Auto-selecting: $($selected.Title)" 'INFO'
 }
 
+# The platform actually in play: what --platform named, else the category the chosen result
+# is filed under. Resolved here rather than with the destination further down because link
+# selection needs it first - on Vita it decides which of the two builds to take.
+$effectiveSlug = if ($resolvedSlug) { $resolvedSlug } else { [string]$selected.Platform }
+
 # Get download links (reveals the "Show Links" table)
 Write-Log "Fetching download links for: $($selected.Title)" 'DEBUG'
 $allLinks = @(Get-RgtDownloadLinks -GamePageUrl $selected.Url)
@@ -334,11 +363,31 @@ if ($allLinks.Count -eq 0) {
 }
 
 Write-Log "Found $($allLinks.Count) raw link(s) on page." 'DEBUG'
-$selectedLinks = @(Select-DownloadLinks -Links $allLinks)
+$selectedLinks = @(Select-DownloadLinks -Links $allLinks -PlatformSlug $effectiveSlug -VitaBuild $requestedVitaBuild)
 
 if ($selectedLinks.Count -eq 0) {
     Write-Log "No suitable links after filtering (demos removed, nothing left)." 'ERROR'
     Invoke-RgtFallbackOrExit -ReasonCode 'no-suitable-links' -ReasonText $null -ExitCode 1
+}
+
+# What we actually ended up with. Read from the winning link rather than from what was
+# requested: Select-VitaLinks falls back to the other build when the requested one does not
+# exist, and installing a NoNpDrm dump as if it were a Vita3K repack would be wrong.
+$installedVitaBuild = ''
+$keepArchive        = [bool]$NoExtract
+if ($effectiveSlug -eq $script:VITA_SLUG) {
+    $installedVitaBuild = Get-VitaLinksBuild -Links $selectedLinks
+    if ($installedVitaBuild) {
+        Write-Log "Vita build: $($script:VITA_BUILD_LABELS[$installedVitaBuild])" 'INFO'
+    } else {
+        Write-Log "Vita build: unmarked release - installing it as-is." 'INFO'
+    }
+    # Vita3K installs the archive itself; unpacking it here would produce a folder the
+    # emulator cannot import. The console build is a normal archive and still extracts.
+    if ($installedVitaBuild -eq $script:VITA_BUILD_EMU) {
+        $keepArchive = $true
+        Write-Log "Keeping the archive intact - Vita3K installs the .zip as it is." 'INFO'
+    }
 }
 
 Write-Log "Will download $($selectedLinks.Count) file(s): $(($selectedLinks | ForEach-Object { $_.Label }) -join ', ')" 'INFO'
@@ -351,15 +400,13 @@ if ($LinksOnly) {
     exit 0
 }
 
-# Resolve ROM destination
-$platformFolder = if ($resolvedSlug -and $PLATFORM_FOLDERS.ContainsKey($resolvedSlug)) {
-    $PLATFORM_FOLDERS[$resolvedSlug]
+# Resolve ROM destination. $effectiveSlug already folds in the platform detected from the
+# chosen search result, so a bare `dlrom "Game"` still lands in the right console folder
+# rather than \roms.
+$platformFolder = if ($effectiveSlug -and $PLATFORM_FOLDERS.ContainsKey($effectiveSlug)) {
+    $PLATFORM_FOLDERS[$effectiveSlug]
 } elseif ($Platform) {
     $Platform.ToLower()
-} elseif ($selected.Platform -and $PLATFORM_FOLDERS.ContainsKey($selected.Platform)) {
-    # No --platform given: use the platform detected from the chosen search result
-    # so a bare `dlrom "Game"` still lands in the right console folder, not \roms.
-    $PLATFORM_FOLDERS[$selected.Platform]
 } else {
     "roms"
 }
@@ -407,8 +454,8 @@ $resultRegion = if ($Region) { $Region } else { @(Get-RgtRegions $selected.Url $
 
 $job = New-DlromJob -Kind $script:JOB_KIND_WEB -Query $Query -Title $selected.Title `
         -Platform $platformFolder -Region $resultRegion -RomsBase $romsBase -RomDest $romDest `
-        -Links $selectedLinks -SourceUrl $selected.Url `
-        -NoExtract:$NoExtract -NoSteam:$NoSteam
+        -Links $selectedLinks -SourceUrl $selected.Url -VitaBuild $installedVitaBuild `
+        -NoExtract:$keepArchive -NoSteam:$NoSteam
 
 # Default: hand the download to a detached worker and return now. ROM downloads run for
 # minutes to hours, and holding the caller (usually an agent) hostage for that is the

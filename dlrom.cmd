@@ -1,6 +1,6 @@
 @echo off
 REM dlrom - Download ROMs from RetroGameTalk's Repo and install them to your emulator folders
-REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
 REM        dlrom --status <jobId> [--json]
 REM        dlrom --list [--json]
 REM
@@ -17,9 +17,15 @@ REM            amiga, arcade, msx, dos, windows, scummvm, neogeocd, ngp, pc88, p
 REM            tg16, tgcd, wonderswan
 REM Regions:   usa, europe, japan, world
 REM
+REM PS Vita games are published twice - [NoNpDrm] for a modded console and [Vita3K] for the
+REM emulator. dlrom takes the Vita3K build by default and leaves the archive zipped (that is
+REM what the emulator imports). Use --vita console for a real Vita.
+REM
 REM Examples:
 REM   dlrom "Rayman 2"
 REM   dlrom "Final Fantasy VII" --platform ps1
+REM   dlrom "Danganronpa V3" --platform vita             (Vita3K build)
+REM   dlrom "Danganronpa V3" --platform vita --vita console
 REM   dlrom --status a3f9c21b8e04
 REM   dlrom --list
 
@@ -38,7 +44,7 @@ if /i "%~1"=="--status" goto :job_status
 if /i "%~1"=="-status"  goto :job_status
 
 if "%~1"=="" (
-    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
     echo        dlrom --status ^<jobId^> [--json]
     echo        dlrom --list [--json]
     echo.
@@ -50,6 +56,12 @@ if "%~1"=="" (
     echo            pcfx, tg16, tgcd, wonderswan
     echo Regions:   usa, europe, japan, world
     echo.
+    echo PS Vita games ship as two builds: [Vita3K] for the emulator and [NoNpDrm] for a
+    echo modded console. dlrom takes Vita3K by default and leaves that archive zipped.
+    echo.
+    echo   --vita emu     PS Vita: take the Vita3K build - the default, kept as a .zip
+    echo   --vita console PS Vita: take the NoNpDrm build for real hardware
+    echo   --vita any     PS Vita: no preference, take whatever is listed first
     echo   --wait         stay in the foreground until the ROM is installed
     echo   --status ID    show progress for a job
     echo   --list         list recent jobs
@@ -67,6 +79,8 @@ if "%~1"=="" (
     echo   dlrom "Rayman 2"
     echo   dlrom "Final Fantasy VII" --platform ps1
     echo   dlrom "Metal Slug" --platform ps2 --region usa
+    echo   dlrom "Danganronpa V3" --platform vita
+    echo   dlrom "Danganronpa V3" --platform vita --vita console
     echo   dlrom --status a3f9c21b8e04
     exit /b 1
 )
@@ -74,6 +88,7 @@ if "%~1"=="" (
 set "QUERY=%~1"
 set "PLATFORM="
 set "REGION="
+set "VITA="
 set "SORT="
 set "DEST="
 set "INTERACTIVE="
@@ -92,6 +107,7 @@ shift
 if "%~1"=="" goto :build_cmd
 if /i "%~1"=="--platform"     goto :set_platform
 if /i "%~1"=="--region"       goto :set_region
+if /i "%~1"=="--vita"         goto :set_vita
 if /i "%~1"=="--sort"         goto :set_sort
 if /i "%~1"=="--dest"         goto :set_dest
 if /i "%~1"=="--torrent-pick" goto :set_torrent_pick
@@ -116,6 +132,11 @@ shift
 set "REGION=%~1"
 goto :shift_args
 
+:set_vita
+shift
+set "VITA=%~1"
+goto :shift_args
+
 :set_sort
 shift
 set "SORT=%~1"
@@ -135,6 +156,7 @@ goto :shift_args
 set "PS_ARGS=-Query "%QUERY%""
 if defined PLATFORM    set "PS_ARGS=%PS_ARGS% -Platform "%PLATFORM%""
 if defined REGION      set "PS_ARGS=%PS_ARGS% -Region "%REGION%""
+if defined VITA        set "PS_ARGS=%PS_ARGS% -VitaBuild "%VITA%""
 if defined SORT        set "PS_ARGS=%PS_ARGS% -Sort "%SORT%""
 if defined DEST        set "PS_ARGS=%PS_ARGS% -Destination "%DEST%""
 if defined INTERACTIVE set "PS_ARGS=%PS_ARGS% -Interactive"

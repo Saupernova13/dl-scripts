@@ -145,6 +145,48 @@ $script:HACK_RX = '(?i)(\bhack\b|\bmod\b|\bpatch\b|controllable|-hack)'
 # Language markers worth preferring in a filename.
 $script:ENGLISH_RX = '(?i)\b(english|undub|undubbed|patched|dub)\b|\(eng\)'
 
+# --- PS Vita builds -----------------------------------------------------------
+#
+# The Repo publishes most Vita titles TWICE, and the two files are not interchangeable:
+#
+#   [NoNpDrm]  a dump for real hardware, installed on a modded Vita via the NoNpDrm plugin
+#   [Vita3K]   the same game repacked for the Vita3K emulator
+#
+# Picking the wrong one fails silently: it downloads and files perfectly well, and then
+# simply will not run. No other platform here has that split, which is why Vita gets its
+# own vocabulary rather than another entry in the generic preference lists.
+#
+# The markers ride in brackets or parentheses, in whatever casing the uploader felt like -
+# the live catalogue currently carries [vita3k], [Vita3k], (Vita3k), [NoNpDrm], [NoNpDRM],
+# (NoNPDrm) and [nonpdrm] - so both patterns are case-insensitive and tolerate the internal
+# spacing. Order on the page is not stable either (either build can come first), so nothing
+# may infer the build from position.
+$script:VITA_SLUG = 'vita'
+
+$script:VITA_BUILD_EMU     = 'emu'       # Vita3K
+$script:VITA_BUILD_CONSOLE = 'console'   # NoNpDrm / MaiDump, real hardware
+$script:VITA_BUILD_ANY     = 'any'       # no preference - fall through to the usual rules
+
+# Emulation is the common case, so an unqualified Vita download prefers Vita3K.
+$script:VITA_BUILD_DEFAULT = $script:VITA_BUILD_EMU
+
+$script:VITA_EMU_RX     = '(?i)\bvita\s*3\s*k\b'
+$script:VITA_CONSOLE_RX = '(?i)\bno\s*np\s*drm\b|\bmai\s*dump\b'
+
+# --vita synonyms -> canonical build. Same shape as REGION_ALIASES.
+$script:VITA_BUILD_ALIASES = @(
+    @{ Code = 'emu';     Rx = '^(emu|emulator|vita3k|vita-3k|3k)$'                     }
+    @{ Code = 'console'; Rx = '^(console|hardware|hw|real|handheld|nonpdrm|no-npdrm)$' }
+    @{ Code = 'any';     Rx = '^(any|both|either)$'                                    }
+)
+
+# The single source of each build's human-readable name, for logs and the result block.
+$script:VITA_BUILD_LABELS = @{
+    'emu'     = 'Vita3K (emulator)'
+    'console' = 'NoNpDrm (console)'
+    'any'     = 'no preference'
+}
+
 # --- Regions ------------------------------------------------------------------
 
 # Canonical region codes. Order is the fallback preference when the caller did not ask

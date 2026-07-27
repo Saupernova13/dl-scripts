@@ -121,7 +121,8 @@ function Invoke-RomPipeline {
     # Report what was installed and, for PS2, the dlps2tex command for matching textures
     # (same version). An agent can read the [HANDOFF] line -- or the job's handoff field.
     $handoff = Write-DlromResult -Title $Job.title -Platform $Job.platform -Region $Job.region `
-                   -Source $Job.kind -InstalledPath (@($Job.installedPaths)[-1]) -Cfg $Cfg
+                   -Source $Job.kind -InstalledPath (@($Job.installedPaths)[-1]) `
+                   -Build ([string]$Job.vitaBuild) -Cfg $Cfg
     if ($handoff) { $Job.handoff = $handoff }
 
     return $true

@@ -74,6 +74,7 @@ function New-DlromJob {
         [array] $Links,
         [string]$SourceUrl,
         [string]$Reason,        # why the torrent fallback fired (torrent jobs only)
+        [string]$VitaBuild = '', # 'emu' | 'console' for a Vita download; '' everywhere else
         [int]   $TorrentPick = -1,
         [bool]  $NoExtract = $false,
         [bool]  $NoSteam = $false
@@ -95,6 +96,7 @@ function New-DlromJob {
         links          = @($Links)
         sourceUrl      = $SourceUrl
         reason         = $Reason
+        vitaBuild      = $VitaBuild
         torrentPick    = $TorrentPick
         noExtract      = $NoExtract
         noSteam        = $NoSteam
@@ -208,6 +210,12 @@ function Show-DlromJobStatus {
     Write-Host "  Query:      $($job.query)"
     if ($job.title)    { Write-Host "  Title:      $($job.title)" }
     if ($job.platform) { Write-Host "  Platform:   $($job.platform)" }
+    if ($job.vitaBuild) {
+        $buildLabel = if ($script:VITA_BUILD_LABELS.ContainsKey($job.vitaBuild)) {
+            $script:VITA_BUILD_LABELS[$job.vitaBuild]
+        } else { $job.vitaBuild }
+        Write-Host "  Build:      $buildLabel"
+    }
     if ($job.reason)   { Write-Host "  Fallback:   $($job.reason)" }
     Write-Host "  Created:    $($job.createdAt)"
     if ($job.startedAt)   { Write-Host "  Started:    $($job.startedAt)" }

@@ -110,3 +110,42 @@ function Test-Phrase {
     param([string]$NormText, [string]$Phrase)
     return ($NormText -match ('\b' + [regex]::Escape($Phrase) + '\b'))
 }
+
+# --- PS Vita build helpers ----------------------------------------------------
+# The Repo ships most Vita games as both a console (NoNpDrm) and an emulator (Vita3K)
+# build. These turn the two inputs that mention them - a --vita argument and a download
+# filename - into the one vocabulary defined in Constants.ps1, so the link filter, the
+# extract-or-keep decision and the result block cannot disagree about what was downloaded.
+
+# A --vita argument's synonym -> canonical build ('' when unrecognised or absent).
+function Resolve-VitaBuild {
+    param([string]$Build)
+    $b = ([string]$Build).Trim().ToLower()
+    if (-not $b) { return '' }
+    foreach ($alias in $script:VITA_BUILD_ALIASES) {
+        if ($b -match $alias.Rx) { return $alias.Code }
+    }
+    return ''
+}
+
+# Which build a download filename advertises, or '' when it says nothing - an unmarked
+# release, or one of the bonus files a page sometimes carries alongside the game
+# ("AR Cards.zip"). Never guesses: an unmarked file is unmarked.
+function Get-VitaLinkBuild {
+    param([string]$Label)
+    $l = [string]$Label
+    if ($l -match $script:VITA_EMU_RX)     { return $script:VITA_BUILD_EMU }
+    if ($l -match $script:VITA_CONSOLE_RX) { return $script:VITA_BUILD_CONSOLE }
+    return ''
+}
+
+# The build a whole set of chosen links represents, or '' when they are unmarked or
+# disagree. Callers act on this rather than on what was requested, because link selection
+# is allowed to fall back to the other build when the requested one does not exist.
+function Get-VitaLinksBuild {
+    param([object[]]$Links)
+    $builds = @($Links | ForEach-Object { Get-VitaLinkBuild $_.Label } |
+                Where-Object { $_ } | Select-Object -Unique)
+    if ($builds.Count -eq 1) { return $builds[0] }
+    return ''
+}

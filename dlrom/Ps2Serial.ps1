@@ -127,7 +127,8 @@ function Resolve-Ps2Serial {
 # Prints the human-readable result block and returns the machine-readable [HANDOFF] line
 # (empty for non-PS2), so a caller can stash it on the job for --status/--json to serve.
 function Write-DlromResult {
-    param([string]$Title, [string]$Platform, [string]$Region = '', [string]$Source = '', [string]$InstalledPath = '', $Cfg)
+    param([string]$Title, [string]$Platform, [string]$Region = '', [string]$Source = '',
+          [string]$InstalledPath = '', [string]$Build = '', $Cfg)
 
     $handoffLine = ''
     Write-Host ""
@@ -136,8 +137,19 @@ function Write-DlromResult {
     Write-Host "  game:     $Title"
     Write-Host "  platform: $Platform"
     if ($Region)        { Write-Host "  region:   $Region" }
+    if ($Build) {
+        $buildLabel = if ($script:VITA_BUILD_LABELS.ContainsKey($Build)) { $script:VITA_BUILD_LABELS[$Build] } else { $Build }
+        Write-Host "  build:    $buildLabel"
+    }
     if ($Source)        { Write-Host "  source:   $Source" }
     if ($InstalledPath) { Write-Host "  file:     $InstalledPath" }
+
+    # A Vita3K download is filed as the archive it arrived as, which looks like a mistake
+    # unless you know the emulator wants it that way.
+    if ($Build -eq $script:VITA_BUILD_EMU) {
+        Write-Host ""
+        Write-Host "Vita3K build - left zipped on purpose. Install it from Vita3K itself." -ForegroundColor Cyan
+    }
 
     if ($Platform -eq 'ps2') {
         $serial = ''
