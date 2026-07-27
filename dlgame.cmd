@@ -20,11 +20,28 @@ if not exist "%SCRIPT%" (
 )
 
 setlocal EnableDelayedExpansion
-set "GAME=%~1"
-set "DEST=%~2"
 
-if "%DEST%"=="" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%GAME%"
+REM Arg 2 onward: a bare word is the destination, anything starting with "-" is a
+REM flag for the PowerShell script (-DryRun, -Interactive, -MaxResults N, ...).
+REM Without this split, "dlgame \"Game Name\" -DryRun" passed -DryRun as the
+REM destination and PowerShell rejected it as a missing -Destination argument.
+set "GAME=%~1"
+set "DEST="
+set "FLAGS="
+
+:parse_args
+shift
+if "%~1"=="" goto :run
+set "ARG=%~1"
+if "!ARG:~0,1!"=="-" (
+    set "FLAGS=!FLAGS! %1"
 ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%GAME%" -Destination "%DEST%"
+    if not defined DEST set "DEST=%~1"
 )
+goto :parse_args
+
+:run
+set "PS_ARGS=-Query "%GAME%""
+if defined DEST set "PS_ARGS=!PS_ARGS! -Destination "%DEST%""
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" !PS_ARGS!!FLAGS!
+exit /b %ERRORLEVEL%

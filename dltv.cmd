@@ -20,11 +20,28 @@ if not exist "%SCRIPT%" (
 )
 
 setlocal EnableDelayedExpansion
-set "SHOW=%~1"
-set "DEST=%~2"
 
-if "%DEST%"=="" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%SHOW%"
+REM Arg 2 onward: a bare word is the destination, anything starting with "-" is a
+REM flag for the PowerShell script (-DryRun, -Interactive, -MaxResults N, ...).
+REM Without this split, "dltv \"Show Name\" -DryRun" passed -DryRun as the
+REM destination and PowerShell rejected it as a missing -Destination argument.
+set "SHOW=%~1"
+set "DEST="
+set "FLAGS="
+
+:parse_args
+shift
+if "%~1"=="" goto :run
+set "ARG=%~1"
+if "!ARG:~0,1!"=="-" (
+    set "FLAGS=!FLAGS! %1"
 ) else (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" -Query "%SHOW%" -Destination "%DEST%"
+    if not defined DEST set "DEST=%~1"
 )
+goto :parse_args
+
+:run
+set "PS_ARGS=-Query "%SHOW%""
+if defined DEST set "PS_ARGS=!PS_ARGS! -Destination "%DEST%""
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" !PS_ARGS!!FLAGS!
+exit /b %ERRORLEVEL%
