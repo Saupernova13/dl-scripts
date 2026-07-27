@@ -16,9 +16,10 @@ about your terminal (or your agent) has to stay attached to a multi-GB ROM downl
 ## Command
 
 ```
-dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH]
-                  [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only]
-                  [--no-torrent] [--torrent-pick N] [--json] [--verbose] [--quiet]
+dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
+                  [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract]
+                  [--no-steam] [--links-only] [--no-torrent] [--torrent-pick N]
+                  [--json] [--verbose] [--quiet]
 dlrom --status <jobId> [--json]
 dlrom --list [--json]
 ```
@@ -35,6 +36,11 @@ name contains spaces.
 
 > The Repo carries no 3DS section, so the old `3ds` alias is gone. Everything else that
 > cdromance hosted came across, plus a good deal more.
+
+> **PS Vita is published twice** — a `[Vita3K]` build for the emulator and a `[NoNpDrm]`
+> one for a modded console. dlrom takes the emulator build by default and leaves it
+> zipped; `--vita console` gets the hardware dump. See
+> [PS Vita: emulator vs console builds](#ps-vita-emulator-vs-console-builds).
 
 ## Headless / background use
 
@@ -84,6 +90,8 @@ than something you only discover by polling. Only the slow half is detached.
 | `kind` | `retrogametalk` or `torrent` (the PS2 archive fallback). |
 | `status` / `step` / `progress` | State, current phase, and 0-100. |
 | `installedPaths` | Every file this job filed into the ROM folder. |
+| `vitaBuild` | `emu` or `console` for a PS Vita download — which build was actually taken. Empty on every other platform. |
+| `noExtract` | Whether the download was filed as-is. Set automatically for a Vita3K build. |
 | `handoff` | The `[HANDOFF]` line for PS2 — feed its serial to `dlps2tex`. |
 | `logFile` | Full worker log. |
 | `message` | Last human-readable note, and the failure reason when `failed`. |
@@ -110,6 +118,8 @@ do not use it from an agent.
 dlrom "Rayman 2"                             # spawns a job, returns a job id
 dlrom "Final Fantasy VII" --platform ps1
 dlrom "Metal Slug" --platform ps2 --region usa
+dlrom "Danganronpa V3" --platform vita       # Vita3K build, left zipped for the emulator
+dlrom "Persona 4 Golden" --vita console      # NoNpDrm build, for a modded Vita
 dlrom --status a3f9c21b8e04                  # how is it going?
 dlrom --list                                 # every recent job
 dlrom "Gran Turismo 4" --platform ps2 --wait # block until installed
@@ -128,6 +138,7 @@ dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 | `--json` | Machine-readable output: the job record on spawn, or the full state for `--status` / `--list`. |
 | `--platform` | Restrict the search and choose the destination console folder. Omit it and the platform is inferred from the chosen result. |
 | `--region` | Pass a region filter to the search (`usa`, `europe`, `japan`, `world`). |
+| `--vita emu\|console\|any` | **PS Vita only.** Which of the two builds to take: `emu` = Vita3K (the default, kept zipped), `console` = NoNpDrm for real hardware, `any` = no preference. Ignored on every other platform. Given without `--platform`, it also searches the Vita catalogue. |
 | `--sort` | Pass a sort order to the search. |
 | `--dest PATH` | Per-run override of the ROMs base directory (wins over config and the drive picker). |
 | `--interactive` | Pick from the numbered results list instead of auto-selecting. Implies a human is present: it is also the only mode allowed to prompt for a missing ROMs base. |
@@ -144,7 +155,7 @@ dlrom "Spyro" --platform ps1 --verbose       # show every internal step
 The CMD wrapper passes these through; you can also call the script directly:
 
 ```powershell
-.\dlrom\Add-ROM.ps1 -Query "Zelda" [-Platform n64] [-Region usa] [-Sort ...] `
+.\dlrom\Add-ROM.ps1 -Query "Zelda" [-Platform n64] [-Region usa] [-VitaBuild emu] [-Sort ...] `
     [-Destination "D:\roms"] [-MaxResults 10] [-Wait] [-Interactive] [-NoExtract] `
     [-NoSteam] [-LinksOnly] [-NoTorrent] [-TorrentPick N] [-Json] [-Verbose] [-Quiet]
 
@@ -154,6 +165,59 @@ The CMD wrapper passes these through; you can also call the script directly:
 
 `-JobFile <path>` is the worker's own entry point. It is spawned by `Start-DlromJob` and is
 not meant to be called by hand.
+
+## PS Vita: emulator vs console builds
+
+The Vita is the one platform here whose games are published **twice**, and the two files
+are not interchangeable:
+
+| Marker in the filename | For | dlrom installs it |
+|---|---|---|
+| `[Vita3K]` | the [Vita3K](https://vita3k.org/) emulator | **as the downloaded `.zip`, never extracted** |
+| `[NoNpDrm]` | a modded Vita, via the NoNpDrm plugin | extracted like any other ROM |
+
+Picking the wrong one fails *silently* — it downloads, files and syncs to Steam perfectly
+well, and then simply will not run. So dlrom chooses deliberately rather than taking
+whatever the page listed first (which is not even stable: the catalogue puts either build
+first depending on the game).
+
+**Emulation is the default.** A Vita download takes the `[Vita3K]` build unless told
+otherwise:
+
+```
+dlrom "Danganronpa V3" --platform vita                    # Vita3K build (default)
+dlrom "Danganronpa V3" --platform vita --vita console     # NoNpDrm build, for real hardware
+dlrom "Danganronpa V3" --vita emu                         # --platform vita is implied
+dlrom "Danganronpa V3"                                    # also Vita3K: the platform comes
+                                                          # from the search result
+```
+
+`--vita` accepts `emu` (aliases `emulator`, `vita3k`, `3k`), `console` (`hardware`, `hw`,
+`real`, `nonpdrm`), or `any` to switch the preference off entirely. Set `[rom].vitaBuild`
+in the config to change the default for every run.
+
+### Why the archive is left zipped
+
+Vita3K imports the `.zip` itself — its contents are an `app/<TITLEID>/…` tree, not a ROM
+file. Unpacking it here would leave a folder the emulator cannot install, so a Vita3K
+download is filed into `<romsBase>\psvita` exactly as it arrived. This is automatic; you do
+not need `--no-extract`. The console build is a normal archive and still extracts as usual.
+
+### When a game only has one build
+
+Plenty of older titles are console-only, a handful carry no marker at all, and some pages
+also list bonus files (`AR Cards.zip`) that are not the game. dlrom drops the extras, and
+if the build you asked for does not exist it warns and takes what does — a build you have
+to convert beats no download:
+
+```
+[WARN] Vita: this game has no Vita3K (emulator) build on The Repo - falling back to what it does offer.
+[INFO] Vita build: NoNpDrm (console)
+```
+
+The zipped-archive rule follows the **file that was actually chosen**, not the request, so
+a NoNpDrm dump picked up by that fallback is still extracted normally. Which build landed
+is recorded on the job (`vitaBuild` in `--status --json`) and printed in the result block.
 
 ## PS2 torrent fallback
 
@@ -237,14 +301,15 @@ Steps 1-3 run in your terminal. Step 4 onward is where the time goes, so unless 
 1. **Search** - queries The Repo and lists matching games.
 2. **Select** - auto-selects (preferring a USA result), or shows a numbered list with `--interactive`.
 3. **Resolve links** - reveals the download table (mirrors the site's "SHOW LINKS" button), then
-   filters demos and prefers English/patched and USA variants. Multi-disc games queue one link per disc.
+   picks the Vita build (Vita3K or NoNpDrm — Vita only), filters demos and prefers English/patched
+   and USA variants. Multi-disc games queue one link per disc.
 
    *--- a job is created here and, by default, a worker takes over from this point ---*
 
 4. **Download** - via the best available backend (see below).
-5. **Extract & install** - real archives are extracted with 7-Zip; a raw ROM download is filed as-is.
-   The final file is sanitised (apostrophes etc. removed so Steam launch commands don't break) and moved
-   into `<romsBase>\<console>`.
+5. **Extract & install** - real archives are extracted with 7-Zip; a raw ROM download, and a
+   Vita3K build, are filed as-is. The final file is sanitised (apostrophes etc. removed so Steam
+   launch commands don't break) and moved into `<romsBase>\<console>`.
 6. **Steam sync** - adds the ROM to Steam via Steam ROM Manager unless `--no-steam` is set.
 7. **Cleanup** - the temp archive and extraction folder are removed whether the run succeeds or fails.
 8. **Report** - the result block (and the PS2 `[HANDOFF]` line) goes to the job log, and the
@@ -351,6 +416,7 @@ automatically with defaults on first run.
     "abPort": 15151,
     "abDownloadDir": "",
     "abTimeoutSec": 1800,
+    "vitaBuild": "emu",
     "jobKeepDays": 7
   }
 }
@@ -372,6 +438,7 @@ automatically with defaults on first run.
 | `abPort` | `15151` | AB Download Manager integration port. |
 | `abDownloadDir` | `""` | AB's download folder; blank autodetects `%USERPROFILE%\Downloads\ABDM`. |
 | `abTimeoutSec` | `1800` | How long to wait for an AB download before giving up. |
+| `vitaBuild` | `emu` | Which PS Vita build to prefer: `emu` (Vita3K) or `console` (NoNpDrm). `--vita` overrides it per run. |
 | `rgtLogin` | `true` | Log in to RetroGameTalk before searching. `false` (or `--no-login`) browses as a guest. |
 | `rgtSessionCache` | `""` | Where the `xf_*` cookies are cached; blank uses `%LOCALAPPDATA%\dlScripts\rgt-session.json`. |
 
@@ -397,9 +464,9 @@ Needs Pester 5+ (`Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -
 
 | Suite | What it covers |
 |-------|----------------|
-| `Shared.Tests.ps1` | The shared foundation: that there is exactly one ROM extension table (and that it covers every console `PLATFORM_SLUGS` advertises), one archive signature table that `Test-IsArchive` and `Get-ArchiveType` agree on, one reject regex, one region vocabulary; plus `Get-CfgValue` edge cases, the formatters, filename safety and `Install-RomFromDownload`. |
-| `RetroGameTalk.Tests.ps1` | The real functions with only `Invoke-WebRequest` mocked: search URL construction for every platform and filter, result parsing, the nonce reveal POST, link extraction, demo/region/multi-disc selection, region detection, edition-aware picking, and failure classification. Fixtures in `tests/fixtures/` are trimmed captures of real Repo pages. |
-| `RetroGameTalk.Live.Tests.ps1` (tag `Live`) | The live catalogue: every platform slug has a category page, every search filter is accepted and does not leak other platforms, 14 known ROMs across the major consoles resolve to real `download.php?...&key=` URLs, and one of those URLs is range-fetched to prove it serves bytes with no cookies. |
+| `Shared.Tests.ps1` | The shared foundation: that there is exactly one ROM extension table (and that it covers every console `PLATFORM_SLUGS` advertises), one archive signature table that `Test-IsArchive` and `Get-ArchiveType` agree on, one reject regex, one region vocabulary, one Vita build vocabulary whose two patterns never overlap; plus `Get-CfgValue` edge cases, the formatters, filename safety and `Install-RomFromDownload`. |
+| `RetroGameTalk.Tests.ps1` | The real functions with only `Invoke-WebRequest` mocked: search URL construction for every platform and filter, result parsing, the nonce reveal POST, link extraction, demo/region/multi-disc selection, Vita build selection and its fallbacks, region detection, edition-aware picking, and failure classification. Fixtures in `tests/fixtures/` are trimmed captures of real Repo pages. |
+| `RetroGameTalk.Live.Tests.ps1` (tag `Live`) | The live catalogue: every platform slug has a category page, every search filter is accepted and does not leak other platforms, 14 known ROMs across the major consoles resolve to real `download.php?...&key=` URLs, a Vita page still carries both builds distinguishable only by their filename marker, and one URL is range-fetched to prove it serves bytes with no cookies. |
 
 The live suite is what notices the site changing under us. A category rename, a filter value
 that silently stops matching, or a login appearing server-side all fail there and nowhere
@@ -433,6 +500,10 @@ else &mdash; that class of breakage is what ended the cdromance integration.
 - **AB download never finishes** - set `abDownloadDir` to AB's actual download folder; raise `abTimeoutSec`.
 - **ROM lands in `\roms` instead of a console folder** - pass `--platform`, or the platform couldn't be
   inferred from the search result.
+- **A Vita game won't load in Vita3K** - check the job's `vitaBuild`. If it says `console` the game had
+  no Vita3K build on The Repo (dlrom warns when it falls back) and you have a NoNpDrm dump to convert.
+- **A Vita download arrived as a `.zip`** - that is deliberate for a Vita3K build; the emulator installs
+  the archive itself. Use `--vita console` if you wanted the hardware dump.
 - **A job says `orphaned`** - its worker died without recording an outcome (killed, crashed, or the
   machine went down). Nothing is running; check the job's `logFile` for how far it got, then re-run.
 - **A job sits at the same percentage** - the download backend is retrying. aria2/Motrix retry an

@@ -21,6 +21,7 @@ dlgame "Spider-Man"
 dlmovie "Inception"
 dltv "Breaking Bad"
 dlrom "Zelda" --platform n64
+dlrom "Danganronpa V3" --platform vita   # Vita3K build by default; --vita console for hardware
 ```
 
 Config is stored at `%LOCALAPPDATA%\dlScripts\config.json` and is **auto-created with defaults on first run** — no manual setup required. See each subfolder's `README.md` for the full parameter reference.
@@ -171,7 +172,7 @@ All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, stru
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
   "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "jobKeepDays": 7 }
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "vitaBuild": "emu", "jobKeepDays": 7 }
 }
 ```
 
@@ -199,6 +200,16 @@ The base directory is resolved in priority order, so the local emulation library
 The ROM is filed under `<romsBase>\<console>` (EmuDeck layout). When `--platform` is omitted, the console folder is taken from the platform detected on the chosen search result, so a bare `dlrom "Game"` still lands in the right folder instead of a generic `\roms`.
 
 Whatever the downloader (Motrix, AB, etc.) drops the file as, the final ROM is always moved into `<romsBase>\<console>`: real archives (zip/7z/rar, detected by signature) are extracted first; a **raw ROM** download (`.iso`/`.chd`/`.nds`/…) is filed directly instead of failing extraction and being left behind in the downloader's folder.
+
+### PS Vita: emulator vs console builds (dlrom)
+
+The Vita is the one platform whose games The Repo publishes **twice**, and the two files are not interchangeable: `[Vita3K]` is repacked for the [Vita3K](https://vita3k.org/) emulator, `[NoNpDrm]` is a dump for a modded console. Grabbing the wrong one fails silently — it installs perfectly and then will not run.
+
+- **The Vita3K build is the default.** `--vita console` takes the hardware dump instead, `--vita any` switches the preference off, and `[rom].vitaBuild` changes the default for every run. Given without `--platform`, `--vita` also implies the Vita catalogue.
+- **A Vita3K download is never extracted** — the emulator imports the `.zip` itself, so it is filed into `<romsBase>\psvita` exactly as it arrived. No `--no-extract` needed.
+- **One-build games still work.** Console-only and unmarked releases are common; dlrom warns and takes what exists rather than returning nothing. The keep-it-zipped rule follows the file that was actually chosen, not the request, so a NoNpDrm fallback still extracts normally.
+
+Which build landed is recorded on the job (`vitaBuild`) and printed in the result block. Full detail in [`dlrom/README.md`](dlrom/#ps-vita-emulator-vs-console-builds).
 
 ### The Repo needs no account (dlrom)
 
@@ -233,7 +244,7 @@ Notes:
 
 ### Temp cleanup (dlrom)
 
-Each download removes its temp archive and extraction directory in a `finally`, so nothing is left in `%TEMP%\dlrom` whether the download **succeeds or fails**. Only the installed ROM remains at its destination. `--no-extract` is the one exception: it intentionally keeps the downloaded archive (that's the deliverable) and does not extract.
+Each download removes its temp archive and extraction directory in a `finally`, so nothing is left in `%TEMP%\dlrom` whether the download **succeeds or fails**. Only the installed ROM remains at its destination. `--no-extract` is the one exception: it intentionally keeps the downloaded archive (that's the deliverable) and does not extract. A PS Vita **Vita3K** build takes that same path automatically, since the emulator installs the `.zip` itself.
 
 ### CMD wrapper behaviour
 
@@ -241,7 +252,7 @@ Each download removes its temp archive and extraction directory in a `finally`, 
 - All wrappers invoke PowerShell with `-NoProfile`: the user's profile is irrelevant to these scripts, and loading it slows every run and prepends profile noise to stdout that a caller parsing output has to wade through.
 - `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]`, plus the job subcommands `--status <jobId> [--json]` and `--list [--json]`. The job subcommands are matched before `%1` is treated as a game name. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
+- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]`, plus the job subcommands `--status <jobId> [--json]` and `--list [--json]`. The job subcommands are matched before `%1` is treated as a game name. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
 
 ### Background jobs (dlrom)
 
@@ -311,5 +322,5 @@ powershell -File lib\DriveResolver.ps1
 - `Initialize-DlConfig` lives in `lib\DriveResolver.ps1` and is dot-sourced by each script. The function signature is unchanged.
 - `Resolve-MediaPath` (same file) is a client for the drive-registry API — it does no drive scanning or scoring itself. To change how drives are ranked or add a drive, edit the [drive-registry](../drive-registry) policy, not these scripts.
 - All scripts use identical logging via `Write-Log` with levels: `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`. In dlrom, `DEBUG` is hidden unless `--verbose`/`-Verbose` is passed, and `--quiet`/`-Quiet` hides routine `INFO`.
-- **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `RetroGameTalk.ps1` (scraping: `Invoke-RgtSearch`, `Get-RgtDownloadLinks`, `Select-DownloadLinks` — multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
+- **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `RetroGameTalk.ps1` (scraping: `Invoke-RgtSearch`, `Get-RgtDownloadLinks`, `Select-DownloadLinks` — PS Vita build choice, multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
 

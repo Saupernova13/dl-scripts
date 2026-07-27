@@ -21,7 +21,8 @@ as a thin orchestrator. New, self-contained concerns should follow that pattern 
 growing a single file.
 
 `Constants.ps1` loads first and owns every literal more than one module depends on - job
-states, downloader ids, ROM/archive extensions, release markers, region preference. If you
+states, downloader ids, ROM/archive extensions, release markers, region preference, PS Vita
+build markers. If you
 find yourself writing a second copy of a table or a regex, it belongs there instead; the
 tables that are in there now each started life as two or three copies that drifted apart.
 
