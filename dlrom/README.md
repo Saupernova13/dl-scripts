@@ -1,52 +1,90 @@
 # dlrom
 
-Searches [The Repo](https://retrogametalk.com/repo/) on RetroGameTalk for a console game,
-downloads it, extracts the ROM, files it into the matching emulator folder, and
-(optionally) adds it to Steam via
-[Steam ROM Manager](https://github.com/SteamGridDB/steam-rom-manager).
+Downloads one console game and installs it for you.
 
-> The catalogue formerly published at cdromance.org now lives at
-> `retrogametalk.com/repo/`, behind the forum. dlrom targets that address; the old
-> cdromance domain (and the Cloudflare bypass it needed) is gone.
+It searches [The Repo](https://retrogametalk.com/repo/) on RetroGameTalk, downloads
+the ROM, unpacks it, puts it in the right emulator folder, and adds it to Steam.
 
-**Downloads run in the background by default.** dlrom searches, resolves the links, hands
-the transfer to a detached worker and returns a job id — usually within seconds. Nothing
-about your terminal (or your agent) has to stay attached to a multi-GB ROM download.
+> The old cdromance.org catalogue now lives at `retrogametalk.com/repo/`. dlrom
+> uses that address. cdromance is gone, and so is the Cloudflare bypass it needed.
+
+**Downloads run in the background.** dlrom finds the file, starts a worker, and
+gives you a job id. It returns in seconds. You never wait for the download.
 
 ## Command
 
 ```
-dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
-                  [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract]
-                  [--no-steam] [--links-only] [--no-torrent] [--torrent-pick N]
-                  [--json] [--verbose] [--quiet]
+dlrom "Game Name" [options]
 dlrom --status <jobId> [--json]
 dlrom --list [--json]
 dlrom --clean [--all] [--dry-run] [--json]
 ```
 
-Add the repo root to `PATH` and call it from any terminal. Quotes are required when the
-name contains spaces.
+Add the repo root to `PATH` to run it from anywhere. Put the game name in quotes.
 
-**Platforms:** `ps2`, `ps1`/`psx`, `psp`, `eboot`, `vita`, `n64`, `gamecube`/`gc`, `wii`,
-`nds`/`ds`, `gba`, `snes`, `nes`, `fds`, `gbc`, `gb`, `dreamcast`/`dc`, `saturn`, `segacd`,
-`genesis`/`megadrive`, `32x`, `sms`/`mastersystem`, `gamegear`/`gg`, `pico`, `3do`, `amiga`,
-`arcade`, `msx`, `dos`/`msdos`, `windows`, `scummvm`, `neogeocd`, `ngp`/`ngpc`, `pc88`,
-`pc98`, `pcfx`, `tg16`/`pcengine`, `tgcd`, `wonderswan`/`ws`
-**Regions:** `usa`, `europe`, `japan`, `world`
+### Platforms
 
-> The Repo carries no 3DS section, so the old `3ds` alias is gone. Everything else that
-> cdromance hosted came across, plus a good deal more.
+`ps2`, `ps1`, `psx`, `psp`, `eboot`, `vita`, `n64`, `gamecube`, `gc`, `wii`,
+`nds`, `ds`, `gba`, `snes`, `nes`, `fds`, `gbc`, `gb`, `dreamcast`, `dc`,
+`saturn`, `segacd`, `genesis`, `megadrive`, `32x`, `sms`, `mastersystem`,
+`gamegear`, `gg`, `pico`, `3do`, `amiga`, `arcade`, `msx`, `dos`, `msdos`,
+`windows`, `scummvm`, `neogeocd`, `ngp`, `ngpc`, `pc88`, `pc98`, `pcfx`,
+`tg16`, `pcengine`, `tgcd`, `wonderswan`, `ws`
 
-> **PS Vita is published twice** — a `[Vita3K]` build for the emulator and a `[NoNpDrm]`
-> one for a modded console. dlrom takes the emulator build by default and leaves it
-> zipped; `--vita console` gets the hardware dump. See
-> [PS Vita: emulator vs console builds](#ps-vita-emulator-vs-console-builds).
+There is no 3DS. The Repo does not carry 3DS games.
 
-## Headless / background use
+### Regions
 
-This is the default path, and the one to use from a script, an agent, or any session you
-do not want to babysit.
+`usa`, `europe`, `japan`, `world`
+
+## Quick examples
+
+```
+dlrom "Rayman 2"                              # returns a job id
+dlrom "Final Fantasy VII" --platform ps1
+dlrom "Metal Slug" --platform ps2 --region usa
+dlrom "Danganronpa V3" --platform vita        # Vita3K build, kept zipped
+dlrom "Persona 4 Golden" --vita console       # NoNpDrm build, for a real Vita
+
+dlrom --status a3f9c21b8e04                   # how is it going?
+dlrom --list                                  # all recent jobs
+dlrom --clean                                 # free disk space
+
+dlrom "Crash Bandicoot" --links-only          # print links, download nothing
+dlrom "Spyro" --platform ps1 --verbose        # show every internal step
+dlrom "Zelda" --platform n64 --interactive    # pick from a list yourself
+dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
+```
+
+## Flags
+
+| Flag | What it does |
+|------|--------------|
+| `--platform NAME` | Search one console only, and pick the folder to install into. Without it, dlrom guesses the console from the search result. |
+| `--region NAME` | Prefer a region: `usa`, `europe`, `japan`, `world`. |
+| `--vita emu\|console\|any` | PS Vita only. Which build to take. See [PS Vita](#ps-vita-two-versions-of-every-game). |
+| `--sort ORDER` | Sort the search results. |
+| `--dest PATH` | Install into this folder instead of the usual one. |
+| `--wait` | Download in this window instead of the background. For humans watching a progress bar. |
+| `--status ID` | Show one job's progress, then exit. Instant, even mid-download. |
+| `--list` | List recent jobs, newest first. |
+| `--clean` | Delete temp files, part-files and caches. See [Housekeeping](#housekeeping). |
+| `--all` | With `--clean`: also delete finished job records. |
+| `--dry-run` | With `--clean`: show what would go, delete nothing. |
+| `--json` | Machine-readable output. |
+| `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
+| `--no-extract` | Keep the downloaded archive. Do not unpack or install it. |
+| `--no-steam` | Skip the Steam step this run. |
+| `--links-only` | Print the download links and stop. Downloads nothing. |
+| `--no-torrent` | Turn off the PS2 torrent fallback this run. |
+| `--torrent-pick N` | Force file number `N` from the PS2 torrent. |
+| `--verbose` | Show every internal step. For troubleshooting. |
+| `--quiet` | Show only results, warnings and errors. |
+
+## Background jobs
+
+This is the normal way to use dlrom. Use it from a script, an agent, or any
+session you do not want to sit and watch.
 
 ```
 $ dlrom "Gran Turismo 4" --platform ps2
@@ -60,8 +98,10 @@ Download job spawned.  It will continue in the background.
   Check:    dlrom --status a3f9c21b8e04
 ```
 
-The command returns there. The worker carries on downloading, extracting, filing the ROM
-and syncing to Steam on its own. Poll it whenever you like:
+The command returns there. A worker keeps going on its own. It downloads,
+unpacks, installs, and syncs to Steam.
+
+Check on it whenever you like:
 
 ```
 dlrom --status a3f9c21b8e04          # progress, step, and the last 20 log lines
@@ -69,378 +109,383 @@ dlrom --status a3f9c21b8e04 --json   # the whole job record, for scripts
 dlrom --list                         # every recent job and its state
 ```
 
-What happens before the job is spawned is deliberately synchronous: the search and the
-link resolution. That way "no results on The Repo" is still an immediate answer rather
-than something you only discover by polling. Only the slow half is detached.
+**The search and the link lookup happen first, in your terminal.** That is on
+purpose. "No results" is an instant answer, not something you discover by polling
+later. Only the slow half runs in the background.
 
 ### Job states
 
 | Status | Meaning |
 |---|---|
-| `pending` | The job file is written; the worker is starting. |
-| `running` | The worker owns it. `step` says where it is: `downloading`, `extracting`, `filing`, `steam-sync`. |
-| `completed` | The ROM is installed. `installedPaths` lists the files; `handoff` carries the PS2 texture command. |
-| `failed` | It finished without installing anything. `message` says why; the log has the detail. |
-| `orphaned` | The worker's process is gone but it never recorded an outcome — killed, crashed, or the machine went down mid-download. |
+| `pending` | The job file exists. The worker is starting. |
+| `running` | The worker owns it. Check `step` to see where it is. |
+| `completed` | The ROM is installed. |
+| `failed` | It stopped without installing anything. `message` says why. |
+| `orphaned` | The worker died and never recorded an outcome. Nothing is running. |
+
+While `running`, the `step` field is one of: `downloading`, `extracting`,
+`filing`, `steam-sync`.
 
 ### Useful job fields (`--status --json`)
 
 | Field | Meaning |
 |---|---|
 | `id` | Job id. |
-| `kind` | `retrogametalk` or `torrent` (the PS2 archive fallback). |
-| `status` / `step` / `progress` | State, current phase, and 0-100. |
-| `installedPaths` | Every file this job filed into the ROM folder. |
-| `vitaBuild` | `emu` or `console` for a PS Vita download — which build was actually taken. Empty on every other platform. |
-| `noExtract` | Whether the download was filed as-is. Set automatically for a Vita3K build. |
-| `handoff` | The `[HANDOFF]` line for PS2 — feed its serial to `dlps2tex`. |
+| `kind` | `retrogametalk` or `torrent` (the PS2 fallback). |
+| `status` | See the table above. |
+| `step` | Current phase. |
+| `progress` | 0 to 100. |
+| `installedPaths` | Every file this job installed. |
+| `vitaBuild` | `emu` or `console` for a PS Vita download. Empty otherwise. |
+| `noExtract` | True if the download was kept as an archive. |
+| `handoff` | The `[HANDOFF]` line for PS2. Feed its serial to `dlps2tex`. |
 | `logFile` | Full worker log. |
-| `message` | Last human-readable note, and the failure reason when `failed`. |
+| `message` | Last note, and the failure reason when `failed`. |
 
-Job files and logs live in `%LOCALAPPDATA%\dlScripts\jobs\rom\`. Finished ones are pruned
-after `jobKeepDays` (default 7); running jobs are never pruned.
+Job files live in `%LOCALAPPDATA%\dlScripts\jobs\rom\`. Finished ones are deleted
+after `jobKeepDays` (default 7). Running jobs are never deleted.
 
-### Staying in the foreground
+### Watching it live instead
 
-`--wait` restores the old blocking behaviour — search, download, install, all in your
-terminal with a live progress bar:
+`--wait` downloads in your terminal with a progress bar:
 
 ```
 dlrom "Gran Turismo 4" --platform ps2 --wait
 ```
 
-It runs the exact same pipeline as the worker and still writes a job file, so
-`dlrom --status <id>` works for a `--wait` run too. Use it when you actually want to watch;
-do not use it from an agent.
+It runs the same code as the worker and still writes a job file, so
+`dlrom --status <id>` works afterwards. Use it when you want to watch. Do not use
+it from a script or an agent.
 
-## Usage examples
+## PS Vita: two versions of every game
 
-```
-dlrom "Rayman 2"                             # spawns a job, returns a job id
-dlrom "Final Fantasy VII" --platform ps1
-dlrom "Metal Slug" --platform ps2 --region usa
-dlrom "Danganronpa V3" --platform vita       # Vita3K build, left zipped for the emulator
-dlrom "Persona 4 Golden" --vita console      # NoNpDrm build, for a modded Vita
-dlrom --status a3f9c21b8e04                  # how is it going?
-dlrom --list                                 # every recent job
-dlrom "Gran Turismo 4" --platform ps2 --wait # block until installed
-dlrom "Zelda" --platform n64 --interactive   # pick from the list yourself
-dlrom "Crash Bandicoot" --links-only         # resolve and print links, download nothing
-dlrom "Spyro" --platform ps1 --verbose       # show every internal step
-```
+The Vita is the only console here where every game is published **twice**. The two
+files are not interchangeable.
 
-## Flags
-
-| Flag | Effect |
-|------|--------|
-| `--status ID` | Show a job's progress, then exit. Reads the job file only — instant, even mid-download. |
-| `--list` | List recent jobs, newest first. |
-| `--clean` | Delete temp files, abandoned partials and caches. Never touches what a running job is using. See [Housekeeping](#housekeeping--clean). |
-| `--all` | With `--clean`: also delete finished job records and logs. |
-| `--dry-run` | With `--clean`: report what would be removed and delete nothing. |
-| `--wait` | Download in the foreground instead of spawning a worker. |
-| `--json` | Machine-readable output: the job record on spawn, or the full state for `--status` / `--list`. |
-| `--platform` | Restrict the search and choose the destination console folder. Omit it and the platform is inferred from the chosen result. |
-| `--region` | Pass a region filter to the search (`usa`, `europe`, `japan`, `world`). |
-| `--vita emu\|console\|any` | **PS Vita only.** Which of the two builds to take: `emu` = Vita3K (the default, kept zipped), `console` = NoNpDrm for real hardware, `any` = no preference. Ignored on every other platform. Given without `--platform`, it also searches the Vita catalogue. |
-| `--sort` | Pass a sort order to the search. |
-| `--dest PATH` | Per-run override of the ROMs base directory (wins over config and the drive picker). |
-| `--interactive` | Pick from the numbered results list instead of auto-selecting. Implies a human is present: it is also the only mode allowed to prompt for a missing ROMs base. |
-| `--no-extract` | Keep the downloaded archive; do not extract or install. |
-| `--no-steam` | Skip the Steam ROM Manager step for this run. |
-| `--links-only` | Resolve and print the download links, then stop. Handy for confirming search and link reveal work. Always foreground — it downloads nothing. |
-| `--no-torrent` | Disable the PS2 torrent fallback (see below) for this run. |
-| `--torrent-pick N` | Force file index `N` from the PS2 archive torrent instead of auto-picking (use the index shown in the "closest titles" list). |
-| `--verbose` | Show detailed step-by-step debug output. |
-| `--quiet` | Show only results, warnings and errors. |
-
-## PowerShell parameters
-
-The CMD wrapper passes these through; you can also call the script directly:
-
-```powershell
-.\dlrom\Add-ROM.ps1 -Query "Zelda" [-Platform n64] [-Region usa] [-VitaBuild emu] [-Sort ...] `
-    [-Destination "D:\roms"] [-MaxResults 10] [-Wait] [-Interactive] [-NoExtract] `
-    [-NoSteam] [-LinksOnly] [-NoTorrent] [-TorrentPick N] [-Json] [-Verbose] [-Quiet]
-
-.\dlrom\Add-ROM.ps1 -Status <jobId> [-Json]
-.\dlrom\Add-ROM.ps1 -ListJobs [-Json]
-.\dlrom\Add-ROM.ps1 -Clean [-All] [-DryRun] [-Json]
-```
-
-`-JobFile <path>` is the worker's own entry point. It is spawned by `Start-DlromJob` and is
-not meant to be called by hand.
-
-## Housekeeping — `--clean`
-
-A ROM download that dies mid-transfer leaves its part-file behind; a crash between
-extraction and filing leaves an `extracted\` tree. Neither is ever revisited, and both are
-ROM-sized. `--clean` reclaims them:
-
-```
-dlrom --clean             # temp files, abandoned partials, caches
-dlrom --clean --dry-run   # show what would go, delete nothing
-dlrom --clean --all       # also clear finished job records and logs
-dlrom --clean --json      # machine-readable result
-```
-
-| Category | What goes |
-|---|---|
-| `work` | Everything in `tempDir` — interrupted downloads and `extracted\` working trees — plus `%TEMP%\dlrom-debug.html` and anything stranded in the PS2 torrent staging dir. |
-| `partial` | `.aria2` / `.part` / `.tmp` / … control files in the AB download folder. |
-| `cache` | `ps2-gamedb.json` (re-parsed from `GameIndex.yaml` on demand) and the obsolete `cf_session.json`. |
-| `job` | **Only with `--all`:** the finished job records and logs under `jobs\rom`. |
-
-**Nothing a live job owns is ever deleted.** A running worker's part-file is indistinguishable
-from an abandoned one by looking at the file, so identity comes from the job: every active
-(`pending`/`running`) job's link labels are excluded by name, and active job records are
-skipped even under `--all`. It says so when it skips something:
-
-```
-[INFO] Keeping Danganronpa V3 (USA)(PCSE01100)[NoNpDrm].zip - a running job is downloading it.
-[INFO] Keeping job 8a1cf5cfaa7e - it is still running.
-```
-
-`--clean` deliberately does **not** touch your download manager's folder (Motrix's, or
-`~\Downloads` generally). Those belong to the manager and to you; the AB watch folder is the
-one exception, because dlrom is what told AB to use it.
-
-Finished jobs are also pruned by age on every normal run (`jobKeepDays`, default 7).
-`--clean --all` is the on-demand version.
-
-## PS Vita: emulator vs console builds
-
-The Vita is the one platform here whose games are published **twice**, and the two files
-are not interchangeable:
-
-| Marker in the filename | For | dlrom installs it |
+| Marker in the filename | Runs on | dlrom installs it |
 |---|---|---|
-| `[Vita3K]` | the [Vita3K](https://vita3k.org/) emulator | **as the downloaded `.zip`, never extracted** |
-| `[NoNpDrm]` | a modded Vita, via the NoNpDrm plugin | extracted like any other ROM |
+| `[Vita3K]` | the [Vita3K](https://vita3k.org/) emulator | **as the downloaded `.zip`, never unpacked** |
+| `[NoNpDrm]` | a modded PS Vita console | unpacked like any other ROM |
 
-Picking the wrong one fails *silently* — it downloads, files and syncs to Steam perfectly
-well, and then simply will not run. So dlrom chooses deliberately rather than taking
-whatever the page listed first (which is not even stable: the catalogue puts either build
-first depending on the game).
+**Picking the wrong one fails silently.** It downloads, installs and syncs to
+Steam perfectly well. Then it just will not run.
 
-**Emulation is the default.** A Vita download takes the `[Vita3K]` build unless told
-otherwise:
+So dlrom chooses on purpose. It does not take whatever the page lists first,
+because that order is not stable. Either build can come first.
+
+### The default is the emulator
 
 ```
-dlrom "Danganronpa V3" --platform vita                    # Vita3K build (default)
-dlrom "Danganronpa V3" --platform vita --vita console     # NoNpDrm build, for real hardware
-dlrom "Danganronpa V3" --vita emu                         # --platform vita is implied
-dlrom "Danganronpa V3"                                    # also Vita3K: the platform comes
-                                                          # from the search result
+dlrom "Danganronpa V3" --platform vita                  # Vita3K (the default)
+dlrom "Danganronpa V3" --platform vita --vita console   # NoNpDrm, for real hardware
+dlrom "Danganronpa V3" --vita emu                       # --platform vita is implied
+dlrom "Danganronpa V3"                                  # also Vita3K
 ```
 
-`--vita` accepts `emu` (aliases `emulator`, `vita3k`, `3k`), `console` (`hardware`, `hw`,
-`real`, `nonpdrm`), or `any` to switch the preference off entirely. Set `[rom].vitaBuild`
-in the config to change the default for every run.
+The last example works because dlrom reads the console from the search result.
 
-### Why the archive is left zipped
+`--vita` accepts:
 
-Vita3K imports the `.zip` itself — its contents are an `app/<TITLEID>/…` tree, not a ROM
-file. Unpacking it here would leave a folder the emulator cannot install, so a Vita3K
-download is filed into `<romsBase>\psvita` exactly as it arrived. This is automatic; you do
-not need `--no-extract`. The console build is a normal archive and still extracts as usual.
+| Value | Aliases | Meaning |
+|---|---|---|
+| `emu` | `emulator`, `vita3k`, `3k` | Vita3K build. The default. |
+| `console` | `hardware`, `hw`, `real`, `nonpdrm` | NoNpDrm build. |
+| `any` | `both`, `either` | No preference. Take the first one listed. |
 
-### When a game only has one build
+Set `[rom].vitaBuild` in the config to change the default for every run.
 
-Plenty of older titles are console-only, a handful carry no marker at all, and some pages
-also list bonus files (`AR Cards.zip`) that are not the game. dlrom drops the extras, and
-if the build you asked for does not exist it warns and takes what does — a build you have
-to convert beats no download:
+### Why the zip is not unpacked
+
+Vita3K imports the `.zip` itself. Inside is an `app/<TITLEID>/…` folder tree, not
+a ROM file. Unpacking it would give you a folder the emulator cannot install.
+
+So a Vita3K download is copied into `<romsBase>\psvita` exactly as it arrived.
+This is automatic. You do not need `--no-extract`.
+
+The NoNpDrm build is a normal archive and is unpacked as usual.
+
+### When a game has only one build
+
+Some older games are console-only. A few have no marker at all. Some pages also
+list extra files that are not the game, like `AR Cards.zip`. dlrom drops those
+extras.
+
+If the build you asked for does not exist, dlrom warns you and takes what does
+exist:
 
 ```
 [WARN] Vita: this game has no Vita3K (emulator) build on The Repo - falling back to what it does offer.
 [INFO] Vita build: NoNpDrm (console)
 ```
 
-The zipped-archive rule follows the **file that was actually chosen**, not the request, so
-a NoNpDrm dump picked up by that fallback is still extracted normally. Which build landed
-is recorded on the job (`vitaBuild` in `--status --json`) and printed in the result block.
+A build you have to convert beats no download at all.
+
+**The "keep it zipped" rule follows the file that was actually chosen.** It does
+not follow what you asked for. So a NoNpDrm build reached by this fallback is
+still unpacked normally.
+
+Which build you got is recorded on the job as `vitaBuild`, and printed at the end.
+
+## Housekeeping
+
+A download that dies partway leaves a part-file behind. A worker that dies between
+unpacking and installing leaves a folder behind. Both are ROM-sized. Nothing ever
+comes back for them.
+
+`--clean` removes them.
+
+```
+dlrom --clean             # temp files, abandoned part-files, caches
+dlrom --clean --dry-run   # show what would go, delete nothing
+dlrom --clean --all       # also delete finished job records and logs
+dlrom --clean --json      # machine-readable result
+```
+
+### What it deletes
+
+| Category | What goes |
+|---|---|
+| `work` | Everything in `tempDir`: interrupted downloads and `extracted\` folders. Also `%TEMP%\dlrom-debug.html` and anything left in the PS2 torrent staging folder. |
+| `partial` | `.aria2`, `.part`, `.tmp` and similar control files in the AB download folder. |
+| `cache` | `ps2-gamedb.json` (rebuilt from `GameIndex.yaml` when needed) and the obsolete `cf_session.json`. |
+| `job` | **Only with `--all`:** finished job records and logs in `jobs\rom`. |
+
+### What it never deletes
+
+**Files a running job is using.** This is the rule the whole feature is built
+around.
+
+A running download's part-file looks exactly like an abandoned one. You cannot
+tell them apart by looking at the file. So dlrom does not look at the file. It
+reads the active jobs and skips their filenames. Active job records survive
+`--all` too.
+
+It says so when it skips something:
+
+```
+[INFO] Keeping Danganronpa V3 (USA)(PCSE01100)[NoNpDrm].zip - a running job is downloading it.
+[INFO] Keeping job 8a1cf5cfaa7e - it is still running.
+```
+
+**Your download manager's folder.** dlrom does not touch Motrix's folder, or
+`~\Downloads` in general. Those belong to the manager and to you. The one
+exception is the AB Download Manager watch folder, because dlrom is what told AB
+to use it.
+
+Finished jobs are also deleted by age on every normal run (`jobKeepDays`,
+default 7). `--clean --all` is the on-demand version.
 
 ## PS2 torrent fallback
 
-The Repo is the only web source, so any failure there (site unreachable, rate-limited, no
-search results, or no download links) used to end the run. For **PS2 games** there is now
-a second source: a local Redump PS2 archive `.torrent` that indexes the full set. When The
-Repo can't deliver and `--platform ps2` was given, dlrom looks the game up in that archive
-and pulls **only that one file** through qBittorrent's per-file selective download, then
-extracts and files it exactly like a web download (and runs the Steam sync).
+The Repo is the only website dlrom uses. If it fails, the run used to end there.
 
-The match is auto-picked with heuristics: every word of your query (numbers included) must
-appear in the title; demos/betas are rejected; edition/variant releases (FES, Undub,
-Director's Cut, GOTY, ...) are skipped unless you name them (so `"Persona 3"` gets the base
-game, not FES); region preference is your `--region` first, then USA, World, Europe, Japan.
-If nothing matches confidently it refuses and lists the closest titles with their file
-indices so you can re-run with `--torrent-pick N`.
+For **PS2 games** there is a second source: a local Redump PS2 archive `.torrent`
+that indexes the full set.
 
-After the single file finishes, the torrent entry is removed from qBittorrent (no seeding
-is left running); the downloaded ROM stays on disk.
+When The Repo cannot deliver and you passed `--platform ps2`, dlrom looks the game
+up in that archive. It downloads **only that one file** through qBittorrent, then
+unpacks and installs it exactly like a web download.
 
-**Requirements:** qBittorrent with its WebUI enabled, and the archive `.torrent`. The
-`.torrent` and its prebuilt index ship in `dlrom/data/ps2-torrent/`; the index is rebuilt
-automatically (via `ps2_torrent.py`, standard-library Python) if the `.torrent` is
-replaced. The WebUI host is auto-detected from `qBittorrent.ini` (the `WebUI\Port`, e.g.
-`8075` — note the other dl-scripts default to `8080`), or set `[rom].qbitHost` in config.
+The Repo "cannot deliver" means any of: the site is unreachable, it is
+rate-limiting, the search found nothing, or the page had no download links.
 
-**Relevant `[rom]` config keys** (`%LOCALAPPDATA%\dlScripts\config.json`):
+### How it picks the file
+
+- Every word of your query must appear in the title. Numbers count.
+- Demos, betas and prototypes are rejected.
+- Special editions (FES, Undub, Director's Cut, GOTY) are skipped unless you named
+  one. So `"Persona 3"` gets the base game.
+- Region order: your `--region` first, then USA, World, Europe, Japan.
+
+If nothing matches confidently, it refuses. It then lists the closest titles with
+their file numbers so you can re-run with `--torrent-pick N`.
+
+After the file finishes, the torrent is removed from qBittorrent. Nothing is left
+seeding. The ROM stays on disk.
+
+### Requirements
+
+qBittorrent must be running with its WebUI enabled. dlrom finds the port from
+`qBittorrent.ini` (usually `8075`). Note the other dl-scripts default to `8080`.
+You can set `[rom].qbitHost` instead.
+
+The `.torrent` and its prebuilt index ship in `dlrom/data/ps2-torrent/`. The index
+is rebuilt automatically if you replace the `.torrent`. That needs Python 3 on
+`PATH`.
+
+### PS2 torrent config keys
 
 | Key | Meaning |
 |-----|---------|
-| `ps2TorrentEnabled` | Master switch for the fallback (default `true`). |
-| `ps2TorrentPath` | Path to the archive `.torrent`. Blank = the committed copy, else `Downloads`. |
-| `ps2TorrentIndexPath` | Path to the JSON index. Blank = the committed copy. |
-| `ps2TorrentStaging` | Where qBittorrent saves the file. Blank = `<romsBase>\.dlrom-torrent` (same drive as the ROM folder). |
-| `ps2TorrentTimeoutSec` | Max wait for the single-file download (default `14400`). |
-| `qbitHost` | qBittorrent WebUI base URL. Blank = auto-detect. |
-| `qbitUser` / `qbitPass` | Only needed if `WebUI\LocalHostAuth` is enabled. |
-| `ps2GameIndexPath` | PCSX2 `GameIndex.yaml` used to resolve the installed serial for the texture handoff. Blank = auto-detect. |
+| `ps2TorrentEnabled` | Turn the fallback on or off. Default `true`. |
+| `ps2TorrentPath` | Path to the archive `.torrent`. Blank uses the committed copy. |
+| `ps2TorrentIndexPath` | Path to the JSON index. Blank uses the committed copy. |
+| `ps2TorrentStaging` | Where qBittorrent saves the file. Blank uses `<romsBase>\.dlrom-torrent`. |
+| `ps2TorrentTimeoutSec` | Max wait for the download. Default `14400`. |
+| `qbitHost` | qBittorrent WebUI address. Blank auto-detects. |
+| `qbitUser` / `qbitPass` | Only needed if the WebUI asks for a login. |
+| `ps2GameIndexPath` | PCSX2 `GameIndex.yaml`, used to find the serial. Blank auto-detects. |
 
-## Edition-aware selection and the texture handoff
+## Which release it picks
 
-The Repo auto-select prefers the **base** game over an edition (it picks "Persona 3", not
-"Persona 3 FES") and honours `--region`, but never returns nothing — if only an edition exists,
-it takes it. The torrent fallback applies the same preference more strictly (it *refuses* an
-unrequested edition, since the archive always has the base).
+dlrom prefers the **base** game over a special edition. `dlrom "Persona 3"` picks
+"Persona 3", not "Persona 3 FES". It also honours `--region`.
 
-When dlrom **finishes installing** a **PS2** game it produces a machine-readable line:
+But it never returns nothing. If only an edition exists, it takes the edition.
+
+The torrent fallback is stricter. It refuses an edition you did not ask for,
+because the archive always has the base game.
+
+## PS2 texture handoff
+
+When dlrom **finishes installing** a **PS2** game, it prints this line:
 
 ```
 [HANDOFF] platform=ps2 serial=SLUS-21569 title="Shin Megami Tensei - Persona 3" texturecmd=dlps2tex "SLUS-21569"
 ```
 
-The serial is resolved from `GameIndex.yaml` (the same source `dlps2tex` uses), so running the
-`texturecmd` fetches HD textures for the **exact version** just downloaded — base vs FES,
-USA vs PAL all line up. Use the serial rather than re-guessing the name.
+Run that `texturecmd` to get HD textures for the **exact version** you just
+downloaded. Base or FES, USA or PAL, they will line up. Use the serial rather than
+typing the name again.
 
-Because the install happens in the worker, this line lands on the **completed job**, not in the
-output of the `dlrom` call that spawned it:
+The serial comes from `GameIndex.yaml`, the same file `dlps2tex` uses.
+
+**The line appears when the job finishes, not when it starts.** So it is not in
+the output of the command that spawned the job:
 
 ```
 dlrom --status <jobId>          # printed as the [HANDOFF] line
 dlrom --status <jobId> --json   # the "handoff" field
 ```
 
-(Under `--wait` it prints to your terminal at the end of the run, as it always did.)
-
-## Output verbosity
-
-By default the output is a clean narrative: the chosen downloader, the search, the result
-list, the download progress bar, and where the ROM landed. Internal detail (link-discovery
-strategies, ticket IDs, RPC GIDs, slug mapping) is hidden.
-
-- `--verbose` adds all `DEBUG` lines (every internal step) for troubleshooting.
-- `--quiet` drops routine `INFO`, leaving only results, warnings, and errors.
+Under `--wait` it prints to your terminal at the end of the run.
 
 ## How it works
 
-Steps 1-3 run in your terminal. Step 4 onward is where the time goes, so unless you passed
-`--wait` it is handed to a detached worker and the command returns.
+Steps 1 to 3 run in your terminal. Step 4 onward is the slow part, so a worker
+takes over unless you passed `--wait`.
 
-1. **Search** - queries The Repo and lists matching games.
-2. **Select** - auto-selects (preferring a USA result), or shows a numbered list with `--interactive`.
-3. **Resolve links** - reveals the download table (mirrors the site's "SHOW LINKS" button), then
-   picks the Vita build (Vita3K or NoNpDrm — Vita only), filters demos and prefers English/patched
-   and USA variants. Multi-disc games queue one link per disc.
+1. **Search.** Query The Repo and list matching games.
+2. **Select.** Auto-select the best match, or show a numbered list with
+   `--interactive`.
+3. **Resolve links.** Reveal the download table. Pick the Vita build if this is a
+   Vita game. Drop demos. Prefer English and USA versions. Queue one link per disc
+   for multi-disc games.
 
-   *--- a job is created here and, by default, a worker takes over from this point ---*
+   *A job is created here. By default a worker takes over from this point.*
 
-4. **Download** - via the best available backend (see below).
-5. **Extract & install** - real archives are extracted with 7-Zip; a raw ROM download, and a
-   Vita3K build, are filed as-is. The final file is sanitised (apostrophes etc. removed so Steam
-   launch commands don't break) and moved into `<romsBase>\<console>`.
-6. **Steam sync** - adds the ROM to Steam via Steam ROM Manager unless `--no-steam` is set.
-7. **Cleanup** - the temp archive and extraction folder are removed whether the run succeeds or fails.
-8. **Report** - the result block (and the PS2 `[HANDOFF]` line) goes to the job log, and the
-   outcome is stamped on the job for `--status`.
+4. **Download.** Through the best available backend.
+5. **Unpack and install.** Real archives are unpacked with 7-Zip. A raw ROM
+   download is installed as-is, and so is a Vita3K build. The filename is cleaned
+   up so Steam launch commands do not break. The file moves to
+   `<romsBase>\<console>`.
+6. **Steam sync.** Add the ROM to Steam, unless `--no-steam`.
+7. **Cleanup.** Delete the temp archive and unpack folder, whether the run
+   succeeded or failed.
+8. **Report.** Write the result and the PS2 `[HANDOFF]` line to the job.
 
-The PS2 torrent fallback is backgrounded the same way: if The Repo dead-ends, dlrom spawns
-a `torrent` job rather than pinning you for the multi-hour archive download.
+The PS2 torrent fallback runs in the background the same way.
 
-### Worker mechanics
+### How the worker is started
 
-The worker is the same `Add-ROM.ps1` re-invoked with `-JobFile`. It is started through
-`ProcessStartInfo` with `CreateNoWindow` (no console flash) and its stdout redirected to
-the job's log file by `cmd`. Not inheriting the caller's console handles is the point: it is
-what lets `dlrom.cmd` exit instead of staying tethered to a download that runs for hours.
-`Start-DlromJob` in [`Jobs.ps1`](Jobs.ps1) has the detail.
+The worker is the same `Add-ROM.ps1`, re-run with `-JobFile`.
+
+It starts through `ProcessStartInfo` with `CreateNoWindow`, so no console window
+flashes. `cmd` sends its output to the job's log file.
+
+The important part: the worker does **not** inherit your console handles. That is
+what lets `dlrom.cmd` exit instead of staying tied to a download that runs for
+hours. See [`Jobs.ps1`](Jobs.ps1).
 
 ## Download backends
 
-dlrom auto-detects the best available downloader at runtime and falls through on failure:
+dlrom finds the best available downloader at runtime. If one fails, it tries the
+next:
 
 ```
 Motrix (aria2 RPC)  ->  AB Download Manager  ->  aria2c  ->  curl.exe  ->  BITS  ->  Invoke-WebRequest
 ```
 
-- **Motrix** is used when its aria2 RPC is reachable (`motrixRpcUrl`).
-- **AB Download Manager** (`abPort`, default 15151) is used when Motrix isn't running. AB has no
-  completion API, so dlrom passes a `suggestedName` and watches AB's download folder
-  (`abDownloadDir`, default `%USERPROFILE%\Downloads\ABDM`) until the file finishes. Set
-  `abDownloadDir` if you changed AB's download location; `abTimeoutSec` bounds the wait.
-- The remaining tiers are direct, synchronous fallbacks that need no extra software (curl/BITS/WebClient
-  ship with Windows).
+- **Motrix** is used when its aria2 RPC answers (`motrixRpcUrl`).
+- **AB Download Manager** is used when Motrix is not running (`abPort`, default
+  15151). AB cannot report when a download finishes. So dlrom passes a filename
+  and watches AB's folder (`abDownloadDir`, default `%USERPROFILE%\Downloads\ABDM`)
+  until the file is done. Set `abDownloadDir` if you moved AB's folder.
+  `abTimeoutSec` limits the wait.
+- The rest ship with Windows and need nothing installed.
 
-## ROM destination resolution
+## Where ROMs are installed
 
-The base directory is resolved in priority order, so a local emulation library always wins when present:
+dlrom picks the base folder in this order. The first one that works wins.
 
-1. `--dest PATH` - explicit per-run override.
-2. `romsBase` (default `C:\Emulation\roms`) - used whenever the folder exists.
-3. **Drive picker** - only if `romsBase` is missing: a connected drive advertising a `rom_path` in its
-   `drive-meta.json` (see the [root README](../README.md#drive-metadata)).
-4. **Manual prompt** - last resort.
+1. `--dest PATH`. An explicit override for this run.
+2. `romsBase` from the config (default `C:\Emulation\roms`), if that folder exists.
+3. **Drive picker.** A connected drive advertising a `rom_path` in its
+   `drive-meta.json`. See the [root README](../README.md#where-files-are-saved).
+4. **Ask you.** Last resort, and only with `--interactive`.
 
-The ROM is filed under `<romsBase>\<console>`. Folder names match EmuDeck's layout
-(PS1 -> `psx`, GameCube -> `gc`, Master System -> `mastersystem`, Vita -> `psvita`) so both the emulators
-and Steam ROM Manager's parsers find the files.
+The ROM goes into `<romsBase>\<console>`.
+
+Folder names match EmuDeck's layout so the emulators and Steam ROM Manager find
+them. For example PS1 becomes `psx`, GameCube becomes `gc`, Master System becomes
+`mastersystem`, and Vita becomes `psvita`.
 
 ## No account needed
 
-The Repo advertises a members-only gate, but it is enforced entirely in the browser:
+The Repo shows a members-only message, but only in the browser:
 
 ```js
 if (!document.cookie.includes("xf_online=1")) { window.location.replace(".../login/") }
 ```
 
-A script never executes that, so every step dlrom performs — browsing, searching, the
-"Show Links" reveal, and the file transfer itself — works anonymously. dlrom therefore has
-no login, stores no credentials, and needs no forum account.
+A script never runs that JavaScript. So browsing, searching, revealing links and
+downloading all work without an account. dlrom has no login and stores no
+credentials.
 
-It keeps one cookie jar per run for a narrower reason: the reveal call must present the
-WordPress nonce scraped from the game page, and WordPress ties that nonce to the
-`PHPSESSID` it was minted under. If a reveal comes back empty, dlrom discards the jar and
-retries once with a freshly minted nonce.
+It keeps one cookie jar per run for a smaller reason. The link reveal has to send
+a WordPress nonce scraped from the game page, and WordPress ties that nonce to the
+session that created it. If a reveal comes back empty, dlrom throws the jar away
+and retries once with a fresh nonce.
 
-The resolved `dl*.retrogametalk.com/download.php?…&key=…` URLs carry their own
-authorisation in the query string and need no cookie at all, which is what lets Motrix, AB
+The `dl*.retrogametalk.com/download.php?…&key=…` links carry their own
+authorisation in the URL. They need no cookie. That is what lets Motrix, AB
 Download Manager and aria2c fetch them directly.
 
-No Docker, no FlareSolverr, no `curl_cffi`: unlike cdromance, retrogametalk.com serves
-plain HTTP clients without a Cloudflare challenge, so `Invoke-WebRequest` is enough.
+There is no Docker, no FlareSolverr and no `curl_cffi`. Unlike cdromance,
+retrogametalk.com serves plain HTTP clients, so `Invoke-WebRequest` is enough.
 
-## Steam ROM Manager integration
+## Steam ROM Manager
 
-After a ROM is installed, dlrom adds it to Steam via Steam ROM Manager (SRM) - it never writes a
-Steam shortcut itself, so re-running SRM later reconciles instead of duplicating.
+After a ROM is installed, dlrom adds it to Steam through Steam ROM Manager (SRM).
+It never writes a Steam shortcut itself. That means running SRM later updates
+things instead of creating duplicates.
 
-dlrom **prefers the standalone `srm-wrapper` CLI** if it's on `PATH` (or set `srmWrapperCmd`). If the
-wrapper isn't installed or returns non-zero, dlrom falls back to its **built-in** SRM driver:
+dlrom prefers the standalone `srm-wrapper` CLI if it is on `PATH`, or set
+`srmWrapperCmd`. If the wrapper is missing or fails, dlrom uses its built-in
+driver:
 
-1. Locate `srm.exe` (`srmExe`, else `C:\Emulation\tools\srm.exe`, else `PATH`).
-2. If `srmEnableParser`, enable any disabled SRM parser whose `romDirectory` resolves to the destination.
-3. Honour `srmRestartSteam` (`auto`/`never`/`always`): on `auto`, restart Steam only if it is running.
-4. Run `srm add` silently, then relaunch Steam if it was closed.
+1. Find `srm.exe` (`srmExe`, else `C:\Emulation\tools\srm.exe`, else `PATH`).
+2. If `srmEnableParser` is on, enable any disabled SRM parser pointing at the
+   destination folder.
+3. Follow `srmRestartSteam`: `auto` restarts Steam only if it is running, `never`
+   never does, `always` always does.
+4. Run `srm add` quietly, then restart Steam if it was closed.
 
-If neither the wrapper nor `srm.exe` is found, dlrom does not crash - it logs where the ROM was saved.
+If neither the wrapper nor `srm.exe` is found, dlrom does not crash. It logs where
+the ROM was saved.
+
+## Output detail
+
+By default the output is a clean story: the downloader chosen, the search, the
+results, a progress bar, and where the ROM went. Internal detail is hidden.
+
+- `--verbose` adds every internal step. Use it for troubleshooting.
+- `--quiet` hides routine progress. Only results, warnings and errors remain.
 
 ## Configuration
 
-All settings live in the `rom` section of `%LOCALAPPDATA%\dlScripts\config.json`, created
-automatically with defaults on first run.
+Settings live in the `rom` section of `%LOCALAPPDATA%\dlScripts\config.json`. The
+file is created with defaults on first run.
 
 ```json
 {
@@ -464,94 +509,107 @@ automatically with defaults on first run.
 }
 ```
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `romsBase` | `C:\Emulation\roms` | ROMs base directory. Used when it exists; otherwise the drive picker runs. |
-| `tempDir` | `%TEMP%\dlrom` | Working directory for downloads and extraction. |
-| `motrixRpcUrl` | `http://localhost:16800/jsonrpc` | Motrix aria2 RPC endpoint. |
-| `maxResults` | `10` | Max search results shown. |
-| `pollIntervalMs` | `2000` | Motrix progress poll interval. |
-| `jobKeepDays` | `7` | Days to keep finished job files and logs in `%LOCALAPPDATA%\dlScripts\jobs\rom`. Running jobs are never pruned. |
-| `steamSync` | `true` | Master on/off for the Steam ROM Manager step. |
-| `srmExe` | `""` | Path to `srm.exe`; blank autodetects `C:\Emulation\tools\srm.exe` then `PATH`. |
-| `srmRestartSteam` | `auto` | `auto` (restart only if running) / `never` / `always`. |
-| `srmEnableParser` | `true` | Enable the SRM parser watching the destination before adding. |
-| `srmWrapperCmd` | `""` | Path to `srm-wrapper.cmd`; blank autodetects on `PATH` (preferred over built-in). |
-| `abPort` | `15151` | AB Download Manager integration port. |
-| `abDownloadDir` | `""` | AB's download folder; blank autodetects `%USERPROFILE%\Downloads\ABDM`. |
-| `abTimeoutSec` | `1800` | How long to wait for an AB download before giving up. |
-| `vitaBuild` | `emu` | Which PS Vita build to prefer: `emu` (Vita3K) or `console` (NoNpDrm). `--vita` overrides it per run. |
-| `rgtLogin` | `true` | Log in to RetroGameTalk before searching. `false` (or `--no-login`) browses as a guest. |
-| `rgtSessionCache` | `""` | Where the `xf_*` cookies are cached; blank uses `%LOCALAPPDATA%\dlScripts\rgt-session.json`. |
+| Key | Default | What it does |
+|-----|---------|--------------|
+| `romsBase` | `C:\Emulation\roms` | Where ROMs go. Used when the folder exists. |
+| `tempDir` | `%TEMP%\dlrom` | Working folder for downloads and unpacking. |
+| `motrixRpcUrl` | `http://localhost:16800/jsonrpc` | Motrix aria2 RPC address. |
+| `maxResults` | `10` | How many search results to show. |
+| `pollIntervalMs` | `2000` | How often to ask Motrix for progress. |
+| `jobKeepDays` | `7` | Days to keep finished job files. Running jobs are never deleted. |
+| `steamSync` | `true` | Turn the Steam step on or off. |
+| `srmExe` | `""` | Path to `srm.exe`. Blank auto-detects. |
+| `srmRestartSteam` | `auto` | `auto`, `never` or `always`. |
+| `srmEnableParser` | `true` | Enable the SRM parser for the destination before adding. |
+| `srmWrapperCmd` | `""` | Path to `srm-wrapper.cmd`. Blank auto-detects on `PATH`. |
+| `abPort` | `15151` | AB Download Manager port. |
+| `abDownloadDir` | `""` | AB's download folder. Blank auto-detects. |
+| `abTimeoutSec` | `1800` | How long to wait for an AB download. |
+| `vitaBuild` | `emu` | Which PS Vita build to prefer: `emu` or `console`. |
 
-Credentials are **not** config keys — see [Signing in to RetroGameTalk](#signing-in-to-retrogametalk).
+The PS2 torrent keys are listed [above](#ps2-torrent-config-keys).
+
+## PowerShell parameters
+
+The CMD wrapper passes these through. You can also call the script directly:
+
+```powershell
+.\dlrom\Add-ROM.ps1 -Query "Zelda" [-Platform n64] [-Region usa] [-VitaBuild emu] `
+    [-Sort ...] [-Destination "D:\roms"] [-MaxResults 10] [-Wait] [-Interactive] `
+    [-NoExtract] [-NoSteam] [-LinksOnly] [-NoTorrent] [-TorrentPick N] [-Json] `
+    [-Verbose] [-Quiet]
+
+.\dlrom\Add-ROM.ps1 -Status <jobId> [-Json]
+.\dlrom\Add-ROM.ps1 -ListJobs [-Json]
+.\dlrom\Add-ROM.ps1 -Clean [-All] [-DryRun] [-Json]
+```
+
+`-JobFile <path>` is the worker's own entry point. `Start-DlromJob` uses it. Do not
+call it by hand.
 
 ## Requirements
 
-- **Windows** with PowerShell 5.1+ (ships with Windows 10/11).
-- **7-Zip** (`winget install 7zip.7zip`) - to extract `.7z`/`.rar` archives.
-- Optional: **Python 3** on `PATH` - only to rebuild the PS2 archive torrent index.
-- Optional: **Motrix** or **AB Download Manager** for faster, resumable downloads (any of the
-  built-in fallbacks work without them).
-- Optional: **Steam ROM Manager** (or `srm-wrapper`) for the Steam step.
+- **Windows** with PowerShell 5.1 or newer. This ships with Windows 10 and 11.
+- **7-Zip** (`winget install 7zip.7zip`) to unpack `.7z` and `.rar` files.
+- Optional: **Python 3** on `PATH`, only to rebuild the PS2 torrent index.
+- Optional: **Motrix** or **AB Download Manager** for faster, resumable downloads.
+  The built-in fallbacks work without them.
+- Optional: **Steam ROM Manager** or `srm-wrapper` for the Steam step.
 
 ## Tests
 
 ```powershell
-.\dlrom\tests\Invoke-Tests.ps1          # offline suite, ~2s
-.\dlrom\tests\Invoke-Tests.ps1 -Live    # plus the live site, ~90s
+.\dlrom\tests\Invoke-Tests.ps1          # offline suite, about 2 seconds
+.\dlrom\tests\Invoke-Tests.ps1 -Live    # plus the live site, about 90 seconds
 ```
 
-Needs Pester 5+ (`Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck`).
+Needs Pester 5 or newer:
+
+```powershell
+Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck
+```
 
 | Suite | What it covers |
 |-------|----------------|
-| `Shared.Tests.ps1` | The shared foundation: that there is exactly one ROM extension table (and that it covers every console `PLATFORM_SLUGS` advertises), one archive signature table that `Test-IsArchive` and `Get-ArchiveType` agree on, one reject regex, one region vocabulary, one Vita build vocabulary whose two patterns never overlap; plus `Get-CfgValue` edge cases, the formatters, filename safety and `Install-RomFromDownload`. |
-| `RetroGameTalk.Tests.ps1` | The real functions with only `Invoke-WebRequest` mocked: search URL construction for every platform and filter, result parsing, the nonce reveal POST, link extraction, demo/region/multi-disc selection, Vita build selection and its fallbacks, region detection, edition-aware picking, and failure classification. Fixtures in `tests/fixtures/` are trimmed captures of real Repo pages. |
-| `RetroGameTalk.Live.Tests.ps1` (tag `Live`) | The live catalogue: every platform slug has a category page, every search filter is accepted and does not leak other platforms, 14 known ROMs across the major consoles resolve to real `download.php?...&key=` URLs, a Vita page still carries both builds distinguishable only by their filename marker, and one URL is range-fetched to prove it serves bytes with no cookies. |
+| `Shared.Tests.ps1` | The shared foundation. That there is exactly one ROM extension table, and it covers every console. One archive signature table that both readers agree on. One reject regex. One region vocabulary. One Vita build vocabulary whose two patterns never overlap. Plus config reading, the formatters, filename safety, and `Install-RomFromDownload`. |
+| `RetroGameTalk.Tests.ps1` | The real functions with only `Invoke-WebRequest` mocked. Search URLs for every platform and filter, result parsing, the nonce reveal, link extraction, demo and region and multi-disc selection, Vita build selection and its fallbacks, region detection, edition-aware picking, and failure classification. Fixtures in `tests/fixtures/` are trimmed captures of real pages. |
+| `RetroGameTalk.Live.Tests.ps1` (tag `Live`) | The live site. Every platform slug has a category page. Every search filter works and does not leak other platforms. 14 known ROMs resolve to real download URLs. A Vita page still carries both builds, told apart only by the filename marker. One URL is fetched to prove it serves bytes with no cookies. |
 
-The live suite is what notices the site changing under us. A category rename, a filter value
-that silently stops matching, or a login appearing server-side all fail there and nowhere
-else &mdash; that class of breakage is what ended the cdromance integration.
+**The live suite is what notices the site changing.** A renamed category, a filter
+that silently stops matching, or a login appearing server-side all fail there and
+nowhere else. That class of breakage is what ended the cdromance integration.
 
 ## Module layout
 
-`Add-ROM.ps1` is a thin orchestrator that dot-sources focused modules:
+`Add-ROM.ps1` is a thin orchestrator. It loads these modules:
 
 | File | Responsibility |
 |------|----------------|
-| `Constants.ps1` | Every shared literal: job/downloader vocabularies, ROM and archive extension tables, archive signatures, release markers, region preference, default endpoints. Loaded first. |
-| `Common.ps1` | Dependency-free helpers: `Get-CfgValue`, `Get-UtcStamp`, `Get-DlScriptsDataDir`, `New-ShortId`, `Remove-EmptyDirectory`, region resolution/ranking. |
-| `Add-ROM.ps1` | Argument/config handling, the search + link resolution, and the worker entry point. |
-| `Jobs.ps1` | Job state on disk, the detached worker spawn, `--status` / `--list` rendering, pruning. |
-| `Clean.ps1` | `--clean`: finds temp files, abandoned partials, caches and job history, and refuses to remove anything a live job owns. |
-| `RomPipeline.ps1` | Download -> extract -> file -> Steam. Shared by the worker and `--wait`. |
-| `Logging.ps1` | `Write-Log` (verbosity-aware), progress lines, size/speed/label formatters. |
-| `RetroGameTalk.ps1` | Platform tables, search, and download-link discovery/selection. |
-| `Downloaders.ps1` | Motrix/AB/aria2c/curl/BITS/WebClient backends and the dispatcher. |
-| `RomFiles.ps1` | Archive detection/extraction, ROM discovery, filename safety, and `Install-RomFromDownload` - the one download-to-installed-ROM path, shared by the web pipeline and the torrent fallback. |
-| `SteamRomManager.ps1` | Steam ROM Manager sync (srm-wrapper preferred, built-in fallback). |
-| `QbitTorrent.ps1` | qBittorrent WebUI client used by the PS2 torrent fallback. |
-| `Ps2TorrentIndex.ps1` + `ps2_torrent.py` | PS2 archive torrent fallback: match, selective download, install. |
-| `Ps2Serial.ps1` | PS2 serial resolution and the result block / `[HANDOFF]` line. |
+| `Constants.ps1` | Every shared value: job and downloader names, ROM and archive extensions, archive signatures, release markers, region order, Vita build markers, default addresses. Loaded first. |
+| `Common.ps1` | Small helpers with no dependencies: config reading, timestamps, data folders, short ids, empty-folder cleanup, region and Vita build resolution. |
+| `Add-ROM.ps1` | Arguments, config, the search, the link lookup, and the worker entry point. |
+| `Jobs.ps1` | Job state on disk, starting the detached worker, `--status` and `--list` output, pruning. |
+| `Clean.ps1` | `--clean`. Finds temp files, part-files, caches and job history. Refuses to remove anything a live job owns. |
+| `RomPipeline.ps1` | Download, unpack, install, Steam. Shared by the worker and `--wait`. |
+| `Logging.ps1` | `Write-Log`, progress lines, and size and speed formatting. |
+| `RetroGameTalk.ps1` | Platform tables, search, and download link discovery and selection. |
+| `Downloaders.ps1` | The Motrix, AB, aria2c, curl, BITS and WebClient backends, and the dispatcher. |
+| `RomFiles.ps1` | Archive detection and unpacking, finding the ROM, filename safety, and `Install-RomFromDownload`. That is the one download-to-installed-ROM path, shared by the web pipeline and the torrent fallback. |
+| `SteamRomManager.ps1` | Steam ROM Manager sync. |
+| `QbitTorrent.ps1` | qBittorrent WebUI client, used by the PS2 torrent fallback. |
+| `Ps2TorrentIndex.ps1` + `ps2_torrent.py` | PS2 torrent fallback: match, download one file, install. |
+| `Ps2Serial.ps1` | PS2 serial lookup and the result block with the `[HANDOFF]` line. |
 
 ## Troubleshooting
 
-- **Search fails** - try `dlrom "..." --links-only --verbose` to see the request and the reason.
-- **No download links found** - dlrom saves the page HTML to `%TEMP%\dlrom-debug.html` for inspection.
-  A `403` from the reveal endpoint would mean the site started gating The Repo server-side.
-- **AB download never finishes** - set `abDownloadDir` to AB's actual download folder; raise `abTimeoutSec`.
-- **ROM lands in `\roms` instead of a console folder** - pass `--platform`, or the platform couldn't be
-  inferred from the search result.
-- **A Vita game won't load in Vita3K** - check the job's `vitaBuild`. If it says `console` the game had
-  no Vita3K build on The Repo (dlrom warns when it falls back) and you have a NoNpDrm dump to convert.
-- **A Vita download arrived as a `.zip`** - that is deliberate for a Vita3K build; the emulator installs
-  the archive itself. Use `--vita console` if you wanted the hardware dump.
-- **A job says `orphaned`** - its worker died without recording an outcome (killed, crashed, or the
-  machine went down). Nothing is running; check the job's `logFile` for how far it got, then re-run.
-- **A job sits at the same percentage** - the download backend is retrying. aria2/Motrix retry an
-  unreachable host for a long time before erroring; `dlrom --status <id>` shows the last log lines,
-  and Motrix's own UI shows the underlying task.
-- **`Cannot resolve a ROMs base directory and there is no console to ask`** - dlrom refuses to prompt
-  when nothing can answer. Pass `--dest`, set `romsBase` in the config, connect a drive advertising a
-  `rom_path`, or re-run with `--interactive`.
+| Problem | What to do |
+|---|---|
+| Search fails | Run `dlrom "..." --links-only --verbose` to see the request and the reason. |
+| No download links found | dlrom saves the page to `%TEMP%\dlrom-debug.html`. A `403` from the reveal endpoint would mean the site started gating The Repo server-side. |
+| An AB download never finishes | Set `abDownloadDir` to AB's real folder. Raise `abTimeoutSec`. |
+| ROM lands in `\roms` instead of a console folder | Pass `--platform`. The console could not be guessed from the search result. |
+| A job says `orphaned` | Its worker died without recording an outcome. Nothing is running. Check the job's `logFile` to see how far it got, then run it again. |
+| A job sits at the same percentage | The download backend is retrying. aria2 and Motrix retry an unreachable host for a long time before giving up. `dlrom --status <id>` shows the last log lines. |
+| `Cannot resolve a ROMs base directory` | dlrom refuses to prompt when nothing can answer. Pass `--dest`, set `romsBase` in the config, connect a drive with a `rom_path`, or re-run with `--interactive`. |
+| A Vita game will not load in Vita3K | Check the job's `vitaBuild`. If it says `console`, the game had no Vita3K build and you have a NoNpDrm dump to convert. |
+| A Vita download arrived as a `.zip` | That is correct for a Vita3K build. The emulator installs the archive itself. Use `--vita console` if you wanted the hardware dump. |

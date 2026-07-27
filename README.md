@@ -1,46 +1,54 @@
 # dl-scripts
 
-PowerShell scripts for searching and downloading media with automatic extraction and installation.
+Five PowerShell scripts that search for media, download it, and put it where it
+belongs.
 
-| Script | CMD | Source | Downloader | Description |
-|--------|-----|--------|------------|-------------|
-| [dlanime](dlanime/) | `dlanime.cmd` | nyaa.si | qBittorrent | Anime series and movies |
-| [dlgame](dlgame/) | `dlgame.cmd` | appnetica.com | qBittorrent | PC games (Steam folder versions) |
-| [dlmovie](dlmovie/) | `dlmovie.cmd` | YTS | qBittorrent | Movies |
-| [dltv](dltv/) | `dltv.cmd` | The Pirate Bay | qBittorrent | TV shows |
-| [dlrom](dlrom/) | `dlrom.cmd` | retrogametalk.com/repo | Motrix / AB / aria2c / curl / BITS / PowerShell | Video game ROMs (auto-extract + auto-install to emulator dirs + auto-add to Steam via Steam ROM Manager) |
+| Script | Run as | Downloads | From | Using |
+|--------|--------|-----------|------|-------|
+| [dlanime](dlanime/) | `dlanime.cmd` | Anime series and films | nyaa.si | qBittorrent |
+| [dlgame](dlgame/) | `dlgame.cmd` | PC games | appnetica.com | qBittorrent |
+| [dlmovie](dlmovie/) | `dlmovie.cmd` | Movies | YTS | qBittorrent |
+| [dltv](dltv/) | `dltv.cmd` | TV shows | The Pirate Bay | qBittorrent |
+| [dlrom](dlrom/) | `dlrom.cmd` | Console ROMs | retrogametalk.com/repo | Motrix, AB, aria2c, curl, BITS, or PowerShell |
+
+`dlrom` does more than download. It unpacks the ROM, installs it into the right
+emulator folder, and adds it to Steam.
 
 ## Setup
 
-1. Add the root of this repo to `PATH`
-2. Run any script directly from any terminal:
+1. Add this repo's root folder to `PATH`.
+2. Run any script from any terminal.
 
 ```
-dlanime "Frieren"
+dlanime "Frieren" series
 dlgame "Spider-Man"
 dlmovie "Inception"
 dltv "Breaking Bad"
 dlrom "Zelda" --platform n64
-dlrom "Danganronpa V3" --platform vita   # Vita3K build by default; --vita console for hardware
+dlrom "Danganronpa V3" --platform vita
 ```
 
-Config is stored at `%LOCALAPPDATA%\dlScripts\config.json` and is **auto-created with defaults on first run** — no manual setup required. See each subfolder's `README.md` for the full parameter reference.
+Config is created for you at `%LOCALAPPDATA%\dlScripts\config.json` on first run.
+There is no manual setup step.
 
-## Nothing here blocks on a download
+Each subfolder has its own `README.md` with the full options list.
 
-Every script returns as soon as the transfer is handed off. None of them sit and wait for
-gigabytes to arrive, which matters when the caller is a script, a scheduled task, or an
-agent that has better things to do.
+## The main rule: nothing waits for a download
 
-| Script | Returns when | Follow progress with |
-|--------|--------------|----------------------|
-| `dlanime` / `dlgame` / `dlmovie` / `dltv` | the torrent is queued in qBittorrent | qBittorrent (WebUI on `:8075`) |
-| `dlrom` | the links are resolved and a worker is spawned | `dlrom --status <jobId>` / `dlrom --list` |
+Every script returns as soon as the download is handed off. None of them sit and
+wait for gigabytes to arrive.
 
-The torrent-based scripts have always behaved this way — qBittorrent owns the transfer and
-is where you watch it, so they need no job system of their own.
+This matters when the caller is a script, a scheduled task, or an AI agent.
 
-`dlrom` is the one that downloads over HTTP itself, so it runs its own background worker and
+| Script | Returns when | Check progress with |
+|--------|--------------|---------------------|
+| `dlanime`, `dlgame`, `dlmovie`, `dltv` | the torrent is queued in qBittorrent | qBittorrent's web page on `:8075` |
+| `dlrom` | the links are found and a worker has started | `dlrom --status <jobId>` or `dlrom --list` |
+
+The four torrent scripts hand the file to qBittorrent. qBittorrent owns the
+download and is where you watch it. They need no job system of their own.
+
+`dlrom` downloads over HTTP itself. So it runs its own background worker and
 tracks it as a job:
 
 ```
@@ -55,26 +63,162 @@ $ dlrom --status a3f9c21b8e04
   Progress:   [########............] 41%
 ```
 
-Pass `--wait` to `dlrom` only when you want to sit and watch it. See
-[dlrom/README.md](dlrom/#headless--background-use) for the job model, states, and JSON fields.
+Use `--wait` on `dlrom` only when you want to sit and watch a progress bar.
 
-None of these scripts prompt unless you ask for it: interactive selection is opt-in via
-`--interactive`, and without it they auto-select and carry on. A run with no console
-attached will never stop to ask a question — it fails with an explanation instead.
+**No script prompts you unless you ask.** Use `--interactive` to pick from a list.
+Without it, they choose the best match and continue. A run with no console
+attached never stops to ask a question. It fails with an explanation instead.
+
+## Testing without downloading
+
+Add `-DryRun` to see what a script would do:
+
+```
+dlmovie "Inception" -DryRun
+dltv "Breaking Bad" -DryRun
+dlanime "Frieren" series -DryRun
+dlgame "Spider-Man" -DryRun
+dlrom "Crash Bandicoot" --links-only     # dlrom's version of the same idea
+```
 
 ## Requirements
 
-- **Windows** with PowerShell 5.1+ (built into Windows 10/11).
-- A torrent client (**qBittorrent** with the Web UI enabled) for `dlanime`/`dlgame`/`dlmovie`/`dltv`.
-- `dlrom` additionally uses **7-Zip** (extraction); a download manager (Motrix / AB), Steam ROM Manager and **Python 3** (only to rebuild the PS2 torrent index) are optional — see [`dlrom/README.md`](dlrom/).
+- **Windows** with PowerShell 5.1 or newer. This is built into Windows 10 and 11.
+- **qBittorrent** with the Web UI enabled, for `dlanime`, `dlgame`, `dlmovie` and
+  `dltv`.
+- **7-Zip**, for `dlrom` to unpack archives.
 
-Nothing here is hardcoded to one machine: paths come from `config.json` (auto-created), runtime drive
-detection, or command-line overrides, so the scripts work on a fresh setup.
+Optional for `dlrom`: Motrix or AB Download Manager (faster, resumable downloads),
+Steam ROM Manager (the Steam step), and Python 3 (only to rebuild the PS2 torrent
+index). See [`dlrom/README.md`](dlrom/).
+
+Nothing is hardcoded to one machine. Paths come from `config.json`, from live
+drive detection, or from command-line options. The scripts work on a fresh setup.
+
+## Config
+
+Settings live in `%LOCALAPPDATA%\dlScripts\config.json`, one section per script:
+
+```json
+{
+  "anime":  { "qbitHost": "...", "seriesDestination": "...", "moviesDestination": "...", "maxResults": 75, "autoAppendDualAudio": true, "preferredUploaders": ["judas", "..."], "useDriveMetadata": true },
+  "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
+  "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
+  "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
+  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "vitaBuild": "emu", "jobKeepDays": 7 }
+}
+```
+
+Each script sets itself up. If the file or its section is missing, it is created
+with defaults and the run continues. Nothing crashes. New keys are added to
+existing sections automatically on the next run.
+
+**`useDriveMetadata`** defaults to `true`. When true, the destination is chosen at
+runtime from the connected drives. Set it to `false` to always use the
+`destination` field instead.
+
+**Credentials:** only `dlgame` needs any. They go in a `.settings` file in the
+`dlgame/` folder, which is gitignored. `dlrom` needs no account at all.
+
+## Where files are saved
+
+A separate service called **[drive-registry](../drive-registry)** picks the
+destination drive. These scripts do not choose drives themselves.
+
+That service keeps a central drive policy, writes a `drive-meta.json` onto each
+connected drive, and answers "where should this media type go?".
+
+It is a local HTTP API on `127.0.0.1`. Production uses port `9600`, dev uses
+`9601`. `lib\DriveResolver.ps1` is a thin client for it.
+
+The address is read from `DRIVE_REGISTRY_URL`, then a `driveRegistryUrl` key in
+`config.json`, then the default `http://127.0.0.1:9600`.
+
+**The service is optional.** If it is not running, or not installed, the scripts
+do not fail. Each one falls back to a safe default:
+
+1. Its configured `destination`.
+2. A folder in your home directory: `~/Movies`, `~/TV`, `~/Games`,
+   `~/Anime\Series`, `~/Anime\Movies`, or `~/Emulation\roms`.
+
+A `WARN` line tells you the fallback happened.
+
+### How a drive is chosen
+
+The service reads its `policy.json`. For each drive that file says which media
+types it accepts, with a priority. Higher priority wins. A drive can be marked
+`last_resort`.
+
+For one media type:
+1. Only drives that advertise a path for that type are considered.
+2. They are ranked: non-last-resort first, then priority, then free space.
+
+Unplugged drives are simply absent. So a torrent is never sent to a dead path.
+
+See the drive-registry repo for the policy format.
+
+To see all connected drives and their picks:
+
+```
+powershell -File lib\DriveResolver.ps1
+```
+
+## dlrom in brief
+
+`dlrom` has the most moving parts. Full detail is in
+[`dlrom/README.md`](dlrom/). The short version:
+
+**Where the ROM goes.** In this order, first match wins:
+
+1. `--dest PATH`, an override for this run.
+2. `romsBase` from the config, if that folder exists.
+3. The drive-registry API.
+4. Asking you, but only with `--interactive`.
+
+The ROM is filed under `<romsBase>\<console>`. Folder names follow EmuDeck's
+layout, so PS1 becomes `psx`, GameCube becomes `gc`, Master System becomes
+`mastersystem`, and Vita becomes `psvita`. Both the emulators and Steam ROM
+Manager expect those names.
+
+Without `--platform`, the console is taken from the search result. So a bare
+`dlrom "Game"` still lands in the right folder, not a generic `\roms`.
+
+**Unpacking.** Real archives (zip, 7z, rar, detected by file signature) are
+unpacked. A raw ROM download is installed as-is instead of failing.
+
+**PS Vita has two versions of every game.** `[Vita3K]` is for the emulator.
+`[NoNpDrm]` is for a modded console. They are not interchangeable, and picking
+wrong fails silently: it installs fine, then will not run.
+
+dlrom takes the Vita3K build by default and keeps it as a `.zip`, because the
+emulator imports the archive itself. Use `--vita console` for real hardware. If a
+game has only one build, dlrom warns and takes it. The keep-it-zipped rule follows
+the file actually chosen, not what you asked for.
+
+**Steam.** After installing, dlrom adds the ROM through Steam ROM Manager. It
+never writes a Steam shortcut itself, so running SRM later updates rather than
+duplicating. If SRM is not installed, dlrom logs where the ROM went and carries
+on. Skip it for one run with `--no-steam`.
+
+**Freeing space.** Downloads clean up after themselves. But a worker that is
+*killed* (reboot, task manager, power cut) cannot. `dlrom --clean` sweeps up:
+
+```
+dlrom --clean             # temp files, abandoned part-files, caches
+dlrom --clean --dry-run   # preview only
+dlrom --clean --all       # also clear finished job records
+```
+
+It never deletes a file a running job is using, and never touches your download
+manager's folder or `~\Downloads`.
+
+**No account needed.** The Repo shows a members-only message, but only in the
+browser. A script never runs that JavaScript. dlrom has no login and stores no
+credentials.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the repo layout and conventions (config-driven paths,
-ASCII-only scripts, approved PowerShell verbs, `Write-Log` levels).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the repo layout and conventions.
 
 ## License
 
@@ -82,52 +226,70 @@ ASCII-only scripts, approved PowerShell verbs, `Write-Log` levels).
 
 ## Disclaimer
 
-These scripts automate downloads from third-party sites. Use them only for content you are legally
-entitled to (for example, personal backups of games and media you own). You are responsible for
-complying with the laws of your jurisdiction and the terms of the sites involved.
+These scripts automate downloads from third-party sites. Use them only for content
+you are legally entitled to, such as personal backups of media you own. You are
+responsible for following the laws where you live and the terms of the sites
+involved.
 
 ---
 
-## Agent Context
+# Notes for AI agents
 
-> This section is for AI agents operating in this repo or calling these scripts.
+This section is for AI agents working in this repo or calling these scripts.
+Everything above still applies. This adds the rules that matter most to you.
 
-### What this repo is
+## Rule 1: never wait for a download
 
-A monorepo of five independent PowerShell download scripts, each wrapped by a root-level `.cmd` file. The CMD wrappers are what gets invoked from the terminal (and from PATH). They delegate to the `.ps1` files inside each subfolder.
+Start the command. Report the result. Stop.
 
-### Never block on a download (read this first)
+| Never do this | Why |
+|---|---|
+| Pass `--wait` to `dlrom` | It blocks until the download finishes. It exists for humans watching a progress bar. |
+| Pass `--interactive` to anything | It waits for a keypress you cannot send. |
+| Sleep, or poll in a loop | The download runs on its own. Polling wastes the user's time. |
+| Re-run a command to check on it | That starts a second download. |
 
-Every command here is designed to hand off and return. **Do not wait for a download to
-finish, and never wrap one in a poll-until-done loop.** Start it, report the handle, move on.
+These files take minutes to hours. A blocked call means the user cannot talk to
+you until it ends.
 
-- `dlanime` / `dlgame` / `dlmovie` / `dltv` — return the moment the torrent is queued in
-  qBittorrent. There is nothing to wait for; qBittorrent (`:8075`) owns the transfer.
-- `dlrom` — searches, resolves links, spawns a background worker, prints a **Job ID**, and
-  returns. Report the job id. Check it later with `dlrom --status <jobId>`
-  (add `--json` for parsing) or `dlrom --list`.
-- `--wait` on `dlrom` exists for humans who want to watch a progress bar. **Do not use it.**
+For the four torrent scripts, "added to qBittorrent" **is** the finished result.
+Report it and stop.
 
-These downloads are ROM- and film-sized: minutes to hours. A blocked call is a session you
-cannot talk to until it ends.
+For `dlrom`, the Job ID block **is** success. Report the Job ID and stop. Check
+later with `dlrom --status <jobId>` only when the user asks.
 
-Interactive prompts are opt-in via `--interactive`; without it every script auto-selects.
-If a run genuinely cannot proceed without an answer (e.g. no ROMs base can be resolved) it
-fails with an explanation rather than hanging on a prompt no one can see.
+## Rule 2: pick the right script
 
-### File layout
+Decide series or film before calling `dlanime`. TV anime and OVAs are `series`.
+A standalone anime film is `movie`. This picks the save folder.
+
+Always pass `--platform` to `dlrom`. Only leave it out if nothing was found.
+
+## Rule 3: read the job state before reporting
+
+| Status | What to tell the user |
+|---|---|
+| `pending` | It is starting. |
+| `running` | Give the percent and the `step`. |
+| `completed` | It finished. |
+| `failed` | Read the `message` field and say why. |
+| `orphaned` | The worker died. Nothing is running. Offer to run it again. |
+
+If a job is `failed` or `orphaned`, do not keep checking it.
+
+## File layout
 
 ```
 dl-scripts/
-├── dlanime.cmd              ← invoke this (on PATH)
+├── dlanime.cmd              ← run this (on PATH)
 ├── dlgame.cmd
 ├── dlmovie.cmd
 ├── dltv.cmd
 ├── dlrom.cmd
 ├── lib/
-│   └── DriveResolver.ps1    ← shared: Initialize-DlConfig + drive-registry API client (Resolve-MediaPath)
+│   └── DriveResolver.ps1    ← shared: config setup + drive-registry API client
 ├── dlanime/
-│   ├── Add-Anime.ps1        ← actual logic
+│   ├── Add-Anime.ps1        ← the actual logic
 │   └── README.md
 ├── dlgame/
 │   ├── Add-Game.ps1
@@ -141,198 +303,86 @@ dl-scripts/
 │   ├── Add-TV.ps1
 │   └── README.md
 └── dlrom/
-    ├── Constants.ps1        ← shared literals (job/downloader vocab, extensions, regions)
-    ├── Common.ps1           ← shared helpers (config access, timestamps, region ranking)
-    ├── Add-ROM.ps1          ← orchestrator (thin) + worker entry point (-JobFile)
-    ├── Jobs.ps1             ← job state, detached spawn, --status/--list
-    ├── RomPipeline.ps1      ← download→extract→file→Steam (worker and --wait share it)
-    ├── Logging.ps1          ← Write-Log + progress lines + formatters
-    ├── RetroGameTalk.ps1    ← search + link discovery
-    ├── Downloaders.ps1      ← download backends + dispatcher
-    ├── RomFiles.ps1         ← extraction + ROM install (Install-RomFromDownload)
+    ├── Constants.ps1        ← shared values (job names, extensions, regions, Vita markers)
+    ├── Common.ps1           ← shared helpers (config, timestamps, region and Vita ranking)
+    ├── Add-ROM.ps1          ← orchestrator + worker entry point (-JobFile)
+    ├── Jobs.ps1             ← job state, starting the worker, --status and --list
+    ├── Clean.ps1            ← --clean, and the rule that protects live jobs
+    ├── RomPipeline.ps1      ← download, unpack, install, Steam (worker and --wait share it)
+    ├── Logging.ps1          ← Write-Log, progress lines, formatters
+    ├── RetroGameTalk.ps1    ← search and link discovery
+    ├── Downloaders.ps1      ← download backends and dispatcher
+    ├── RomFiles.ps1         ← unpacking and ROM install
     ├── SteamRomManager.ps1  ← Steam ROM Manager sync
-    ├── QbitTorrent.ps1      ← qBittorrent WebUI client (PS2 torrent fallback)
-    ├── Ps2TorrentIndex.ps1  ← PS2 archive torrent fallback
+    ├── QbitTorrent.ps1      ← qBittorrent client (PS2 torrent fallback)
+    ├── Ps2TorrentIndex.ps1  ← PS2 torrent fallback
     ├── ps2_torrent.py       ← torrent index parser (Python helper)
-    ├── Ps2Serial.ps1        ← PS2 serial resolve + [HANDOFF] line
-    ├── tests/               ← Pester suites + fixtures (Invoke-Tests.ps1)
+    ├── Ps2Serial.ps1        ← PS2 serial lookup and the [HANDOFF] line
+    ├── tests/               ← Pester suites and fixtures
     └── README.md
 ```
 
-> dlrom is split into focused modules that `Add-ROM.ps1` dot-sources. The other tools are
-> still single-file. See [`dlrom/README.md`](dlrom/) for the per-module breakdown.
+`dlrom` is split into modules that `Add-ROM.ps1` loads. The other four tools are
+each a single file.
 
-### Config
+## How the CMD wrappers behave
 
-All non-credential settings live in `%LOCALAPPDATA%\dlScripts\config.json`, structured as one object per script:
+- They use `%~dp0` to find the `.ps1` next to them. So the scripts work from any
+  directory, whatever PATH says.
+- They call PowerShell with `-NoProfile`. The user's profile is irrelevant here,
+  and loading it is slow and adds noise to stdout.
+- **The `.cmd` files must keep CRLF line endings.** `.gitattributes` enforces
+  this. `cmd.exe` finds a `goto` label by jumping to a byte offset. With LF-only
+  endings that jump lands mid-line once the file grows, and the label is reported
+  "not found". The failure is silent and depends on file length, so it shows up as
+  one subcommand breaking after an unrelated edit made the file longer.
 
-```json
-{
-  "anime":  { "qbitHost": "...", "seriesDestination": "...", "moviesDestination": "...", "maxResults": 75, "autoAppendDualAudio": true, "preferredUploaders": ["judas", "..."], "useDriveMetadata": true },
-  "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
-  "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
-  "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
-  "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "vitaBuild": "emu", "jobKeepDays": 7 }
-}
-```
+### What each wrapper accepts
 
-Each script self-bootstraps: if the file or its section is missing, it is created with defaults and execution continues. No crash, no manual step. New keys (e.g. `useDriveMetadata`) are automatically backfilled into existing sections on next run.
+- `dlanime.cmd`: `"Query" [series|movie] [destination] [--list]`. `--list` can go
+  anywhere.
+- `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd`: `"Query" [destination]`.
+- **All four also forward flags.** Any argument starting with `-` goes straight to
+  the `.ps1`. Examples: `-DryRun`, `-Interactive`, `-MaxResults 20`,
+  `-TrustedOnly`. The first bare word after the query is still the destination.
+- `dlrom.cmd`: `"Query"` plus the options listed in
+  [`dlrom/README.md`](dlrom/#flags). It also takes the subcommands `--status`,
+  `--list` and `--clean`. Those are matched before `%1` is treated as a game name,
+  because none of them carry one.
 
-`dlgame` additionally requires a `.settings` file in the `dlgame/` subfolder for appnetica.com credentials (Email, Password); it is gitignored. `dlrom` needs no credentials at all. All other settings come from `config.json`.
+## How dlrom's background worker starts
 
-**`useDriveMetadata` (default: `true`)** — when true, destination is resolved at runtime from `drive-meta.json` files on connected drives instead of the hardcoded `destination` field. Set to `false` to re-enable the explicit `destination` field (e.g. for a pinned path you always want to use).
+The worker is the same `Add-ROM.ps1`, re-run with `-JobFile <path>`.
 
-### Download methods
+Job state and logs go to `%LOCALAPPDATA%\dlScripts\jobs\rom\<id>.json` and
+`<id>.log`. Read the JSON directly if `--status --json` is inconvenient.
 
-- **dlanime, dlgame, dlmovie, dltv**: Queue torrents to qBittorrent via WebUI API (`POST /api/v2/torrents/add`). qBittorrent must be running with Web UI enabled. The host is configured per-section in `config.json`.
-- **dlrom**: Downloads direct files via **Motrix → AB Download Manager → aria2c → curl.exe → BITS → PowerShell WebClient**. Auto-detects the best available downloader at runtime and falls through on failure. Auto-extracts archives and installs ROMs to emulator directories.
-  - **AB Download Manager** (port `abPort`, default 15151) is used when Motrix isn't running. Its API can queue a download but can't report completion, so dlrom passes a `suggestedName` and **watches AB's download folder** (`abDownloadDir`, default `%USERPROFILE%\Downloads\ABDM`) until the file finishes, then moves it into the pipeline. Set `abDownloadDir` if you changed AB's download location; `abTimeoutSec` bounds the wait.
+The worker starts through raw `ProcessStartInfo` with `CreateNoWindow` and
+`UseShellExecute=$false`, and `cmd` redirects its output to the log file. Two
+details are load-bearing:
 
-### ROM destination resolution (dlrom)
+1. PowerShell's `Start-Process` cannot set `CreateNoWindow`, so it flashes a
+   console window.
+2. The worker must not inherit the caller's console handles. If it does,
+   `dlrom.cmd` stays tied to the worker and the caller's terminal hangs. Avoiding
+   that is the entire reason this design exists.
 
-The base directory is resolved in priority order, so the local emulation library always wins when present:
+The worker's stdin is redirected and closed. So a stray prompt hits end-of-file
+and fails fast instead of blocking forever.
 
-1. `--dest PATH` — explicit per-run override.
-2. `romsBase` (default `C:\Emulation\roms`) — used whenever the folder exists.
-3. **drive-registry API** — only if `romsBase` is missing: `Resolve-MediaPath -MediaType 'rom' -Strict` calls `GET /resolve?media=rom&strict=1`, which returns the highest-priority connected drive advertising a ROM path.
-4. Manual prompt — last resort if no drive advertises a ROM path.
+Finished jobs are deleted after `jobKeepDays` (default 7). Running jobs are never
+deleted. `--wait` runs the identical pipeline in the foreground and still writes a
+job file, so the two modes cannot drift apart.
 
-The ROM is filed under `<romsBase>\<console>` (EmuDeck layout). When `--platform` is omitted, the console folder is taken from the platform detected on the chosen search result, so a bare `dlrom "Game"` still lands in the right folder instead of a generic `\roms`.
+## When editing scripts
 
-Whatever the downloader (Motrix, AB, etc.) drops the file as, the final ROM is always moved into `<romsBase>\<console>`: real archives (zip/7z/rar, detected by signature) are extracted first; a **raw ROM** download (`.iso`/`.chd`/`.nds`/…) is filed directly instead of failing extraction and being left behind in the downloader's folder.
-
-### PS Vita: emulator vs console builds (dlrom)
-
-The Vita is the one platform whose games The Repo publishes **twice**, and the two files are not interchangeable: `[Vita3K]` is repacked for the [Vita3K](https://vita3k.org/) emulator, `[NoNpDrm]` is a dump for a modded console. Grabbing the wrong one fails silently — it installs perfectly and then will not run.
-
-- **The Vita3K build is the default.** `--vita console` takes the hardware dump instead, `--vita any` switches the preference off, and `[rom].vitaBuild` changes the default for every run. Given without `--platform`, `--vita` also implies the Vita catalogue.
-- **A Vita3K download is never extracted** — the emulator imports the `.zip` itself, so it is filed into `<romsBase>\psvita` exactly as it arrived. No `--no-extract` needed.
-- **One-build games still work.** Console-only and unmarked releases are common; dlrom warns and takes what exists rather than returning nothing. The keep-it-zipped rule follows the file that was actually chosen, not the request, so a NoNpDrm fallback still extracts normally.
-
-Which build landed is recorded on the job (`vitaBuild`) and printed in the result block. Full detail in [`dlrom/README.md`](dlrom/#ps-vita-emulator-vs-console-builds).
-
-### The Repo needs no account (dlrom)
-
-The ROM catalogue that used to live at cdromance.org is now **The Repo**, a WordPress catalogue mounted under the RetroGameTalk forum at `retrogametalk.com/repo/`.
-
-It advertises a members-only gate, but that gate is enforced entirely in the browser — `if (!document.cookie.includes("xf_online=1")) location.replace("/login/")` — and a script never executes it. Browsing, searching, the "Show Links" reveal and the file transfer all work anonymously, so dlrom has **no login and stores no credentials**.
-
-dlrom keeps one cookie jar per run for a narrower reason: the reveal call must present the WordPress nonce scraped from the game page, and WordPress ties that nonce to the `PHPSESSID` it was minted under. An empty reveal makes dlrom discard the jar and retry once with a fresh nonce.
-
-Unlike cdromance, retrogametalk.com serves plain HTTP clients without a Cloudflare challenge, so there is **no Docker, FlareSolverr or `curl_cffi` dependency any more** — `Invoke-WebRequest` is enough. The resolved `dl*.retrogametalk.com/download.php?…&key=…` URLs carry their own authorisation in the query string and need no cookie, so Motrix/AB/aria2 fetch them directly.
-
-Use `--links-only` to resolve and print the download links without downloading.
-
-### Steam ROM Manager integration (dlrom)
-
-After a ROM is installed, `dlrom` adds it to Steam via **Steam ROM Manager (SRM)** — it never writes a Steam shortcut itself. Because SRM tracks what it has added, running SRM by hand later reconciles instead of creating duplicates.
-
-`dlrom` **prefers the standalone `srm-wrapper` CLI** (sibling `srm-wrapper` repo) if it's on `PATH` (or set `srmWrapperCmd`): it runs `srm-wrapper --rom-dir <dest> --restart-steam <policy>`. If the wrapper isn't installed or returns non-zero, `dlrom` falls back to its **built-in** implementation (`Invoke-SteamRomManager` in `Add-ROM.ps1`):
-1. Locate `srm.exe` (config `srmExe`, else `C:\Emulation\tools\srm.exe`, else `PATH`).
-2. If `srmEnableParser`, read SRM's `userConfigurations.json` and enable any **disabled** parser whose `romDirectory` resolves to the destination folder (`srm enable <id>`), so the platform actually gets scanned.
-3. Honour `srmRestartSteam`: on `auto` (default) restart Steam only if it is running — gracefully `steam -shutdown`, run SRM, then relaunch (SRM needs Steam closed to apply categories, and Steam only reads new shortcuts on restart).
-4. Run `srm add` silently (`-WindowStyle Hidden`), then relaunch Steam if it was closed.
-
-If **neither** the wrapper nor `srm.exe` is found, `dlrom` does **not** crash — it logs where the ROM was saved and suggests installing `srm-wrapper` or SRM.
-
-Config keys (`[rom]` section): `steamSync` (master on/off, default `true`), `srmWrapperCmd` (blank = autodetect on PATH), `srmExe`, `srmRestartSteam` (`auto`/`never`/`always`), `srmEnableParser`. Skip per-run with `--no-steam`.
-
-Notes:
-- Platform folders match EmuDeck's layout (e.g. PS1 → `psx`, GameCube → `gc`, Master System → `mastersystem`, Vita → `psvita`) so both the emulators and SRM's parsers find the files.
-- `srm add` runs **all** currently-enabled parsers, so the first sync may add a backlog of everything already on disk — SRM dedupes, so this is safe.
-- Requires SRM configured once (EmuDeck does this) with its parsers pointing at `romsBase`.
-
-### Temp cleanup (dlrom)
-
-Each download removes its temp archive and extraction directory in a `finally`, so nothing is left in `%TEMP%\dlrom` whether the download **succeeds or fails**. Only the installed ROM remains at its destination. `--no-extract` is the one exception: it intentionally keeps the downloaded archive (that's the deliverable) and does not extract. A PS Vita **Vita3K** build takes that same path automatically, since the emulator installs the `.zip` itself.
-
-A worker that is *killed* — reboot, task manager, power cut — never reaches that `finally`, so `dlrom --clean` exists to sweep up after it:
-
-```
-dlrom --clean             # temp files, abandoned partials (.aria2/.part/...), caches
-dlrom --clean --dry-run   # preview only
-dlrom --clean --all       # also clear finished job records and logs
-```
-
-It will **never** delete something a live job is downloading (identity comes from the active jobs' link labels, not from the file), and it does not touch your download manager's folder or `~\Downloads`. Details in [`dlrom/README.md`](dlrom/#housekeeping--clean).
-
-### CMD wrapper behaviour
-
-- `%~dp0` is used to resolve the `.ps1` path relative to the CMD file, so the scripts work correctly regardless of which directory the user is in or where PATH points.
-- All wrappers invoke PowerShell with `-NoProfile`: the user's profile is irrelevant to these scripts, and loading it slows every run and prepends profile noise to stdout that a caller parsing output has to wade through.
-- **The `.cmd` files must keep CRLF line endings** (enforced by `.gitattributes`). `cmd.exe` resolves `goto` by seeking to a byte offset, and with LF-only endings that seek lands mid-line once the file is long enough — the label is then reported "not found". It fails positionally, so it surfaces as one subcommand breaking after an unrelated edit made the file longer.
-- `dlanime.cmd` accepts: `"Query" [series|movie] [destination] [--list]` — `--list` can appear in any position.
-- `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd` accept: `"Query" [destination]`.
-- **All four also forward PowerShell flags.** Any argument starting with `-` (e.g. `-DryRun`, `-Interactive`, `-MaxResults 20`, `-TrustedOnly`) is passed straight through to the `.ps1`; the first bare word after the query is still the destination. Before this, `dlmovie "Inception" -DryRun` handed `-DryRun` over as the *destination* and PowerShell rejected it with `Missing an argument for parameter 'Destination'` — so the documented `-DryRun` examples never actually worked from the wrappers.
-- `dlrom.cmd` accepts: `"Query" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]`, plus the subcommands `--status <jobId> [--json]`, `--list [--json]` and `--clean [--all] [--dry-run] [--json]`. These are matched before `%1` is treated as a game name, since none of them carry one. By default it prints a clean summary; `--verbose` reveals every internal step, `--quiet` shows only results and problems.
-
-### Background jobs (dlrom)
-
-`dlrom` returns after resolving links and spawning a worker; the worker is the same
-`Add-ROM.ps1` re-invoked with `-JobFile <path>`.
-
-- Job state and logs: `%LOCALAPPDATA%\dlScripts\jobs\rom\<id>.json` / `<id>.log`. Read the
-  JSON directly if `--status --json` is inconvenient.
-- The spawn uses raw `ProcessStartInfo` with `CreateNoWindow` + `UseShellExecute=$false`,
-  and `cmd`'s own `> log 2>&1` for output. Two reasons, both load-bearing: PowerShell's
-  `Start-Process` cannot express `CreateNoWindow` (so it flashes a console window), and the
-  worker must not inherit the caller's console handles — if it does, `dlrom.cmd` stays
-  tethered to the worker and the caller's terminal hangs, which is the whole bug this
-  design exists to avoid. The worker's stdin is redirected and closed, so a stray prompt
-  hits EOF and fails fast instead of blocking forever.
-- Statuses: `pending`, `running`, `completed`, `failed`, and `orphaned` (the worker's process
-  is gone but recorded no outcome — computed at read time, never stored).
-- Finished jobs are pruned after `jobKeepDays` (default 7). Running jobs are never pruned.
-- `--wait` runs the identical pipeline in the foreground and still writes a job file, so the
-  two modes cannot drift apart.
-
-### Drive metadata (drive-registry API)
-
-Destination drives are chosen by the **[drive-registry](../drive-registry)** service, not by these
-scripts. That service owns the whole story: it holds a central, serial-keyed drive policy, stamps a
-`drive-meta.json` onto each connected drive (including drives plugged in after it started), and
-resolves the best destination for a media type. It is a localhost HTTP API bound to `127.0.0.1`
-(prod `:9600`, dev `:9601`). `lib\DriveResolver.ps1` is a thin client: `Resolve-MediaPath -MediaType
-<type>` calls `GET /resolve?media=<type>` and returns the picked path. No drive-picking logic lives
-in this repo anymore.
-
-The base URL is resolved from `DRIVE_REGISTRY_URL`, then a top-level `driveRegistryUrl` key in
-`config.json`, then the `http://127.0.0.1:9600` default. To run the service, use `setup-startup.ps1`
-in the [drive-registry](../drive-registry) repo (registers it to launch at logon) or `npm start`
-there for a foreground instance.
-
-**The service is optional.** If it isn't running (or isn't installed at all), the scripts don't
-fail — each one degrades to a safe default destination: its configured `destination` (the same folder
-it uses when `useDriveMetadata` is `false`), else a per-type folder under your home directory
-(`~/Movies`, `~/TV`, `~/Games`, `~/Anime\Series`, `~/Anime\Movies`, `~/Emulation\roms`). A `WARN`
-line notes the fallback. So `dl*` works out of the box; the service just adds multi-drive routing.
-(Set `useDriveMetadata` to `false` in `config.json` to skip the service entirely and always use the
-configured `destination`.)
-
-The service computes each drive's role live from its central `policy.json`, which declares per drive
-the media it accepts, each with a priority (higher wins) and optional `last_resort`. For a media type,
-only drives that advertise a path for it are candidates; they rank by non-last-resort first, then
-priority, then free space. Drives that are unplugged are simply absent, so a torrent is never sent to a
-dead path. See the drive-registry repo for the policy format.
-
-**To test resolution without submitting a torrent:**
-```
-dlmovie "Test" -DryRun
-dlgame "Test" -DryRun
-dlanime "Test" -isAnimeSeries yes -DryRun
-dltv "Test" -DryRun
-```
-
-**To inspect all connected drives and their picks (queries the API):**
-```
-powershell -File lib\DriveResolver.ps1
-```
-
-### When editing scripts
-
-- Logic lives in the `.ps1` files. The `.cmd` files only parse args and invoke PowerShell.
-- `Initialize-DlConfig` lives in `lib\DriveResolver.ps1` and is dot-sourced by each script. The function signature is unchanged.
-- `Resolve-MediaPath` (same file) is a client for the drive-registry API — it does no drive scanning or scoring itself. To change how drives are ranked or add a drive, edit the [drive-registry](../drive-registry) policy, not these scripts.
-- All scripts use identical logging via `Write-Log` with levels: `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`. In dlrom, `DEBUG` is hidden unless `--verbose`/`-Verbose` is passed, and `--quiet`/`-Quiet` hides routine `INFO`.
-- **dlrom** is split into dot-sourced modules (the others are single-file). `Add-ROM.ps1` is the orchestrator; the logic lives in `RetroGameTalk.ps1` (scraping: `Invoke-RgtSearch`, `Get-RgtDownloadLinks`, `Select-DownloadLinks` — PS Vita build choice, multi-disc, English/USA preference, demo filtering), `Downloaders.ps1` (the `Invoke-FileDownload` dispatcher over Motrix/AB/aria2c/curl/BITS/WebClient), `RomFiles.ps1` (extraction + install), `SteamRomManager.ps1`, and `Logging.ps1`. See [`dlrom/README.md`](dlrom/) for the full breakdown.
-
+- Logic goes in the `.ps1` files. The `.cmd` files only parse arguments and call
+  PowerShell.
+- `Initialize-DlConfig` lives in `lib\DriveResolver.ps1` and is loaded by each
+  script.
+- `Resolve-MediaPath` (same file) is only a client for the drive-registry API. It
+  does no drive scanning or ranking. To change how drives are ranked, or to add a
+  drive, edit the [drive-registry](../drive-registry) policy, not these scripts.
+- All scripts log through `Write-Log` with the levels `INFO`, `SUCCESS`, `WARN`,
+  `ERROR` and `DEBUG`. In `dlrom`, `DEBUG` is hidden unless you pass `--verbose`,
+  and `--quiet` hides routine `INFO`.

@@ -1,13 +1,17 @@
 # Contributing to dl-scripts
 
-Thanks for your interest in improving dl-scripts. This is a small monorepo of independent
-Windows download helpers, so contributions are kept lightweight.
+Thanks for your interest in improving dl-scripts.
+
+This is a small collection of independent Windows download helpers. Contributions
+are kept lightweight.
 
 ## Repo shape
 
-Each tool is a root-level `.cmd` wrapper that parses arguments and delegates to PowerShell in
-a same-named subfolder. The `.cmd` files only marshal arguments &mdash; all logic lives in the
-`.ps1` files. Shared helpers live in `lib/`.
+Each tool has a `.cmd` wrapper in the repo root. The wrapper parses arguments and
+calls a PowerShell script in a folder of the same name.
+
+The `.cmd` files only handle arguments. All logic lives in the `.ps1` files.
+Shared helpers live in `lib/`.
 
 ```
 <tool>.cmd        ← arg parsing, on PATH; calls the .ps1 with -Named parameters
@@ -15,32 +19,37 @@ a same-named subfolder. The `.cmd` files only marshal arguments &mdash; all logi
 lib/*.ps1         ← shared (Initialize-DlConfig; Resolve-MediaPath = drive-registry API client)
 ```
 
-`dlrom` is further split into dot-sourced modules (`Constants.ps1`, `Common.ps1`, `Logging.ps1`,
-`RetroGameTalk.ps1`, `Downloaders.ps1`, `RomFiles.ps1`, `SteamRomManager.ps1`) with `Add-ROM.ps1`
-as a thin orchestrator. New, self-contained concerns should follow that pattern rather than
-growing a single file.
+`dlrom` is split further into modules that `Add-ROM.ps1` loads: `Constants.ps1`,
+`Common.ps1`, `Logging.ps1`, `RetroGameTalk.ps1`, `Downloaders.ps1`,
+`RomFiles.ps1`, `Clean.ps1` and `SteamRomManager.ps1`.
 
-`Constants.ps1` loads first and owns every literal more than one module depends on - job
-states, downloader ids, ROM/archive extensions, release markers, region preference, PS Vita
-build markers. If you
-find yourself writing a second copy of a table or a regex, it belongs there instead; the
-tables that are in there now each started life as two or three copies that drifted apart.
+`Add-ROM.ps1` stays thin. Add a new module for a new concern instead of growing
+one file.
+
+`Constants.ps1` loads first. It owns every value that more than one module needs:
+job states, downloader ids, ROM and archive extensions, release markers, region
+order, and PS Vita build markers.
+
+If you are about to write a second copy of a table or a regex, put it there
+instead. Every table in that file began as two or three copies that drifted apart.
 
 ## Conventions
 
-- **No hardcoded personal paths.** Anything machine-specific belongs in
-  `%LOCALAPPDATA%\dlScripts\config.json` (auto-created and backfilled by `Initialize-DlConfig`),
-  resolved at runtime via the drive-registry API, or accepted as a parameter. Ship sensible defaults.
-- **ASCII only in script content.** No box-drawing characters, smart quotes, or emoji in `.ps1` /
-  `.cmd` / `.py` files &mdash; they break across terminals and editors. Plain `# --- Section ---`
-  dividers are fine.
-- **Approved PowerShell verbs.** Use `Get-`, `Invoke-`, `Test-`, `Find-`, `Format-`, etc.
-  (`Get-Verb` lists them). Keep functions small and single-purpose.
-- **Logging goes through `Write-Log`** with levels `INFO`, `SUCCESS`, `WARN`, `ERROR`, `DEBUG`.
-  Default output should stay clean: put step-by-step detail at `DEBUG` (hidden unless `--verbose`),
-  reserve `INFO` for things the user actually wants to see.
-- **Fail soft.** Missing optional dependencies (Motrix, SRM, a drive) should degrade gracefully with
-  a clear message, not crash.
+- **No hardcoded personal paths.** Anything machine-specific goes in one of three
+  places: `%LOCALAPPDATA%\dlScripts\config.json`, the drive-registry API at
+  runtime, or a parameter. Always ship a sensible default.
+- **ASCII only in script content.** No box-drawing characters, smart quotes or
+  emoji in `.ps1`, `.cmd` or `.py` files. They break across terminals and editors.
+  Plain `# --- Section ---` dividers are fine.
+- **Approved PowerShell verbs.** Use `Get-`, `Invoke-`, `Test-`, `Find-`,
+  `Format-` and so on. Run `Get-Verb` for the full list. Keep functions small and
+  single-purpose.
+- **Log through `Write-Log`.** The levels are `INFO`, `SUCCESS`, `WARN`, `ERROR`
+  and `DEBUG`. Keep the default output clean. Put step-by-step detail at `DEBUG`,
+  which is hidden unless `--verbose` is passed. Use `INFO` only for things the
+  user wants to see.
+- **Fail soft.** A missing optional dependency, such as Motrix, SRM or a drive,
+  should print a clear message and carry on. It must not crash.
 - **Commits:** conventional style, e.g. `feat(dlrom): ...`, `fix(dlrom): ...`, `docs: ...`.
 
 ## Testing changes
@@ -53,13 +62,15 @@ tables that are in there now each started life as two or three copies that drift
    .\dlrom\tests\Invoke-Tests.ps1          # offline, ~2s - run this every time
    .\dlrom\tests\Invoke-Tests.ps1 -Live    # also hits retrogametalk.com, ~90s
    ```
-   The offline suite mocks exactly one thing, `Invoke-WebRequest`, and drives the real
-   functions against trimmed captures of real Repo pages in `dlrom/tests/fixtures/`. Add
-   cases there when you touch URL building, parsing or selection.
+   The offline suite mocks exactly one thing: `Invoke-WebRequest`. Everything else
+   is the real code, run against trimmed captures of real pages in
+   `dlrom/tests/fixtures/`. Add cases there when you touch URL building, parsing
+   or selection.
 
-   The `Live` suite is the one that catches the site changing underneath us - a renamed
-   category, a filter value that stops matching, a login appearing. Run it before shipping
-   anything that touches `RetroGameTalk.ps1`, and when `dlrom` starts finding nothing.
+   The `Live` suite catches the site changing underneath us. That means a renamed
+   category, a filter that stops matching, or a login appearing. Run it before
+   shipping anything that touches `RetroGameTalk.ps1`, and whenever `dlrom` starts
+   finding nothing.
 
 2. Parse-check every script you touched (the tests only cover `dlrom`):
    ```powershell
