@@ -1,0 +1,16 @@
+# Batch wrappers MUST keep CRLF in the working tree.
+#
+# cmd.exe seeks by byte offset when it resolves `goto`, and with LF-only line endings that
+# seek lands mid-line once the file is long enough - the label is then "not found". It fails
+# silently and positionally, so it shows up as one subcommand breaking after an unrelated
+# edit grew the file. dlrom.cmd hit exactly this.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# PowerShell reads either, but these are Windows-only scripts; keep them consistent.
+*.ps1 text eol=crlf
+
+# Everything else follows the platform default.
+*.md   text
+*.py   text
+*.json text

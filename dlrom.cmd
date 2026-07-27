@@ -3,6 +3,11 @@ REM dlrom - Download ROMs from RetroGameTalk's Repo and install them to your emu
 REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
 REM        dlrom --status <jobId> [--json]
 REM        dlrom --list [--json]
+REM        dlrom --clean [--all] [--dry-run] [--json]
+REM
+REM --clean reclaims what dlrom is holding: interrupted downloads, extraction working dirs,
+REM abandoned partials, the saved debug page and rebuildable caches. Files a running job is
+REM downloading are never touched. --all also clears finished job records and logs.
 REM
 REM Downloads run in the BACKGROUND by default: dlrom searches, resolves the links, spawns
 REM a worker and returns a job id straight away. Follow it with --status; use --wait only
@@ -36,17 +41,22 @@ if not exist "%SCRIPT%" (
     exit /b 1
 )
 
-REM --- job queries: these carry no game name, so handle them before %1 becomes the query ---
+REM --- job queries and housekeeping: these carry no game name, so handle them before
+REM     %1 becomes the query ---
 if /i "%~1"=="--list"   goto :job_list
 if /i "%~1"=="-list"    goto :job_list
 if /i "%~1"=="--jobs"   goto :job_list
 if /i "%~1"=="--status" goto :job_status
 if /i "%~1"=="-status"  goto :job_status
+if /i "%~1"=="--clean"  goto :do_clean
+if /i "%~1"=="-clean"   goto :do_clean
+if /i "%~1"=="--clear"  goto :do_clean
 
 if "%~1"=="" (
     echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
     echo        dlrom --status ^<jobId^> [--json]
     echo        dlrom --list [--json]
+    echo        dlrom --clean [--all] [--dry-run] [--json]
     echo.
     echo Downloads run in the BACKGROUND by default and return a job id immediately.
     echo.
@@ -65,6 +75,8 @@ if "%~1"=="" (
     echo   --wait         stay in the foreground until the ROM is installed
     echo   --status ID    show progress for a job
     echo   --list         list recent jobs
+    echo   --clean        delete temp files, abandoned partials and caches
+    echo                  add --all for job history, --dry-run to preview
     echo   --json         machine-readable output
     echo   --interactive  pick from the results list instead of auto-selecting
     echo   --no-extract   keep the downloaded archive; do not extract or install
@@ -187,5 +199,22 @@ if "%~2"=="" (
 )
 set "PS_ARGS=-Status "%~2""
 if /i "%~3"=="--json" set "PS_ARGS=%PS_ARGS% -Json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+REM --- housekeeping: --clean [--all] [--dry-run] [--json] in any order ---
+:do_clean
+set "PS_ARGS=-Clean"
+:clean_args
+shift
+if "%~1"=="" goto :clean_run
+if /i "%~1"=="--all"     ( set "PS_ARGS=%PS_ARGS% -All"    & goto :clean_args )
+if /i "%~1"=="--dry-run" ( set "PS_ARGS=%PS_ARGS% -DryRun" & goto :clean_args )
+if /i "%~1"=="--dryrun"  ( set "PS_ARGS=%PS_ARGS% -DryRun" & goto :clean_args )
+if /i "%~1"=="-n"        ( set "PS_ARGS=%PS_ARGS% -DryRun" & goto :clean_args )
+if /i "%~1"=="--json"    ( set "PS_ARGS=%PS_ARGS% -Json"   & goto :clean_args )
+if /i "%~1"=="--verbose" ( set "PS_ARGS=%PS_ARGS% -Verbose" & goto :clean_args )
+goto :clean_args
+:clean_run
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
 exit /b %ERRORLEVEL%
