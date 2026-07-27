@@ -79,8 +79,10 @@ $script:DOWNLOADER_LABELS = @{
     $script:DL_WEBCLIENT = 'PowerShell Invoke-WebRequest (last resort)'
 }
 
-# Suffixes a download manager leaves on a file that is still being written.
-$script:PARTIAL_EXTS = @('.part', '.tmp', '.download', '.crdownload', '.abdownload', '.bak')
+# Suffixes a download manager leaves on a file that is still being written. Drives both the
+# "has AB finished?" check and what --clean recognises as an abandoned transfer.
+# .aria2 is aria2's own control file, which Motrix leaves beside every in-flight download.
+$script:PARTIAL_EXTS = @('.part', '.tmp', '.download', '.crdownload', '.abdownload', '.bak', '.aria2')
 
 # --- Archives -----------------------------------------------------------------
 

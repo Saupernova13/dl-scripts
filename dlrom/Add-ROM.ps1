@@ -46,7 +46,12 @@ param(
     [string]$Status = "",
     [switch]$ListJobs,
     [string]$JobFile = "",
-    [switch]$Json
+    [switch]$Json,
+
+    # Housekeeping surface
+    [switch]$Clean,
+    [switch]$All,
+    [switch]$DryRun
 )
 
 # Load order matters for the two files that define script-scope VALUES rather than just
@@ -68,6 +73,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
 . (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
 . (Join-Path $PSScriptRoot 'RomPipeline.ps1')       # download -> extract -> file -> Steam (shared by worker and --wait)
+. (Join-Path $PSScriptRoot 'Clean.ps1')             # --clean: temp files, partials, caches, job history
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
@@ -122,6 +128,14 @@ $script:AB_PORT    = [int](Get-CfgValue 'abPort' $script:DEFAULT_AB_PORT)
 $script:AB_TIMEOUT = [int](Get-CfgValue 'abTimeoutSec' 1800)
 $abDirCfg          = Get-CfgValue 'abDownloadDir' ''
 $script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
+
+# ---------------------------------------------------------------------------
+# Housekeeping. Placed after config (it needs tempDir, romsBase and the AB folder)
+# but before anything that wants a query -- --clean carries no game name.
+# ---------------------------------------------------------------------------
+if ($Clean) {
+    exit (Invoke-DlromClean -TempDir $tempDir -All:$All -DryRun:$DryRun -AsJson:$Json)
+}
 
 # ---------------------------------------------------------------------------
 # Worker mode (internal). Runs the slow half of a job that the parent already
