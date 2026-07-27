@@ -120,6 +120,36 @@ Describe 'Constants: one table per concept' {
         }
         $script:DOWNLOADER_LABELS.Count | Should -Be 6
     }
+
+    It 'gives every Vita build a distinct code and a label' {
+        $all = @($script:VITA_BUILD_EMU, $script:VITA_BUILD_CONSOLE, $script:VITA_BUILD_ANY)
+        ($all | Select-Object -Unique).Count | Should -Be $all.Count
+        foreach ($b in $all) {
+            $script:VITA_BUILD_LABELS[$b] | Should -Not -BeNullOrEmpty -Because "'$b' is shown to the user"
+        }
+    }
+
+    It 'defaults Vita downloads to the emulator build' {
+        # dlrom's documented behaviour, and what the config default and --vita fall back to.
+        $script:VITA_BUILD_DEFAULT | Should -BeExactly $script:VITA_BUILD_EMU
+    }
+
+    It 'points the Vita slug at a real platform category' {
+        $PLATFORM_SLUGS.Values  | Should -Contain $script:VITA_SLUG
+        $PLATFORM_FOLDERS[$script:VITA_SLUG] | Should -BeExactly 'psvita'
+    }
+
+    It 'never lets the two Vita build patterns match the same marker' {
+        # They gate opposite install behaviour, so an overlap would be a coin toss.
+        foreach ($marker in @('vita3k', 'Vita3K', 'Vita3k')) {
+            $marker | Should -Match     $script:VITA_EMU_RX
+            $marker | Should -Not -Match $script:VITA_CONSOLE_RX
+        }
+        foreach ($marker in @('NoNpDrm', 'NoNpDRM', 'nonpdrm', 'NoNPDrm', 'MaiDump')) {
+            $marker | Should -Match     $script:VITA_CONSOLE_RX
+            $marker | Should -Not -Match $script:VITA_EMU_RX
+        }
+    }
 }
 
 Describe 'Get-CfgValue' {
@@ -220,6 +250,70 @@ Describe 'Region helpers' {
         # Different inputs, but they must produce the same vocabulary or ranking breaks.
         $fromSlug = Get-RgtRegions 'https://retrogametalk.com/repo/ps2-iso/game-usa/' ''
         $fromSlug | Should -Contain (Resolve-RegionRequest 'usa')
+    }
+}
+
+Describe 'PS Vita build helpers' {
+
+    It 'resolves every documented --vita synonym' {
+        foreach ($alias in @('emu', 'emulator', 'vita3k', 'vita-3k', '3k')) {
+            Resolve-VitaBuild $alias | Should -BeExactly 'emu'
+        }
+        foreach ($alias in @('console', 'hardware', 'hw', 'real', 'handheld', 'nonpdrm', 'no-npdrm')) {
+            Resolve-VitaBuild $alias | Should -BeExactly 'console'
+        }
+        foreach ($alias in @('any', 'both', 'either')) {
+            Resolve-VitaBuild $alias | Should -BeExactly 'any'
+        }
+    }
+
+    It 'is case-insensitive and tolerates padding' {
+        Resolve-VitaBuild '  Vita3K '  | Should -BeExactly 'emu'
+        Resolve-VitaBuild 'CONSOLE'    | Should -BeExactly 'console'
+    }
+
+    It 'returns empty for an unknown or missing build' {
+        Resolve-VitaBuild 'ps4'   | Should -BeExactly ''
+        Resolve-VitaBuild ''      | Should -BeExactly ''
+        Resolve-VitaBuild $null   | Should -BeExactly ''
+    }
+
+    It 'reads the build out of every filename shape the live catalogue uses' {
+        # Every one of these is a real label from retrogametalk.com/repo/vita/.
+        $emu = @(
+            'Danganronpa V3 (USA)(PCSE01100)[vita3k].zip',
+            'Hitman GO - Definitive Edition (PCSE00846) (NTSC) (Vita3k).zip',
+            'A Hole New World [PCSE01095] [USA] [Vita3k].zip',
+            '#KILLALLZOMBIES [PCSE00965] [USA] [vita3k].zip'
+        )
+        foreach ($label in $emu) { Get-VitaLinkBuild $label | Should -BeExactly 'emu' -Because $label }
+
+        $console = @(
+            'Danganronpa V3 (USA)(PCSE01100)[NoNpDrm].zip',
+            'A-men [PCSE00232] [USA] [NoNpDRM].zip',
+            'Hitman GO - Definitive Edition (PCSE00846) (NTSC) (NoNpDRM).zip',
+            'Sparkle 2 (USA)(NoNPDrm)(PCSE00454).7z',
+            '#KILLALLZOMBIES [PCSE00965] [USA] [nonpdrm].zip'
+        )
+        foreach ($label in $console) { Get-VitaLinkBuild $label | Should -BeExactly 'console' -Because $label }
+    }
+
+    It 'refuses to guess at an unmarked file' {
+        # An unmarked release, and a bonus file that is not the game at all.
+        Get-VitaLinkBuild 'Miku Miku Hockey (Japan).zip' | Should -BeExactly ''
+        Get-VitaLinkBuild 'AR Cards.zip'                 | Should -BeExactly ''
+        Get-VitaLinkBuild ''                             | Should -BeExactly ''
+    }
+
+    It 'reports the build of a whole link set' {
+        $emuLink = [PSCustomObject]@{ Label = 'Game (USA)[vita3k].zip' }
+        $conLink = [PSCustomObject]@{ Label = 'Game (USA)[NoNpDrm].zip' }
+        Get-VitaLinksBuild -Links @($emuLink)            | Should -BeExactly 'emu'
+        Get-VitaLinksBuild -Links @($conLink)            | Should -BeExactly 'console'
+        # Mixed or unmarked is not a build: the caller must then extract as usual rather
+        # than assume Vita3K and leave a NoNpDrm dump zipped.
+        Get-VitaLinksBuild -Links @($emuLink, $conLink)  | Should -BeExactly ''
+        Get-VitaLinksBuild -Links @()                    | Should -BeExactly ''
     }
 }
 

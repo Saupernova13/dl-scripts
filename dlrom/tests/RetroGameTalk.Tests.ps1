@@ -461,6 +461,107 @@ Describe 'Link selection' {
     }
 }
 
+Describe 'PS Vita build selection' {
+
+    BeforeAll {
+        function New-Link {
+            param($Label)
+            [PSCustomObject]@{ Label = $Label; Url = "https://dl1.retrogametalk.com/download.php?file=$Label&key=1" }
+        }
+
+        # Both builds of one game, exactly as The Repo lists them: identical but for the
+        # marker, so nothing except the marker can tell them apart.
+        function New-VitaPair {
+            param([string]$Emu, [string]$Console)
+            return @((New-Link $Emu), (New-Link $Console))
+        }
+
+        $script:Pair = New-VitaPair 'Danganronpa V3 (USA)(PCSE01100)[vita3k].zip' `
+                                    'Danganronpa V3 (USA)(PCSE01100)[NoNpDrm].zip'
+    }
+
+    It 'takes the Vita3K build by default' {
+        $r = @(Select-DownloadLinks -Links $script:Pair -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
+        $r.Count    | Should -Be 1
+        $r[0].Label | Should -Match 'vita3k'
+    }
+
+    It 'takes the console build when asked for it' {
+        $r = @(Select-DownloadLinks -Links $script:Pair -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_CONSOLE)
+        $r.Count    | Should -Be 1
+        $r[0].Label | Should -Match 'NoNpDrm'
+    }
+
+    It 'ignores the order the page happens to list them in' {
+        # The live catalogue puts either build first, so position must never decide.
+        $reversed = @($script:Pair[1], $script:Pair[0])
+        (Select-DownloadLinks -Links $reversed -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)[0].Label |
+            Should -Match 'vita3k'
+    }
+
+    It 'falls back to the console build when there is no Vita3K one' {
+        # Console-only titles are common (A-men, Sparkle 2). A build you have to convert
+        # beats no download at all.
+        $links = @(New-Link 'Sparkle 2 (USA)(NoNPDrm)(PCSE00454).7z')
+        $r = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
+        $r.Count    | Should -Be 1
+        $r[0].Label | Should -Match 'NoNPDrm'
+        # ...and the caller must be able to see it did NOT get what it asked for, or it
+        # would keep a NoNpDrm archive zipped as if Vita3K were going to import it.
+        Get-VitaLinksBuild -Links $r | Should -BeExactly $script:VITA_BUILD_CONSOLE
+    }
+
+    It 'falls back to an unmarked release rather than returning nothing' {
+        $links = @(New-Link 'Miku Miku Hockey (Japan).zip')
+        $r = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
+        $r.Count | Should -Be 1
+        Get-VitaLinksBuild -Links $r | Should -BeExactly ''
+    }
+
+    It 'drops the bonus files a game page carries alongside the builds' {
+        # Invizimals ships an "AR Cards.zip"; no other selection phase knows to reject it.
+        $links = @((New-Link 'Invizimals The Alliance [PCSA00137] [USA] [Vita3k].zip'),
+                   (New-Link 'Invizimals The Alliance [PCSA00137] [USA] [NoNpDrm].zip'),
+                   (New-Link 'AR Cards.zip'))
+        $r = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
+        $r.Count    | Should -Be 1
+        $r[0].Label | Should -Match 'Vita3k'
+    }
+
+    It 'leaves the choice to the usual rules under "any"' {
+        $r = @(Select-DownloadLinks -Links $script:Pair -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_ANY)
+        $r.Count    | Should -Be 1
+        $r[0].Label | Should -BeExactly $script:Pair[0].Label   # first after the shared phases
+    }
+
+    It 'still applies the region and language preferences within the chosen build' {
+        $links = @((New-Link 'Game (Europe)[vita3k].zip'),
+                   (New-Link 'Game (USA)[vita3k].zip'),
+                   (New-Link 'Game (USA)[NoNpDrm].zip'))
+        $r = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
+        $r.Count    | Should -Be 1
+        $r[0].Label | Should -BeExactly 'Game (USA)[vita3k].zip'
+    }
+
+    It 'does not let a Vita build survive the demo filter' {
+        $links = @((New-Link 'Game (USA) (Demo)[vita3k].zip'), (New-Link 'Game (USA)[vita3k].zip'))
+        (Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)[0].Label |
+            Should -BeExactly 'Game (USA)[vita3k].zip'
+    }
+
+    It 'never touches a non-Vita platform' {
+        # The markers are meaningless elsewhere, so the slug gates the whole phase.
+        $links = @((New-Link 'Game (USA) Disc 1 vita3k.7z'), (New-Link 'Game (USA).7z'))
+        $r = @(Select-DownloadLinks -Links $links -PlatformSlug 'ps2-iso' -VitaBuild $script:VITA_BUILD_EMU)
+        $r[0].Label | Should -BeExactly 'Game (USA) Disc 1 vita3k.7z'   # unchanged: first wins
+    }
+
+    It 'behaves exactly as before when no platform is supplied' {
+        $links = @((New-Link 'Game (Europe).7z'), (New-Link 'Game (USA).7z'))
+        (Select-DownloadLinks -Links $links)[0].Label | Should -BeExactly 'Game (USA).7z'
+    }
+}
+
 Describe 'Region detection' {
 
     It 'reads the region out of a real Repo slug' {

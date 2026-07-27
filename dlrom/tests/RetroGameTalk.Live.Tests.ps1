@@ -137,6 +137,50 @@ Describe 'Known ROMs resolve to real download URLs' -Tag Live {
     }
 }
 
+Describe 'PS Vita still publishes both builds' -Tag Live {
+
+    # The whole Vita path rests on one property of the live catalogue: a game page carries
+    # a [Vita3K] file and a [NoNpDrm] file, and the marker in the filename is the only thing
+    # that distinguishes them. If the uploaders adopt a new marker, or drop one of the two
+    # builds, this is where it shows up - the mocked suite is pinned to labels captured today.
+
+    BeforeAll {
+        $script:VitaPage = 'https://retrogametalk.com/repo/vita/danganronpa-v3-killing-harmony-usa/'
+    }
+
+    It 'offers a Vita3K and a NoNpDrm build of the same game' {
+        $links = @(Get-RgtDownloadLinks -GamePageUrl $script:VitaPage)
+        $links.Count | Should -BeGreaterThan 1
+
+        $builds = @($links | ForEach-Object { Get-VitaLinkBuild $_.Label })
+        $builds | Should -Contain $script:VITA_BUILD_EMU     -Because 'the emulator build is what dlrom takes by default'
+        $builds | Should -Contain $script:VITA_BUILD_CONSOLE -Because '--vita console has to have something to select'
+    }
+
+    It 'selects the requested build from the live page' {
+        $links = @(Get-RgtDownloadLinks -GamePageUrl $script:VitaPage)
+
+        $emu = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
+        $emu.Count | Should -Be 1
+        Get-VitaLinksBuild -Links $emu | Should -BeExactly $script:VITA_BUILD_EMU
+
+        $con = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_CONSOLE)
+        $con.Count | Should -Be 1
+        Get-VitaLinksBuild -Links $con | Should -BeExactly $script:VITA_BUILD_CONSOLE
+
+        $emu[0].Url | Should -Not -BeExactly $con[0].Url   # genuinely two different downloads
+    }
+
+    It 'reaches a Vita game with no --platform at all' {
+        # The build choice depends on the platform being known, which for a bare query
+        # comes from the search result rather than from the caller.
+        $results = @(Invoke-RgtSearch -SearchQuery 'Danganronpa V3')
+        $results.Count | Should -BeGreaterThan 0
+        $pick = Select-RgtResult -Results $results -Query 'Danganronpa V3' -Region ''
+        $pick.Platform | Should -BeExactly $script:VITA_SLUG
+    }
+}
+
 Describe 'A resolved link actually serves the ROM' -Tag Live {
 
     It 'returns file bytes with no cookies at all' {
