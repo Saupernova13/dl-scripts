@@ -3,21 +3,67 @@
 Five PowerShell scripts that search for media, download it, and put it where it
 belongs.
 
-| Script | Run as | Downloads | From | Using |
-|--------|--------|-----------|------|-------|
-| [dlanime](dlanime/) | `dlanime.cmd` | Anime series and films | nyaa.si | qBittorrent |
-| [dlgame](dlgame/) | `dlgame.cmd` | PC games | appnetica.com | qBittorrent |
-| [dlmovie](dlmovie/) | `dlmovie.cmd` | Movies | YTS | qBittorrent |
-| [dltv](dltv/) | `dltv.cmd` | TV shows | The Pirate Bay | qBittorrent |
-| [dlrom](dlrom/) | `dlrom.cmd` | Console ROMs | retrogametalk.com/repo | Motrix, AB, aria2c, curl, BITS, or PowerShell |
+Runs on **Windows and Linux**, including the **Steam Deck**.
+
+| Script | Downloads | From | Using |
+|--------|-----------|------|-------|
+| [dlanime](dlanime/) | Anime series and films | nyaa.si | qBittorrent |
+| [dlgame](dlgame/) | PC games | appnetica.com | qBittorrent |
+| [dlmovie](dlmovie/) | Movies | YTS | qBittorrent |
+| [dltv](dltv/) | TV shows | The Pirate Bay | qBittorrent |
+| [dlrom](dlrom/) | Console ROMs | retrogametalk.com/repo | Motrix, AB, aria2c, curl, BITS, or PowerShell |
 
 `dlrom` does more than download. It unpacks the ROM, installs it into the right
 emulator folder, and adds it to Steam.
 
 ## Setup
 
+### Windows
+
+Requires Windows PowerShell 5.1 (built in) or PowerShell 7.
+
 1. Add this repo's root folder to `PATH`.
-2. Run any script from any terminal.
+2. Run any script from any terminal - `dlrom`, `dlgame`, and so on resolve to the
+   `.cmd` wrappers.
+
+### Linux and Steam Deck
+
+Requires **PowerShell 7**. On an immutable OS like SteamOS there is nothing to install
+system-wide - extract the tarball into your home directory:
+
+```sh
+mkdir -p ~/.local/pwsh
+curl -sL https://github.com/PowerShell/PowerShell/releases/latest/download/powershell-linux-x64.tar.gz \
+  | tar zx -C ~/.local/pwsh
+```
+
+Then add this repo's **`bin/`** folder to `PATH` (not the root - the root holds
+directories named `dlrom`, `dlgame` and so on, which would shadow the launchers):
+
+```sh
+export PATH="$PATH:/path/to/dl-scripts/bin"
+```
+
+Paths follow each platform's conventions with no configuration: `%LOCALAPPDATA%\dlScripts`
+on Windows, `~/.config/dlScripts` and `~/.local/share/dlScripts` on Linux. On a Steam Deck,
+`dlrom` reads EmuDeck's own `settings.sh`, so ROMs land wherever EmuDeck was pointed -
+usually the SD card - without you configuring anything.
+
+### Steam Deck: Game Mode
+
+Downloads work normally in Game Mode. The **Steam ROM Manager step does not** - in Game
+Mode Steam *is* the session, so it cannot be shut down, and SRM would add the shortcut but
+silently drop its categories.
+
+So `dlrom` queues that step instead of running it, and applies it when you next enter
+Desktop Mode:
+
+```sh
+dlrom --steam-queue      # what is waiting
+dlrom --sync-steam       # apply it now (refuses while Game Mode is active)
+
+bin/dlrom-install-autostart   # apply it automatically on Desktop Mode login
+```
 
 ```
 dlanime "Frieren" series
