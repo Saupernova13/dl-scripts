@@ -48,6 +48,10 @@ param(
     [string]$JobFile = "",
     [switch]$Json,
 
+    # Steam ROM Manager queue surface (Steam Deck Game Mode deferral)
+    [switch]$SyncSteam,
+    [switch]$SteamQueue,
+
     # Housekeeping surface
     [switch]$Clean,
     [switch]$All,
@@ -70,6 +74,7 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Downloaders.ps1')       # Motrix/AB/aria2c/curl/BITS/webclient + dispatcher
 . (Join-Path $PSScriptRoot 'RomFiles.ps1')          # archive extraction, ROM filing
 . (Join-Path $PSScriptRoot 'SteamRomManager.ps1')   # Steam ROM Manager sync
+. (Join-Path $PSScriptRoot 'SteamDeferred.ps1')     # deferred Steam sync queue (Game Mode gate + drain)
 . (Join-Path $PSScriptRoot 'QbitTorrent.ps1')       # qBittorrent WebUI client (PS2 torrent fallback)
 . (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
 . (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
@@ -87,6 +92,10 @@ $script:LOG_QUIET   = [bool]$Quiet
 if ($Status)   { Show-DlromJobStatus -JobId $Status -AsJson:$Json; exit 0 }
 if ($ListJobs) { Show-DlromJobList -AsJson:$Json; exit 0 }
 
+# Steam queue surface. --steam-queue only reads; --sync-steam needs the config and the SRM
+# modules, so it runs after Initialize-DlConfig below.
+if ($SteamQueue) { Show-SrmDeferredQueue -AsJson:$Json; exit 0 }
+
 $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     romsBase        = $script:DEFAULT_ROMS_BASE
     tempDir         = (Join-Path (Get-DlTempDir) "dlrom")
@@ -98,6 +107,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     srmRestartSteam = "auto"    # auto (restart only if running) | never | always
     srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
+    srmDeferInGameMode = $true  # Steam Deck: in Game Mode, queue the Steam sync instead of running it
     abPort          = $script:DEFAULT_AB_PORT   # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
@@ -119,6 +129,10 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
 # Publish the section so every module's Get-CfgValue (Common.ps1) reads the same config
 # without it being threaded through signatures that do not otherwise need it.
 Set-DlromConfig $cfg
+
+# Drain the deferred Steam queue. Needs $cfg (srmExe, srmRestartSteam), hence its position
+# here rather than with the other query switches above.
+if ($SyncSteam) { $null = Invoke-SrmDeferredDrain -AsJson:$Json; exit 0 }
 
 if ($MaxResults -eq 0) { $MaxResults = [int](Get-CfgValue 'maxResults' 10) }
 $script:MOTRIX_URL = Get-CfgValue 'motrixRpcUrl' $script:DEFAULT_MOTRIX_RPC
