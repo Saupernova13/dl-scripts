@@ -1,0 +1,74 @@
+#!/bin/sh
+# Install (or remove) the Desktop Mode autostart entry that drains the deferred Steam
+# sync queue. Steam Deck / any XDG desktop. No root required.
+#
+#   dlrom-install-autostart            install
+#   dlrom-install-autostart --remove   uninstall
+#   dlrom-install-autostart --status   show what is currently installed
+#
+# Why an XDG autostart entry rather than a systemd user unit: Game Mode and Desktop Mode
+# are both graphical sessions of the same user, so a systemd --user unit bound to
+# graphical-session.target fires in BOTH - which is precisely the case the queue exists to
+# avoid. ~/.config/autostart is processed by the Plasma session only, so it runs when
+# Desktop Mode starts and never in Game Mode.
+#
+# The drain refuses to run in Game Mode anyway (see SteamDeferred.ps1), so this is
+# belt-and-braces rather than the only guard.
+
+set -eu
+
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+DLROM="$BIN_DIR/dlrom"
+AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
+ENTRY="$AUTOSTART_DIR/dlrom-sync-steam.desktop"
+LOG_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dlScripts"
+
+case "${1:-}" in
+    --remove|-r)
+        if [ -f "$ENTRY" ]; then rm -f "$ENTRY"; echo "Removed $ENTRY"; else echo "Not installed."; fi
+        exit 0
+        ;;
+    --status|-s)
+        if [ -f "$ENTRY" ]; then
+            echo "Installed: $ENTRY"
+            echo
+            cat "$ENTRY"
+        else
+            echo "Not installed."
+        fi
+        exit 0
+        ;;
+    --help|-h)
+        sed -n '2,20p' "$0"
+        exit 0
+        ;;
+esac
+
+if [ ! -x "$DLROM" ]; then
+    echo "[ERROR] dlrom launcher not found or not executable: $DLROM" >&2
+    echo "Run: chmod +x \"$DLROM\"" >&2
+    exit 1
+fi
+
+mkdir -p "$AUTOSTART_DIR" "$LOG_DIR"
+
+# The 20s delay is deliberate. At Desktop Mode login Steam is still starting, and SRM's
+# add is exactly the operation that needs Steam settled - draining into a half-started
+# Steam is the same lost-categories failure, just at the other end of the session.
+cat > "$ENTRY" <<EOF
+[Desktop Entry]
+Type=Application
+Name=dlrom deferred Steam sync
+Comment=Adds ROMs downloaded during Game Mode to Steam via Steam ROM Manager
+Exec=/bin/sh -c 'sleep 20; "$DLROM" --sync-steam >> "$LOG_DIR/sync-steam.log" 2>&1'
+Icon=steam
+Terminal=false
+X-GNOME-Autostart-enabled=true
+NoDisplay=false
+EOF
+
+echo "Installed: $ENTRY"
+echo "Log:       $LOG_DIR/sync-steam.log"
+echo
+echo "Queued Steam syncs will now be applied automatically when Desktop Mode starts."
+echo "Check the queue at any time with: dlrom --steam-queue"
