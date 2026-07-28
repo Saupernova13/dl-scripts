@@ -104,7 +104,7 @@ function Get-DlromCleanTargets {
     }
 
     # 2. The page dump written when link discovery finds nothing. One file, always stale.
-    $debugHtml = Join-Path $env:TEMP 'dlrom-debug.html'
+    $debugHtml = Join-Path (Get-DlTempDir) 'dlrom-debug.html'
     if (Test-Path -LiteralPath $debugHtml) {
         $targets += New-CleanTarget $script:CLEAN_KIND_WORK $debugHtml 'saved debug page'
     }
@@ -125,7 +125,7 @@ function Get-DlromCleanTargets {
 
     # 4. Control/part files in the folder dlrom asked AB to download into. Only this folder:
     #    Motrix's own directory belongs to Motrix, and to the user.
-    $abDir = if ($script:AB_DOWNLOAD_DIR) { $script:AB_DOWNLOAD_DIR } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
+    $abDir = if ($script:AB_DOWNLOAD_DIR) { $script:AB_DOWNLOAD_DIR } else { Join-DlPath (Get-DlDownloadsDir) 'ABDM' }
     if (Test-Path -LiteralPath $abDir) {
         foreach ($file in @(Get-ChildItem -LiteralPath $abDir -File -Force -ErrorAction SilentlyContinue)) {
             if ($script:PARTIAL_EXTS -notcontains $file.Extension.ToLower()) { continue }

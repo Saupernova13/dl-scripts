@@ -122,6 +122,12 @@ function New-DlromJob {
 #     are fixing. cmd.exe's own `> log 2>&1` gives the worker a file for stdout/stderr,
 #     and redirecting stdin here (then closing it) means a stray prompt hits EOF and
 #     fails fast instead of blocking forever on a console nobody is watching.
+#
+# Linux needs the same two properties for a different reason: the common caller there is
+# `ssh deck 'dlrom ...'`, and when that session closes sshd SIGHUPs the whole process
+# group. setsid puts the worker in a new session so it survives, and the redirections keep
+# sshd from waiting on a pipe the worker still holds -- without them the ssh command hangs
+# until the download finishes, which is the same bug wearing a different hat.
 function Start-DlromJob {
     param([PSCustomObject]$Job)
 
@@ -129,23 +135,44 @@ function Start-DlromJob {
     Save-DlromJob -Job $Job -Strict
 
     $psExe     = (Get-Process -Id $PID).Path        # re-run the same PowerShell we are on
-    if (-not $psExe) { $psExe = 'powershell.exe' }
+    if (-not $psExe) { $psExe = if (Test-DlWindows) { 'powershell.exe' } else { 'pwsh' } }
     $scriptPath = Join-Path $PSScriptRoot 'Add-ROM.ps1'
 
-    # cmd /c ""ps.exe" -File "script" -JobFile "job" > "log" 2>&1"
-    $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -JobFile "{2}" > "{3}" 2>&1' -f `
-                $psExe, $scriptPath, $Job.jobFile, $Job.logFile
-
     $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName               = 'cmd.exe'
-    $psi.Arguments              = "/c `"$inner`""
     $psi.CreateNoWindow         = $true
     $psi.UseShellExecute        = $false
-    $psi.RedirectStandardInput  = $true
+
+    if (Test-DlWindows) {
+        # cmd /c ""ps.exe" -File "script" -JobFile "job" > "log" 2>&1"
+        $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -JobFile "{2}" > "{3}" 2>&1' -f `
+                    $psExe, $scriptPath, $Job.jobFile, $Job.logFile
+        $psi.FileName              = 'cmd.exe'
+        $psi.Arguments             = "/c `"$inner`""
+        $psi.RedirectStandardInput = $true
+    } else {
+        # sh -c 'setsid pwsh -File script -JobFile job >log 2>&1 </dev/null & echo $!'
+        # The trailing echo is why stdout is a pipe rather than the log: it hands back the
+        # worker's real pid. setsid without --fork execs in place, so $! is the pwsh pid
+        # and not a shell that is about to vanish.
+        $q = { param($s) "'" + ($s -replace "'", "'\''") + "'" }
+        $inner = 'setsid {0} -NoProfile -File {1} -JobFile {2} > {3} 2>&1 < /dev/null & echo $!' -f `
+                    (& $q $psExe), (& $q $scriptPath), (& $q $Job.jobFile), (& $q $Job.logFile)
+        $psi.FileName               = '/bin/sh'
+        $psi.ArgumentList.Add('-c')
+        $psi.ArgumentList.Add($inner)
+        $psi.RedirectStandardOutput = $true
+    }
 
     $proc = [System.Diagnostics.Process]::Start($psi)
     if (-not $proc) { throw "Failed to start dlrom worker process" }
-    $proc.StandardInput.Close()
+
+    if (Test-DlWindows) {
+        $proc.StandardInput.Close()
+    } else {
+        $workerPid = ($proc.StandardOutput.ReadLine() -as [int])
+        $proc.WaitForExit()
+        if ($workerPid) { return $workerPid }
+    }
 
     # Deliberately NOT saved: the worker owns the job file from the moment it starts, and it
     # records its own $PID. Writing here would race it -- the worker reads the file, we

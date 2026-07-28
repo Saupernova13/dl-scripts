@@ -47,11 +47,12 @@ function Get-UtcStamp {
     return (Get-Date).ToUniversalTime().ToString('o')
 }
 
-# %LOCALAPPDATA%\dlScripts - where config.json, job files and caches all live.
+# Where job files and caches live: %LOCALAPPDATA%\dlScripts on Windows, ~/.local/share
+# on Linux. Get-DlDataRoot (lib/Platform.ps1) owns the difference.
 function Get-DlScriptsDataDir {
     param([string]$SubPath = '')
-    $dir = Join-Path $env:LOCALAPPDATA 'dlScripts'
-    if ($SubPath) { $dir = Join-Path $dir $SubPath }
+    $dir = Get-DlDataRoot
+    if ($SubPath) { $dir = Join-DlPath $dir $SubPath }
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     return $dir
 }

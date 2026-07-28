@@ -10,6 +10,13 @@
 #
 # Single-use literals deliberately stay where they are used. This file is for values with
 # more than one reader, not a dumping ground.
+#
+# The EmuDeck defaults below need lib/Platform.ps1. Add-ROM.ps1 loads it first, but the
+# tests dot-source this file on its own, so pull it in when it is not already there.
+
+if (-not (Get-Command -Name Test-DlWindows -ErrorAction SilentlyContinue)) {
+    . (Join-Path (Split-Path -Parent $PSScriptRoot) 'lib/Platform.ps1')
+}
 
 # --- Identity / endpoints -----------------------------------------------------
 
@@ -33,8 +40,19 @@ $script:LOOPBACK             = '127.0.0.1'
 $script:DEFAULT_MOTRIX_RPC   = 'http://localhost:16800/jsonrpc'
 $script:DEFAULT_AB_PORT      = 15151
 $script:DEFAULT_QBIT_PORT    = 8075
-$script:DEFAULT_ROMS_BASE    = 'C:\Emulation\roms'
-$script:DEFAULT_SRM_EXE      = 'C:\Emulation\tools\srm.exe'   # EmuDeck's install location
+# EmuDeck's install locations. On Linux they come from EmuDeck's own settings.sh, so they
+# follow whichever drive it was pointed at (on a Deck that is usually the SD card, not
+# $HOME); the literals below are only the fallback for a machine without EmuDeck.
+if (Test-DlWindows) {
+    $script:DEFAULT_ROMS_BASE = 'C:\Emulation\roms'
+    $script:DEFAULT_SRM_EXE   = 'C:\Emulation\tools\srm.exe'
+} else {
+    $emuRoms  = Get-DlEmuDeckSetting 'romsPath'
+    $emuTools = Get-DlEmuDeckSetting 'toolsPath'
+    $script:DEFAULT_ROMS_BASE = if ($emuRoms)  { $emuRoms }  else { Join-DlPath (Get-DlHomeDir) 'Emulation' 'roms' }
+    $script:DEFAULT_SRM_EXE   = if ($emuTools) { Join-Path $emuTools 'Steam-ROM-Manager.AppImage' }
+                                else { Join-DlPath (Get-DlHomeDir) 'Applications' 'Steam-ROM-Manager.AppImage' }
+}
 
 # --- Job vocabulary -----------------------------------------------------------
 # Written into the job JSON that `dlrom --status --json` serves, so these strings are a
