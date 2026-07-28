@@ -1,43 +1,15 @@
 #!/bin/sh
 # dlrom - Linux/Steam Deck launcher. The Windows equivalent is dlrom.cmd at the repo root.
-#
-# This lives in bin/ rather than beside dlrom.cmd because the repo root already holds a
-# DIRECTORY named dlrom: on Windows PATHEXT still resolves `dlrom` to dlrom.cmd, but on
-# Linux the directory would shadow the launcher. Put bin/ on PATH:
-#
-#   export PATH="$PATH:$HOME/Documents/GitHub/dl-scripts/bin"
-#
-# Flags match dlrom.cmd exactly. Unlike the batch file this translates generically -
-# --kebab-case becomes -PascalCase - so a new switch in Add-ROM.ps1 works here without
-# being added to a parallel table that would otherwise drift.
+# All the shared work (pwsh discovery, argument translation) lives in _dl-launcher.sh.
 
 set -eu
 
 REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-SCRIPT="$REPO_ROOT/dlrom/Add-ROM.ps1"
+PS_SCRIPT="$REPO_ROOT/dlrom/Add-ROM.ps1"
+DL_ARG_STYLE=kebab
+VALUE_FLAGS="--platform --region --sort --dest --vita --status --torrent-pick"
 
-if [ ! -f "$SCRIPT" ]; then
-    echo "[ERROR] Script not found: $SCRIPT" >&2
-    exit 1
-fi
-
-# PowerShell 7. On SteamOS there is no package to install, so a tarball extracted into
-# $HOME is the normal case; check PATH first so a system install still wins.
-PWSH=$(command -v pwsh 2>/dev/null || true)
-if [ -z "$PWSH" ]; then
-    for candidate in "$HOME/.local/pwsh/pwsh" "$HOME/powershell/pwsh" /opt/microsoft/powershell/7/pwsh; do
-        if [ -x "$candidate" ]; then PWSH="$candidate"; break; fi
-    done
-fi
-if [ -z "$PWSH" ]; then
-    echo "[ERROR] PowerShell 7 (pwsh) not found." >&2
-    echo "Install it without root:" >&2
-    echo "  mkdir -p ~/.local/pwsh" >&2
-    echo "  curl -sL https://github.com/PowerShell/PowerShell/releases/latest/download/powershell-linux-x64.tar.gz | tar zx -C ~/.local/pwsh" >&2
-    exit 1
-fi
-
-usage() {
+dl_usage() {
     cat <<'USAGE'
 Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
              [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract]
@@ -56,67 +28,6 @@ next time a Desktop Mode session starts.
 USAGE
 }
 
-if [ $# -eq 0 ]; then usage; exit 0; fi
+if [ $# -eq 0 ]; then dl_usage; exit 0; fi
 
-# Switches that consume the following argument as their value.
-value_flag() {
-    case "$1" in
-        --platform|--region|--sort|--dest|--vita|--status|--torrent-pick) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-# --kebab-case -> -PascalCase, plus the few names that differ from their flag.
-to_param() {
-    case "$1" in
-        --dest)        printf 'Destination'; return 0 ;;
-        --vita)        printf 'VitaBuild';   return 0 ;;
-        --list|--jobs) printf 'ListJobs';    return 0 ;;
-        --clear)       printf 'Clean';       return 0 ;;
-    esac
-    printf '%s' "${1#--}" |
-        awk -F- '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }'
-}
-
-# Translate in place: consume from the front of "$@", append the result to the back, and
-# stop at a sentinel that marks where the original list ended. Keeps every value in a real
-# positional parameter, so a title with spaces or quotes needs no escaping and no eval.
-SENTINEL='--dlrom-args-end--'
-query_taken=0
-set -- "$@" "$SENTINEL"
-
-while [ "$1" != "$SENTINEL" ]; do
-    arg=$1
-    shift
-    case "$arg" in
-        -h|--help)
-            usage
-            exit 0
-            ;;
-        --*)
-            param=$(to_param "$arg")
-            if value_flag "$arg"; then
-                if [ "$1" = "$SENTINEL" ]; then
-                    echo "[ERROR] $arg expects a value" >&2
-                    exit 1
-                fi
-                value=$1
-                shift
-                set -- "$@" "-$param" "$value"
-            else
-                set -- "$@" "-$param"
-            fi
-            ;;
-        *)
-            # The first bare argument is the search query; the batch file ignores the rest
-            # too rather than silently searching for a concatenation.
-            if [ "$query_taken" = 0 ]; then
-                set -- "$@" -Query "$arg"
-                query_taken=1
-            fi
-            ;;
-    esac
-done
-shift   # drop the sentinel; what remains is the translated argument vector
-
-exec "$PWSH" -NoProfile -File "$SCRIPT" "$@"
+. "$(dirname -- "$0")/_dl-launcher.sh"

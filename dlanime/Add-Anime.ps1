@@ -36,12 +36,12 @@ param(
 )
 
 # Shared resolver library: Initialize-DlConfig, Resolve-MediaPath, Get-DriveMetaInventory.
-. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/DriveResolver.ps1")
 
 $cfg = Initialize-DlConfig -Section "anime" -Defaults ([PSCustomObject]@{
     qbitHost            = "http://localhost:8080"
-    seriesDestination   = (Join-Path $HOME "Anime\Series")
-    moviesDestination   = (Join-Path $HOME "Anime\Movies")
+    seriesDestination   = (Join-DlPath (Get-DlHomeDir) "Anime" "Series")
+    moviesDestination   = (Join-DlPath (Get-DlHomeDir) "Anime" "Movies")
     maxResults          = 75
     autoAppendDualAudio = $true
     preferredUploaders  = @("judas", "cerebrus", "cleo", "animetime")

@@ -1,0 +1,23 @@
+#!/bin/sh
+# dlgame - Linux/Steam Deck launcher. The Windows equivalent is dlgame.cmd at the repo root.
+# All the shared work (pwsh discovery, argument translation) lives in _dl-launcher.sh.
+
+set -eu
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PS_SCRIPT="$REPO_ROOT/dlgame/Add-Game.ps1"
+DL_ARG_STYLE=passthrough
+VALUE_FLAGS=""
+
+dl_usage() {
+    cat <<'USAGE'
+Usage: dlgame "Game Name" [destination] [-Interactive] [-DryRun] [-MaxResults N]
+
+Destination defaults to the configured games folder, or the drive-registry pick.
+PowerShell flags are forwarded as-is: -Interactive -DryRun -MaxResults -QbitHost.
+USAGE
+}
+
+if [ $# -eq 0 ]; then dl_usage; exit 0; fi
+
+. "$(dirname -- "$0")/_dl-launcher.sh"

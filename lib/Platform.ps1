@@ -85,7 +85,7 @@ function Get-DlRoamingRoot {
 
 # --- EmuDeck layout -----------------------------------------------------------
 # EmuDeck publishes its own paths in ~/emudeck/settings.sh as shell assignments, e.g.
-#   romsPath="/run/media/deck/RaaViVi_SD"/Emulation/roms
+#   romsPath="/run/media/deck/<SD-CARD-LABEL>"/Emulation/roms
 # The quotes sit mid-value because the storage root is interpolated, so strip all of them
 # rather than expecting a fully-quoted value. Reading this beats hardcoding a default: it
 # follows the user's SD card, and it is already correct for whatever EmuDeck was told.
