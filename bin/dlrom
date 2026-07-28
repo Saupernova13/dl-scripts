@@ -1,0 +1,33 @@
+#!/bin/sh
+# dlrom - Linux/Steam Deck launcher. The Windows equivalent is dlrom.cmd at the repo root.
+# All the shared work (pwsh discovery, argument translation) lives in _dl-launcher.sh.
+
+set -eu
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PS_SCRIPT="$REPO_ROOT/dlrom/Add-ROM.ps1"
+DL_ARG_STYLE=kebab
+VALUE_FLAGS="--platform --region --sort --dest --vita --status --torrent-pick"
+
+dl_usage() {
+    cat <<'USAGE'
+Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
+             [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract]
+             [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+       dlrom --status <jobId> [--json]
+       dlrom --list [--json]
+       dlrom --clean [--all] [--dry-run] [--json]
+       dlrom --sync-steam [--json]     run any Steam syncs deferred by Game Mode
+       dlrom --steam-queue [--json]    show what is waiting, without running it
+
+Downloads run in the BACKGROUND by default and return a job id immediately.
+
+On a Steam Deck the Steam ROM Manager step is skipped while Game Mode is active - the
+download still completes, and the Steam sync is queued and applied automatically the
+next time a Desktop Mode session starts.
+USAGE
+}
+
+if [ $# -eq 0 ]; then dl_usage; exit 0; fi
+
+. "$(dirname -- "$0")/_dl-launcher.sh"

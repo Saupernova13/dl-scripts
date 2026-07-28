@@ -18,7 +18,7 @@ $script:QBIT_BASE    = $null
 $script:QBIT_SESSION = $null
 
 function Get-QbitPortFromIni {
-    $ini = Join-Path $env:APPDATA 'qBittorrent\qBittorrent.ini'
+    $ini = Join-DlPath (Get-DlRoamingRoot) 'qBittorrent' 'qBittorrent.ini'
     if (-not (Test-Path $ini)) { return $null }
     foreach ($line in Get-Content $ini -ErrorAction SilentlyContinue) {
         if ($line -match '^\s*WebUI\\Port\s*=\s*(\d+)') { return [int]$Matches[1] }

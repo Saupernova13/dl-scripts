@@ -158,12 +158,12 @@ function Get-Ps2TorrentPath {
     param($Cfg)
     $cfgPath = [string](Get-CfgValue 'ps2TorrentPath' '' -Cfg $Cfg)
     if ($cfgPath -and (Test-Path $cfgPath)) { return $cfgPath }
-    $repoCopy = Join-Path $PSScriptRoot 'data\ps2-torrent'
+    $repoCopy = Join-DlPath $PSScriptRoot 'data' 'ps2-torrent'
     if (Test-Path $repoCopy) {
         $t = Get-ChildItem $repoCopy -Filter '*.torrent' -File -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($t) { return $t.FullName }
     }
-    $dl = Get-ChildItem (Join-Path $env:USERPROFILE 'Downloads') -Filter '*PlayStation 2*.torrent' -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    $dl = Get-ChildItem (Get-DlDownloadsDir) -Filter '*PlayStation 2*.torrent' -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($dl) { return $dl.FullName }
     return ''
 }
@@ -172,7 +172,7 @@ function Get-Ps2IndexPath {
     param($Cfg)
     $cfgIdx = [string](Get-CfgValue 'ps2TorrentIndexPath' '' -Cfg $Cfg)
     if ($cfgIdx) { return $cfgIdx }
-    return (Join-Path $PSScriptRoot 'data\ps2-torrent\ps2-index.json')
+    return (Join-DlPath $PSScriptRoot 'data' 'ps2-torrent' 'ps2-index.json')
 }
 
 # Locate a Python 3 interpreter for ps2_torrent.py. Returns @{ Exe; Pre } so callers can
@@ -230,7 +230,7 @@ function Resolve-Ps2RomDest {
         $base = Get-CfgValue 'romsBase' '' -Cfg $Cfg
     } else {
         try { $base = Resolve-MediaPath -MediaType 'rom' -Strict } catch { $base = $null }
-        if (-not $base) { $base = Get-CfgValue 'romsBase' (Join-Path $HOME 'Emulation\roms') -Cfg $Cfg }
+        if (-not $base) { $base = Get-CfgValue 'romsBase' (Join-DlPath (Get-DlHomeDir) 'Emulation' 'roms') -Cfg $Cfg }
     }
     $dest = Join-Path $base 'ps2'
     if (-not (Test-Path $dest)) { New-Item -ItemType Directory -Path $dest -Force | Out-Null }

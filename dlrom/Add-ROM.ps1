@@ -48,6 +48,10 @@ param(
     [string]$JobFile = "",
     [switch]$Json,
 
+    # Steam ROM Manager queue surface (Steam Deck Game Mode deferral)
+    [switch]$SyncSteam,
+    [switch]$SteamQueue,
+
     # Housekeeping surface
     [switch]$Clean,
     [switch]$All,
@@ -60,15 +64,17 @@ param(
 # DriveResolver fallback sees a Write-Log already defined. Everything after that is
 # functions only, and resolves each other's calls at runtime.
 $repoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $repoRoot     'lib/Platform.ps1')      # OS detection, per-platform paths, Steam Deck session mode
 . (Join-Path $PSScriptRoot 'Constants.ps1')         # shared literals: job/downloader vocab, extensions, regions
 . (Join-Path $PSScriptRoot 'Common.ps1')            # Get-CfgValue, Get-UtcStamp, region helpers
 . (Join-Path $PSScriptRoot 'Logging.ps1')           # Write-Log, Format-*, ConvertTo-ResponseText
-. (Join-Path $repoRoot     'lib\DriveResolver.ps1') # Initialize-DlConfig, Resolve-MediaPath
+. (Join-Path $repoRoot     'lib/DriveResolver.ps1') # Initialize-DlConfig, Resolve-MediaPath
 . (Join-Path $PSScriptRoot 'Jobs.ps1')             # job state, detached worker spawn, --status/--list
 . (Join-Path $PSScriptRoot 'RetroGameTalk.ps1')     # platform tables, search, link discovery
 . (Join-Path $PSScriptRoot 'Downloaders.ps1')       # Motrix/AB/aria2c/curl/BITS/webclient + dispatcher
 . (Join-Path $PSScriptRoot 'RomFiles.ps1')          # archive extraction, ROM filing
 . (Join-Path $PSScriptRoot 'SteamRomManager.ps1')   # Steam ROM Manager sync
+. (Join-Path $PSScriptRoot 'SteamDeferred.ps1')     # deferred Steam sync queue (Game Mode gate + drain)
 . (Join-Path $PSScriptRoot 'QbitTorrent.ps1')       # qBittorrent WebUI client (PS2 torrent fallback)
 . (Join-Path $PSScriptRoot 'Ps2TorrentIndex.ps1')   # PS2 archive torrent fallback (match + selective download + install)
 . (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
@@ -86,9 +92,13 @@ $script:LOG_QUIET   = [bool]$Quiet
 if ($Status)   { Show-DlromJobStatus -JobId $Status -AsJson:$Json; exit 0 }
 if ($ListJobs) { Show-DlromJobList -AsJson:$Json; exit 0 }
 
+# Steam queue surface. --steam-queue only reads; --sync-steam needs the config and the SRM
+# modules, so it runs after Initialize-DlConfig below.
+if ($SteamQueue) { Show-SrmDeferredQueue -AsJson:$Json; exit 0 }
+
 $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     romsBase        = $script:DEFAULT_ROMS_BASE
-    tempDir         = (Join-Path $env:TEMP "dlrom")
+    tempDir         = (Join-Path (Get-DlTempDir) "dlrom")
     motrixRpcUrl    = $script:DEFAULT_MOTRIX_RPC
     maxResults      = 10
     pollIntervalMs  = 2000
@@ -97,6 +107,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     srmRestartSteam = "auto"    # auto (restart only if running) | never | always
     srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
+    srmDeferInGameMode = $true  # Steam Deck: in Game Mode, queue the Steam sync instead of running it
     abPort          = $script:DEFAULT_AB_PORT   # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
@@ -119,15 +130,19 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
 # without it being threaded through signatures that do not otherwise need it.
 Set-DlromConfig $cfg
 
+# Drain the deferred Steam queue. Needs $cfg (srmExe, srmRestartSteam), hence its position
+# here rather than with the other query switches above.
+if ($SyncSteam) { $null = Invoke-SrmDeferredDrain -AsJson:$Json; exit 0 }
+
 if ($MaxResults -eq 0) { $MaxResults = [int](Get-CfgValue 'maxResults' 10) }
 $script:MOTRIX_URL = Get-CfgValue 'motrixRpcUrl' $script:DEFAULT_MOTRIX_RPC
-$tempDir           = Get-CfgValue 'tempDir' (Join-Path $env:TEMP 'dlrom')
+$tempDir           = Get-CfgValue 'tempDir' (Join-Path (Get-DlTempDir) 'dlrom')
 
 # AB Download Manager settings (resolved before downloader selection)
 $script:AB_PORT    = [int](Get-CfgValue 'abPort' $script:DEFAULT_AB_PORT)
 $script:AB_TIMEOUT = [int](Get-CfgValue 'abTimeoutSec' 1800)
 $abDirCfg          = Get-CfgValue 'abDownloadDir' ''
-$script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-Path $env:USERPROFILE 'Downloads\ABDM' }
+$script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-DlPath (Get-DlDownloadsDir) 'ABDM' }
 
 # ---------------------------------------------------------------------------
 # Housekeeping. Placed after config (it needs tempDir, romsBase and the AB folder)
@@ -367,7 +382,7 @@ $allLinks = @(Get-RgtDownloadLinks -GamePageUrl $selected.Url)
 
 if ($allLinks.Count -eq 0) {
     Write-Log "No download links found on the game page." 'ERROR'
-    $debugPath = Join-Path $env:TEMP "dlrom-debug.html"
+    $debugPath = Join-Path (Get-DlTempDir) "dlrom-debug.html"
     try {
         $dbgResp = Invoke-RgtWeb -Uri $selected.Url
         $dbgResp.Content | Set-Content $debugPath -Encoding UTF8
@@ -453,13 +468,13 @@ if ($Destination) {
             Write-Log "Cannot resolve a ROMs base directory and there is no console to ask." 'ERROR'
             Write-Log "Fix with one of:" 'ERROR'
             Write-Log "  dlrom `"$Query`" --dest <path>" 'ERROR'
-            Write-Log "  set romsBase in $env:LOCALAPPDATA\dlScripts\config.json" 'ERROR'
+            Write-Log "  set romsBase in $(Join-Path (Get-DlConfigRoot) 'config.json')" 'ERROR'
             Write-Log "  connect a drive that advertises a rom_path, or re-run with --interactive" 'ERROR'
             exit 1
         }
         Write-Host "Enter ROMs base path (or press Enter for $HOME\Emulation\roms): " -NoNewline
         $alt = Read-Host
-        $romsBase = if ($alt) { $alt } else { Join-Path $HOME "Emulation\roms" }
+        $romsBase = if ($alt) { $alt } else { Join-DlPath (Get-DlHomeDir) "Emulation" "roms" }
     }
 }
 

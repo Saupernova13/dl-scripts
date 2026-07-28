@@ -1,4 +1,4 @@
-﻿# dltv.ps1
+# dltv.ps1
 # Search TV shows and add torrents to qBittorrent
 # Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
 
@@ -23,11 +23,11 @@ param(
 )
 
 # Shared resolver library: Initialize-DlConfig, Resolve-MediaPath, Get-DriveMetaInventory.
-. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/DriveResolver.ps1")
 
 $cfg = Initialize-DlConfig -Section "tv" -Defaults ([PSCustomObject]@{
     qbitHost         = "http://localhost:8080"
-    destination      = (Join-Path $HOME "TV")
+    destination      = (Join-DlPath (Get-DlHomeDir) "TV")
     maxResults       = 50
     useDriveMetadata = $true
 })

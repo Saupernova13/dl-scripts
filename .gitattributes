@@ -7,8 +7,15 @@
 *.cmd text eol=crlf
 *.bat text eol=crlf
 
-# PowerShell reads either, but these are Windows-only scripts; keep them consistent.
+# PowerShell reads either on either platform, so CRLF stays for consistency with the
+# batch wrappers even though these now also run under pwsh on Linux.
 *.ps1 text eol=crlf
+
+# Shell launchers MUST be LF. A CRLF shebang makes the kernel look for an interpreter
+# named "/bin/sh\r", and the only symptom is a bare "no such file or directory" naming a
+# shell that plainly exists.
+bin/*  text eol=lf
+*.sh   text eol=lf
 
 # Everything else follows the platform default.
 *.md   text

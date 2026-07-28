@@ -48,6 +48,8 @@ if /i "%~1"=="-list"    goto :job_list
 if /i "%~1"=="--jobs"   goto :job_list
 if /i "%~1"=="--status" goto :job_status
 if /i "%~1"=="-status"  goto :job_status
+if /i "%~1"=="--sync-steam"  goto :sync_steam
+if /i "%~1"=="--steam-queue" goto :steam_queue
 if /i "%~1"=="--clean"  goto :do_clean
 if /i "%~1"=="-clean"   goto :do_clean
 if /i "%~1"=="--clear"  goto :do_clean
@@ -57,6 +59,8 @@ if "%~1"=="" (
     echo        dlrom --status ^<jobId^> [--json]
     echo        dlrom --list [--json]
     echo        dlrom --clean [--all] [--dry-run] [--json]
+    echo        dlrom --sync-steam [--json]   run Steam syncs deferred by Steam Deck Game Mode
+    echo        dlrom --steam-queue [--json]  show deferred Steam syncs without running them
     echo.
     echo Downloads run in the BACKGROUND by default and return a job id immediately.
     echo.
@@ -182,6 +186,18 @@ if defined JSON        set "PS_ARGS=%PS_ARGS% -Json"
 if defined VERBOSE     set "PS_ARGS=%PS_ARGS% -Verbose"
 if defined QUIET       set "PS_ARGS=%PS_ARGS% -Quiet"
 
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+:sync_steam
+set "PS_ARGS=-SyncSteam"
+if /i "%~2"=="--json" set "PS_ARGS=%PS_ARGS% -Json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+:steam_queue
+set "PS_ARGS=-SteamQueue"
+if /i "%~2"=="--json" set "PS_ARGS=%PS_ARGS% -Json"
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
 exit /b %ERRORLEVEL%
 

@@ -1,0 +1,21 @@
+#!/bin/sh
+# dlanime - Linux/Steam Deck launcher. The Windows equivalent is dlanime.cmd at the repo root.
+# All the shared work (pwsh discovery, argument translation) lives in _dl-launcher.sh.
+
+set -eu
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PS_SCRIPT="$REPO_ROOT/dlanime/Add-Anime.ps1"
+DL_ARG_STYLE=passthrough
+VALUE_FLAGS=""
+
+dl_usage() {
+    cat <<'USAGE'
+Usage: dlanime "Anime Name" [destination] [-Interactive] [-DryRun] [-ListOnly]
+              [-TrustedOnly] [-Filter TEXT] [-MaxResults N]
+USAGE
+}
+
+if [ $# -eq 0 ]; then dl_usage; exit 0; fi
+
+. "$(dirname -- "$0")/_dl-launcher.sh"

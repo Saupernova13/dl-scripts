@@ -1,4 +1,4 @@
-﻿# dlgame.ps1
+# dlgame.ps1
 # Search appnetica.com for games and add torrents to qBittorrent
 # Usage: .\dlgame.ps1 -Query "Spider-Man"
 # Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
@@ -34,11 +34,11 @@ param(
 Add-Type -AssemblyName System.Web
 
 # Shared resolver library: Initialize-DlConfig, Resolve-MediaPath, Get-DriveMetaInventory.
-. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/DriveResolver.ps1")
 
 $cfg = Initialize-DlConfig -Section "game" -Defaults ([PSCustomObject]@{
     qbitHost         = "http://localhost:8080"
-    destination      = (Join-Path $HOME "Games")
+    destination      = (Join-DlPath (Get-DlHomeDir) "Games")
     maxResults       = 10
     useDriveMetadata = $true
 })
@@ -377,7 +377,7 @@ try {
     if (-not $downloadUrl) {
         Write-Log "Could not find download link on game page" "ERROR"
         Write-Log "Saving page HTML to temp file for inspection..." "DEBUG"
-        $debugFile = Join-Path $env:TEMP "game-page-debug.html"
+        $debugFile = Join-Path (Get-DlTempDir) "game-page-debug.html"
         $gameHtml | Out-File -FilePath $debugFile -Encoding UTF8
         Write-Log "Page saved to: $debugFile" "DEBUG"
         exit 1
@@ -400,7 +400,7 @@ try {
 
     # Step 5: Download torrent file
     Write-Log "Downloading torrent file..." "INFO"
-    $torrentPath = Join-Path $env:TEMP "$($selectedGame.Slug).torrent"
+    $torrentPath = Join-Path (Get-DlTempDir) "$($selectedGame.Slug).torrent"
 
     Invoke-WebRequest -Uri $downloadUrl -WebSession $session -OutFile $torrentPath -UseBasicParsing
 
@@ -487,7 +487,7 @@ try {
         Write-Log "Error adding to qBittorrent: $($_.Exception.Message)" "ERROR"
 
         # Save the torrent file for manual addition
-        $savedTorrent = Join-Path $env:USERPROFILE "Downloads\$($selectedGame.Slug).torrent"
+        $savedTorrent = Join-Path (Get-DlDownloadsDir) "$($selectedGame.Slug).torrent"
         Copy-Item $torrentPath $savedTorrent -Force -ErrorAction SilentlyContinue
         Write-Log "Torrent file saved to: $savedTorrent" "INFO"
         Write-Log "You can add it manually to qBittorrent" "WARN"

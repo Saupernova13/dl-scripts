@@ -22,6 +22,12 @@
 #
 # Run this file directly to invoke the test harness.
 
+# Platform paths. dlrom loads this itself and earlier, so only pull it in when a caller
+# (dlgame/dlmovie/dltv/dlanime) reached us without it.
+if (-not (Get-Command -Name Get-DlConfigRoot -ErrorAction SilentlyContinue)) {
+    . (Join-Path $PSScriptRoot 'Platform.ps1')
+}
+
 # Default logger - scripts may redefine Write-Log later; identical signatures so no behaviour change.
 if (-not (Get-Command -Name Write-Log -ErrorAction SilentlyContinue)) {
     function Write-Log {
@@ -41,7 +47,7 @@ if (-not (Get-Command -Name Write-Log -ErrorAction SilentlyContinue)) {
 
 function Initialize-DlConfig {
     param([string]$Section, [PSCustomObject]$Defaults)
-    $configDir  = Join-Path $env:LOCALAPPDATA "dlScripts"
+    $configDir  = Get-DlConfigRoot
     $configPath = Join-Path $configDir "config.json"
     if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
     $config = $null
@@ -80,7 +86,7 @@ function Initialize-DlConfig {
 # a top-level "driveRegistryUrl" key in dlScripts config.json, then the localhost default.
 function Get-DriveRegistryUrl {
     if ($env:DRIVE_REGISTRY_URL) { return ([string]$env:DRIVE_REGISTRY_URL).TrimEnd('/') }
-    $configPath = Join-Path (Join-Path $env:LOCALAPPDATA "dlScripts") "config.json"
+    $configPath = Join-Path (Get-DlConfigRoot) "config.json"
     if (Test-Path $configPath) {
         try {
             $cfg = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -115,13 +121,13 @@ function Get-DriveMetaInventory {
 function Get-FallbackMediaPath {
     param([Parameter(Mandatory=$true)][string]$MediaType)
     switch ($MediaType) {
-        'movie'        { return (Join-Path $HOME 'Movies') }
-        'tv'           { return (Join-Path $HOME 'TV') }
-        'anime_series' { return (Join-Path $HOME 'Anime\Series') }
-        'anime_movie'  { return (Join-Path $HOME 'Anime\Movies') }
-        'game_pc'      { return (Join-Path $HOME 'Games') }
-        'rom'          { return (Join-Path $HOME 'Emulation\roms') }
-        default        { return (Join-Path $HOME $MediaType) }
+        'movie'        { return (Join-DlPath (Get-DlHomeDir) 'Movies') }
+        'tv'           { return (Join-DlPath (Get-DlHomeDir) 'TV') }
+        'anime_series' { return (Join-DlPath (Get-DlHomeDir) 'Anime' 'Series') }
+        'anime_movie'  { return (Join-DlPath (Get-DlHomeDir) 'Anime' 'Movies') }
+        'game_pc'      { return (Join-DlPath (Get-DlHomeDir) 'Games') }
+        'rom'          { return (Join-DlPath (Get-DlHomeDir) 'Emulation' 'roms') }
+        default        { return (Join-DlPath (Get-DlHomeDir) $MediaType) }
     }
 }
 

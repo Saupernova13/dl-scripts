@@ -1,0 +1,20 @@
+#!/bin/sh
+# dlmovie - Linux/Steam Deck launcher. The Windows equivalent is dlmovie.cmd at the repo root.
+# All the shared work (pwsh discovery, argument translation) lives in _dl-launcher.sh.
+
+set -eu
+
+REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+PS_SCRIPT="$REPO_ROOT/dlmovie/Add-Movie.ps1"
+DL_ARG_STYLE=passthrough
+VALUE_FLAGS=""
+
+dl_usage() {
+    cat <<'USAGE'
+Usage: dlmovie "Movie Name" [destination] [-Interactive] [-DryRun] [-MaxResults N]
+USAGE
+}
+
+if [ $# -eq 0 ]; then dl_usage; exit 0; fi
+
+. "$(dirname -- "$0")/_dl-launcher.sh"

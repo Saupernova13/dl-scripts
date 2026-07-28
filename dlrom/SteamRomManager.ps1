@@ -6,8 +6,11 @@ function Find-Srm {
     param([string]$Configured)
     if ($Configured -and (Test-Path $Configured)) { return $Configured }
     if (Test-Path $script:DEFAULT_SRM_EXE) { return $script:DEFAULT_SRM_EXE }
-    $cmd = Get-Command 'srm.exe' -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    $names = if (Test-DlWindows) { @('srm.exe') } else { @('steam-rom-manager', 'srm') }
+    foreach ($name in $names) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd.Source }
+    }
     return $null
 }
 
@@ -22,8 +25,18 @@ function Find-SrmWrapper {
     return $null
 }
 
+# Where SRM keeps userSettings.json and userConfigurations.json.
+#
+# The Windows build is a portable app: userData sits next to the exe. The Linux build is an
+# Electron AppImage, which cannot write inside its own read-only image and so uses the
+# standard Electron location instead - ~/.config/steam-rom-manager/userData. Looking beside
+# the AppImage there finds nothing, and the parser-enable step silently does nothing.
 function Get-SrmUserDataDir {
     param([string]$SrmExe)
+    if (-not (Test-DlWindows)) {
+        $electron = Join-DlPath (Get-DlRoamingRoot) 'steam-rom-manager' 'userData'
+        if (Test-Path $electron) { return $electron }
+    }
     return Join-Path (Split-Path -Parent $SrmExe) "userData"
 }
 
@@ -47,13 +60,27 @@ function Get-SrmRomsDir {
 function Get-SrmSteamExe {
     param([string]$SrmExe)
     $steamDir = (Get-SrmUserSettings -SrmExe $SrmExe).environmentVariables.steamDirectory
+    $exeName  = if (Test-DlWindows) { 'steam.exe' } else { 'steam' }
     if ($steamDir) {
-        $candidate = Join-Path $steamDir 'steam.exe'
+        $candidate = Join-Path $steamDir $exeName
         if (Test-Path $candidate) { return $candidate }
     }
-    $fallback = Join-Path ${env:ProgramFiles(x86)} 'Steam\steam.exe'
-    if (Test-Path $fallback) { return $fallback }
+    if (Test-DlWindows) {
+        $fallback = Join-DlPath ${env:ProgramFiles(x86)} 'Steam' 'steam.exe'
+        if (Test-Path $fallback) { return $fallback }
+        return $null
+    }
+    # On Linux steamDirectory points at the data dir (~/.local/share/Steam), not the binary.
+    $cmd = Get-Command 'steam' -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
     return $null
+}
+
+# Compare two paths as strings across platforms: SRM stores its parser folders with '${/}'
+# placeholders and mixed separators, so both sides are folded to '/' before matching.
+function ConvertTo-ComparablePath {
+    param([string]$Path)
+    return ([string]$Path -replace '\\', '/').TrimEnd('/')
 }
 
 # Returns parserIds of *disabled* SRM parsers whose romDirectory resolves to $RomDest.
@@ -68,15 +95,14 @@ function Get-SrmParserIdsForFolder {
         return @()
     }
     $romsDir    = Get-SrmRomsDir -SrmExe $SrmExe -Fallback $RomsBase
-    $targetNorm = ($RomDest -replace '/', '\').TrimEnd('\')
+    $targetNorm = ConvertTo-ComparablePath $RomDest
     $ids = @()
     foreach ($p in $parsers) {
         if (-not $p.romDirectory) { continue }
         $dir = $p.romDirectory
         $dir = $dir.Replace('${romsdirglobal}', $romsDir)
-        $dir = $dir.Replace('${/}', '\')
-        $dir = $dir.Replace('/', '\')
-        if ($dir.TrimEnd('\') -ieq $targetNorm -and $p.disabled -eq $true) {
+        $dir = $dir.Replace('${/}', '/')
+        if ((ConvertTo-ComparablePath $dir) -ieq $targetNorm -and $p.disabled -eq $true) {
             $ids += $p.parserId
         }
     }
@@ -167,8 +193,21 @@ function Invoke-SteamRomManager {
 
 # Add freshly installed ROM(s) to Steam. Prefer the standalone srm-wrapper CLI; fall back
 # to the built-in Invoke-SteamRomManager if the wrapper isn't installed or returns non-zero.
+#
+# -AlreadyDeferred is set by the queue drain, which has already established that this is a
+# safe moment to touch Steam. Without it the drain would re-queue everything it just picked up.
 function Sync-RomToSteam {
-    param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount)
+    param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount, [switch]$AlreadyDeferred)
+
+    # Game Mode gate. The download is already on disk and staying there; only the Steam
+    # step waits. See SteamDeferred.ps1 for why this cannot simply run anyway.
+    if (-not $AlreadyDeferred -and (Test-DlGameMode) -and [bool](Get-CfgValue 'srmDeferInGameMode' $true)) {
+        $id = Add-SrmDeferredJob -RomDest $RomDest -RomsBase $RomsBase -InstalledCount $InstalledCount
+        Write-Log "Game Mode detected - Steam sync deferred (queue id $id)." 'INFO'
+        Write-Log "The ROM is installed at $RomDest and will be added to Steam automatically in Desktop Mode." 'INFO'
+        Write-Log "To do it now: switch to Desktop Mode, or run 'dlrom --sync-steam'." 'INFO'
+        return
+    }
 
     Write-Log "Syncing $InstalledCount new ROM(s) to Steam..." 'INFO'
     $wrapper = Find-SrmWrapper -Configured (Get-CfgValue 'srmWrapperCmd' '')

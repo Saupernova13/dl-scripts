@@ -12,8 +12,21 @@ function Get-Ps2GameIndexPath {
     param($Cfg)
     $cfgPath = [string](Get-CfgValue 'ps2GameIndexPath' '' -Cfg $Cfg)
     if ($cfgPath -and (Test-Path $cfgPath)) { return $cfgPath }
-    $default = Join-Path $env:APPDATA 'EmuDeck\Emulators\PCSX2-Qt\resources\GameIndex.yaml'
-    if (Test-Path $default) { return $default }
+    # PCSX2's data root differs by platform: EmuDeck's Emulators tree on Windows,
+    # ~/.config/PCSX2 on Linux. The Linux AppImage keeps GameIndex.yaml inside the image
+    # and only populates resources/ once it has run, so a miss here is normal and the
+    # caller falls back to matching on title instead of serial.
+    $candidates = if (Test-DlWindows) {
+        @(Join-DlPath (Get-DlRoamingRoot) 'EmuDeck' 'Emulators' 'PCSX2-Qt' 'resources' 'GameIndex.yaml')
+    } else {
+        @(
+            (Join-DlPath (Get-DlRoamingRoot) 'PCSX2' 'resources' 'GameIndex.yaml')
+            (Join-DlPath (Get-DlHomeDir) '.var' 'app' 'net.pcsx2.PCSX2' 'config' 'PCSX2' 'resources' 'GameIndex.yaml')
+        )
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) { return $candidate }
+    }
     return ''
 }
 
