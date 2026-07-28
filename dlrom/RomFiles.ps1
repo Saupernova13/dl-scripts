@@ -4,12 +4,20 @@
 #
 # Extension and signature tables come from Constants.ps1; there is exactly one of each.
 
+# 7-Zip is what extracts .7z and .rar - the two formats The Repo publishes most often - so
+# a miss here is not cosmetic: the download succeeds and the install then fails.
+# SteamOS ships 7z in /usr/bin, so on Linux PATH is the whole story; Windows also has to
+# look in Program Files because the installer does not add itself to PATH.
 function Find-7zip {
-    $fromPath = Get-Command '7z.exe' -ErrorAction SilentlyContinue
-    if ($fromPath) { return $fromPath.Source }
+    $names = if (Test-DlWindows) { @('7z.exe') } else { @('7z', '7za', '7zz') }
+    foreach ($name in $names) {
+        $fromPath = Get-Command $name -ErrorAction SilentlyContinue
+        if ($fromPath) { return $fromPath.Source }
+    }
+    if (-not (Test-DlWindows)) { return $null }
     foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
         if (-not $root) { continue }
-        $candidate = Join-Path $root '7-Zip\7z.exe'
+        $candidate = Join-DlPath $root '7-Zip' '7z.exe'
         if (Test-Path $candidate) { return $candidate }
     }
     return $null
