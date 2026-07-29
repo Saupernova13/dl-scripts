@@ -104,7 +104,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     maxResults      = 10
     pollIntervalMs  = 2000
     steamSync       = $true     # after a successful install, add the ROM to Steam via Steam ROM Manager
-    srmExe          = ""        # path to srm.exe; blank = autodetect G:\Emulation\tools\srm.exe
+    srmExe          = ""        # path to srm.exe; blank = autodetect <system drive>\Emulation\tools\srm.exe
     srmRestartSteam = "auto"    # auto (restart only if running) | never | always
     srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
@@ -450,7 +450,7 @@ $platformFolder = if ($effectiveSlug -and $PLATFORM_FOLDERS.ContainsKey($effecti
 
 # Resolve the ROMs base directory in priority order:
 #   1. -Destination          explicit per-run override (always wins)
-#   2. cfg.romsBase          the configured base (G:\Emulation\roms) when it exists
+#   2. cfg.romsBase          the configured base (romsBase) when it exists
 #   3. drive-meta picker      a connected drive advertising a rom_path
 #   4. manual prompt          last resort, and only with a human watching
 $romsBase = $null

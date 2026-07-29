@@ -87,13 +87,13 @@ function Get-DlRoamingRoot {
 # EmuDeck publishes its own paths as assignments, and both platforms can be read the same
 # way - only the file and a leading '$' differ:
 #   Linux    ~/emudeck/settings.sh          romsPath="/run/media/deck/<SD-LABEL>"/Emulation/roms
-#   Windows  %APPDATA%\EmuDeck\settings.ps1  $romsPath="G:\Emulation\roms"
+#   Windows  %APPDATA%\EmuDeck\settings.ps1  $romsPath="<drive>:\Emulation\roms"
 # The quotes sit mid-value on Linux because the storage root is interpolated, so strip all of
 # them rather than expecting a fully-quoted value.
 #
-# Reading this beats hardcoding a drive on either OS: it follows wherever EmuDeck was
-# pointed. Windows used to hardcode C:\Emulation, so moving the library to another drive
-# left every default pointing at a folder that no longer held the ROMs.
+# Reading this beats hardcoding a drive on either OS: EmuDeck can be pointed at any drive,
+# and a literal in here is only ever correct on the machine it was written on. The fallback
+# when EmuDeck is absent derives from the system drive rather than naming one.
 
 $script:DL_EMUDECK_SETTINGS = $null
 

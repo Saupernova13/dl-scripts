@@ -74,7 +74,10 @@ dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
 | `--json` | Machine-readable output. |
 | `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
 | `--no-extract` | Keep the downloaded archive. Do not unpack or install it. |
-| `--no-steam` | Skip the Steam step this run. |
+| `--no-steam` | Skip the Steam step this run. On a Steam Deck this also means it never leaves Game Mode. |
+| `--sync-steam` | Add ROMs to Steam now. Runs a full Steam ROM Manager pass when nothing is queued. |
+| `--no-game-mode` | With `--sync-steam` on a Steam Deck: stay in Desktop Mode afterwards. |
+| `--steam-queue` | Show Steam syncs waiting for a desktop session. |
 | `--links-only` | Print the download links and stop. Downloads nothing. |
 | `--no-torrent` | Turn off the PS2 torrent fallback this run. |
 | `--torrent-pick N` | Force file number `N` from the PS2 torrent. |
@@ -93,7 +96,7 @@ Download job spawned.  It will continue in the background.
   Job ID:   a3f9c21b8e04
   Source:   retrogametalk
   Title:    Gran Turismo 4
-  Dest:     G:\Emulation\roms\ps2
+  Dest:     C:\Emulation\roms\ps2
   Log:      C:\Users\you\AppData\Local\dlScripts\jobs\rom\a3f9c21b8e04.log
   Check:    dlrom --status a3f9c21b8e04
 ```
@@ -403,7 +406,7 @@ dlrom finds the best available downloader at runtime. If one fails, it tries the
 next:
 
 ```
-Motrix (aria2 RPC)  ->  AB Download Manager  ->  aria2c  ->  curl.exe  ->  BITS  ->  Invoke-WebRequest
+Motrix (aria2 RPC)  ->  AB Download Manager  ->  aria2c  ->  curl  ->  BITS  ->  Invoke-WebRequest
 ```
 
 - **Motrix** is used when its aria2 RPC answers (`motrixRpcUrl`).
@@ -412,14 +415,24 @@ Motrix (aria2 RPC)  ->  AB Download Manager  ->  aria2c  ->  curl.exe  ->  BITS 
   and watches AB's folder (`abDownloadDir`, default `%USERPROFILE%\Downloads\ABDM`)
   until the file is done. Set `abDownloadDir` if you moved AB's folder.
   `abTimeoutSec` limits the wait.
-- The rest ship with Windows and need nothing installed.
+- **curl** and **aria2c** are found by name on either platform (`curl` on Linux,
+  `curl.exe` on Windows) and report progress by watching the output file grow.
+- **BITS** and **Invoke-WebRequest** are Windows-only last resorts.
+
+Every backend's output is checked before it is believed: a tier that reports success
+without leaving a non-empty file is treated as a failure and the next one is tried. This is
+not hypothetical — `Invoke-WebRequest` once returned cleanly after a 978 MB download that
+left nothing on disk.
 
 ## Where ROMs are installed
 
 dlrom picks the base folder in this order. The first one that works wins.
 
 1. `--dest PATH`. An explicit override for this run.
-2. `romsBase` from the config (default `G:\Emulation\roms`), if that folder exists.
+2. `romsBase` from the config, if that folder exists. Its default is taken from EmuDeck's
+   own settings (`%APPDATA%\EmuDeck\settings.ps1`, or `~/emudeck/settings.sh` on Linux), so
+   it follows whichever drive you pointed EmuDeck at. With no EmuDeck installed it falls
+   back to `<system drive>\Emulation\roms` on Windows and `~/Emulation/roms` on Linux.
 3. **Drive picker.** A connected drive advertising a `rom_path` in its
    `drive-meta.json`. See the [root README](../README.md#where-files-are-saved).
 4. **Ask you.** Last resort, and only with `--interactive`.
@@ -464,7 +477,7 @@ dlrom prefers the standalone `srm-wrapper` CLI if it is on `PATH`, or set
 `srmWrapperCmd`. If the wrapper is missing or fails, dlrom uses its built-in
 driver:
 
-1. Find `srm.exe` (`srmExe`, else `G:\Emulation\tools\srm.exe`, else `PATH`).
+1. Find `srm.exe` (`srmExe`, else EmuDeck's `toolsPath`, else `<system drive>\Emulation\tools\srm.exe`, else `PATH`).
 2. If `srmEnableParser` is on, enable any disabled SRM parser pointing at the
    destination folder.
 3. Follow `srmRestartSteam`: `auto` restarts Steam only if it is running, `never`
@@ -473,6 +486,29 @@ driver:
 
 If neither the wrapper nor `srm.exe` is found, dlrom does not crash. It logs where
 the ROM was saved.
+
+### Steam Deck: Game Mode
+
+SRM cannot write the Steam library from inside Game Mode — Steam *is* the session there, and
+adding while it runs silently drops categories. dlrom handles that itself rather than asking
+you to switch:
+
+1. The ROM **downloads in Game Mode**. Nothing is interrupted.
+2. For the Steam step only, it drops to the desktop (`steamos-session-select plasma` — the
+   one-shot session, so it does not change what the Deck boots into).
+3. It runs SRM.
+4. It **returns to Game Mode**, including when the sync failed.
+
+The desktop is borrowed for roughly a minute, at the end, and never for the length of the
+download. Measured end to end from an agent request: ~56s for a platform already in your
+library, ~2m45s the first time a platform's parser has to be enabled.
+
+**Leaving Game Mode closes a running game.** Use `--no-steam` to download without touching the
+session, then `dlrom --sync-steam` when you are done playing.
+
+If the session will not switch, the sync is queued instead (`srmDeferInGameMode`) and drains
+on the next `--sync-steam`. Set `srmAutoSwitchSession` to `false` to always queue rather than
+switch.
 
 ## Output detail
 
@@ -490,7 +526,7 @@ file is created with defaults on first run.
 ```json
 {
   "rom": {
-    "romsBase": "G:\\Emulation\\roms",
+    "romsBase": "C:\\Emulation\\roms",
     "tempDir": "%TEMP%\\dlrom",
     "motrixRpcUrl": "http://localhost:16800/jsonrpc",
     "maxResults": 10,
@@ -511,7 +547,7 @@ file is created with defaults on first run.
 
 | Key | Default | What it does |
 |-----|---------|--------------|
-| `romsBase` | `G:\Emulation\roms` | Where ROMs go. Used when the folder exists. |
+| `romsBase` | EmuDeck's `romsPath` | Where ROMs go. Used when the folder exists. Falls back to `<system drive>\Emulation\roms`. |
 | `tempDir` | `%TEMP%\dlrom` | Working folder for downloads and unpacking. |
 | `motrixRpcUrl` | `http://localhost:16800/jsonrpc` | Motrix aria2 RPC address. |
 | `maxResults` | `10` | How many search results to show. |
@@ -522,6 +558,9 @@ file is created with defaults on first run.
 | `srmRestartSteam` | `auto` | `auto`, `never` or `always`. |
 | `srmEnableParser` | `true` | Enable the SRM parser for the destination before adding. |
 | `srmWrapperCmd` | `""` | Path to `srm-wrapper.cmd`. Blank auto-detects on `PATH`. |
+| `srmAutoSwitchSession` | `true` | Steam Deck: in Game Mode, drop to the desktop for the Steam step and return. |
+| `srmReturnToGameMode` | `true` | Steam Deck: go back to Game Mode after `--sync-steam`. |
+| `srmDeferInGameMode` | `true` | Steam Deck: queue the Steam step if the session will not switch. |
 | `abPort` | `15151` | AB Download Manager port. |
 | `abDownloadDir` | `""` | AB's download folder. Blank auto-detects. |
 | `abTimeoutSec` | `1800` | How long to wait for an AB download. |

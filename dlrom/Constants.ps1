@@ -46,9 +46,14 @@ $script:DEFAULT_QBIT_PORT    = 8075
 $emuRoms  = Get-DlEmuDeckSetting 'romsPath'
 $emuTools = Get-DlEmuDeckSetting 'toolsPath'
 if (Test-DlWindows) {
-    $script:DEFAULT_ROMS_BASE = if ($emuRoms)  { $emuRoms }  else { 'G:\Emulation\roms' }
+    # Fall back to EmuDeck's own default location, <system drive>\Emulation, derived rather
+    # than written out: a literal drive letter here is only ever right on one machine, and
+    # anyone whose library lives elsewhere is already covered by the settings lookup above
+    # or by romsBase in their config.
+    $emuRoot = Join-Path $env:SystemDrive 'Emulation'
+    $script:DEFAULT_ROMS_BASE = if ($emuRoms)  { $emuRoms }  else { Join-Path $emuRoot 'roms' }
     $script:DEFAULT_SRM_EXE   = if ($emuTools) { Join-Path $emuTools 'srm.exe' }
-                                else { 'G:\Emulation\tools\srm.exe' }
+                                else { Join-DlPath $emuRoot 'tools' 'srm.exe' }
 } else {
     $script:DEFAULT_ROMS_BASE = if ($emuRoms)  { $emuRoms }  else { Join-DlPath (Get-DlHomeDir) 'Emulation' 'roms' }
     $script:DEFAULT_SRM_EXE   = if ($emuTools) { Join-Path $emuTools 'Steam-ROM-Manager.AppImage' }
