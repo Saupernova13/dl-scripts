@@ -126,12 +126,27 @@ function Get-DlEmuDeckSetting {
 # and Steam ROM Manager's own CLI warns that adding while Steam runs loses categories.
 # Downloads are unaffected, so callers gate only the Steam-facing step on this.
 
+# The systemd unit is the authority here, and its name is stable. The process name is not:
+# SteamOS runs the compositor as 'gamescope-wl' while its own argv[0] still reads
+# 'gamescope', and pgrep -x matches on comm - so `pgrep -x gamescope` found nothing and Game
+# Mode was indistinguishable from Desktop Mode. That silently disarmed the guard: every
+# caller believed it was safe to run Steam ROM Manager, which is exactly the broken add the
+# guard exists to prevent. Verified on SteamOS 2026-07-29 with gamescope-session active.
 function Test-DlGameMode {
     if ($script:DL_IS_WINDOWS) { return $false }
     try {
-        $null = & pgrep -x gamescope 2>$null
-        return ($LASTEXITCODE -eq 0)
-    } catch { return $false }
+        $state = & systemctl --user is-active gamescope-session.service 2>$null
+        if ("$state".Trim() -eq 'active') { return $true }
+    } catch { }
+    # Fallback for a session started outside systemd. Both spellings, because which one
+    # matches depends on how the compositor was launched.
+    foreach ($name in @('gamescope-wl', 'gamescope')) {
+        try {
+            $null = & pgrep -x $name 2>$null
+            if ($LASTEXITCODE -eq 0) { return $true }
+        } catch { }
+    }
+    return $false
 }
 
 # Put the Deck back into Game Mode. steamos-session-select stops the plasma workspace and
