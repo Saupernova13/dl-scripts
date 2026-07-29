@@ -113,10 +113,11 @@ function Get-SrmParserIdsForFolder {
     $exact = @()
     foreach ($p in $parsers) {
         if (-not $p.romDirectory) { continue }
-        $dir = ConvertTo-ComparablePath (($p.romDirectory -replace [regex]::Escape('${romsdirglobal}'), $romsDir) -replace [regex]::Escape('${/}'), '/')
-        # Enabled parser on this folder or any ancestor of it: already covered, add nothing.
-        if ($p.disabled -ne $true -and (Test-SrmPathCovers -Parent $dir -Child $targetNorm)) {
-            Write-Log "Folder $RomDest is already served by '$($p.name)' - not enabling another parser." 'DEBUG'
+        $dir  = ConvertTo-ComparablePath (($p.romDirectory -replace [regex]::Escape('${romsdirglobal}'), $romsDir) -replace [regex]::Escape('${/}'), '/')
+        $glob = [string]$p.parserInputs.glob
+        # An enabled parser that already reaches into this folder: add nothing.
+        if ($p.disabled -ne $true -and (Test-SrmParserCovers -ParserDir $dir -Glob $glob -Target $targetNorm)) {
+            Write-Log "Folder $RomDest is already served by '$($p.configTitle)' - not enabling another parser." 'DEBUG'
             return @()
         }
         if ($dir -ieq $targetNorm -and $p.disabled -eq $true) { $exact += $p.parserId }
@@ -127,13 +128,33 @@ function Get-SrmParserIdsForFolder {
     return @($exact)
 }
 
-# True when $Child is $Parent or sits underneath it. Both sides are already '/'-folded by
-# ConvertTo-ComparablePath; the trailing separator stops '/roms/n6' matching '/roms/n64'.
-function Test-SrmPathCovers {
-    param([string]$Parent, [string]$Child)
-    if (-not $Parent -or -not $Child) { return $false }
-    if ($Parent -ieq $Child) { return $true }
-    return $Child.StartsWith(($Parent.TrimEnd('/') + '/'), [StringComparison]::OrdinalIgnoreCase)
+# Does a parser's search actually reach into $Target?
+#
+# romDirectory alone does not answer this. Plenty of parsers sit on the BASE roms directory and
+# pick their platform in the GLOB instead:
+#
+#   Nintendo 64 - Rosalie's Mupen GUI    dir=<roms>      glob=@(n64|n64dd)/**/${title}@(.z64|…)
+#   Desktop Applications                 dir=<roms>      glob={desktop/**/…,desktop}/${title}…
+#   RetroArch Mupen64Plus Next           dir=<roms>/n64  glob=**/${title}@(.z64|…)
+#
+# So an ancestor romDirectory is necessary but not sufficient. Treating any ancestor as covering
+# would make "Desktop Applications" - enabled, and sitting on the base dir - look like it covers
+# every console, and no platform parser would ever be enabled again.
+function Test-SrmParserCovers {
+    param([string]$ParserDir, [string]$Glob, [string]$Target)
+    if (-not $ParserDir -or -not $Target) { return $false }
+    if ($ParserDir -ieq $Target) { return $true }
+
+    $prefix = $ParserDir.TrimEnd('/') + '/'
+    if (-not $Target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) { return $false }
+
+    # Ancestor: the glob must name the folder we care about.
+    $leaf = (($Target.Substring($prefix.Length)) -split '/')[0]
+    $lead = ($Glob -split '/')[0]
+    # '**' or a '${title}' first segment means it walks everything below romDirectory.
+    if (-not $lead -or $lead -like '**' -or $lead -match '^\*' -or $lead -match '\$\{') { return $true }
+    $alts = @($lead -split '[@!(){}|,]' | Where-Object { $_ })
+    return ($alts -contains $leaf)
 }
 
 # -WindowStyle is a Windows-only parameter and PowerShell on Linux throws rather than
