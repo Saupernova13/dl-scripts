@@ -63,7 +63,10 @@ function Get-SrmSteamExe {
     $exeName  = if (Test-DlWindows) { 'steam.exe' } else { 'steam' }
     if ($steamDir) {
         $candidate = Join-Path $steamDir $exeName
-        if (Test-Path $candidate) { return $candidate }
+        # -PathType Leaf: on Linux ~/.steam/steam/steam is a DIRECTORY, so a bare Test-Path
+        # matched it and handed Start-Process a folder ("The FileName property should not be
+        # a directory"). The real binary is /usr/bin/steam, found by the fallback below.
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
     }
     if (Test-DlWindows) {
         $fallback = Join-DlPath ${env:ProgramFiles(x86)} 'Steam' 'steam.exe'
@@ -118,10 +121,44 @@ function Get-HiddenWindowOption {
     return @{}
 }
 
+# Steam ROM Manager is an Electron app, and even its CLI subcommands start a renderer - so
+# it needs a desktop session. A job started over SSH has none: no DISPLAY, no XAUTHORITY,
+# and 'srm add' dies with "Missing X server or $DISPLAY" and exit 139. DISPLAY=:0 alone is
+# not enough; the X cookie in XAUTHORITY is required too, and its filename is random per
+# session (/run/user/1000/xauth_aRsoaP), so it has to be discovered rather than assumed.
+function Import-DesktopSessionEnv {
+    if (Test-DlWindows) { return $true }
+    if ($env:DISPLAY -and $env:XAUTHORITY) { return $true }
+
+    $wanted = @('DISPLAY', 'XAUTHORITY', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS', 'WAYLAND_DISPLAY')
+    foreach ($name in @('kwin_x11', 'kwin_wayland', 'plasmashell', 'gamescope', 'steam')) {
+        foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+            try   { $raw = [System.IO.File]::ReadAllText("/proc/$($proc.Id)/environ") }
+            catch { continue }
+
+            $found = @{}
+            foreach ($entry in $raw.Split([char]0)) {
+                $split = $entry.IndexOf('=')
+                if ($split -lt 1) { continue }
+                $key = $entry.Substring(0, $split)
+                if ($wanted -contains $key) { $found[$key] = $entry.Substring($split + 1) }
+            }
+            if (-not $found.ContainsKey('DISPLAY')) { continue }
+
+            foreach ($key in $found.Keys) { Set-Item -Path "Env:$key" -Value $found[$key] }
+            Write-Log "Using the desktop session from '$name' (DISPLAY=$($found['DISPLAY']))." 'DEBUG'
+            return $true
+        }
+    }
+    Write-Log "No desktop session found. Steam ROM Manager is a GUI app and cannot run headless." 'WARN'
+    return $false
+}
+
 function Invoke-Srm {
     param([string]$SrmExe, [string[]]$SrmArgs)
     $workDir = Split-Path -Parent $SrmExe
     $hidden  = Get-HiddenWindowOption
+    [void](Import-DesktopSessionEnv)
     $proc = Start-Process -FilePath $SrmExe -ArgumentList $SrmArgs -WorkingDirectory $workDir `
         -Wait -PassThru @hidden
     return $proc.ExitCode
