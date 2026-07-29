@@ -110,6 +110,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
     srmDeferInGameMode = $true  # Steam Deck: in Game Mode, queue the Steam sync instead of running it
     srmReturnToGameMode = $true # Steam Deck: after --sync-steam succeeds, switch back to Game Mode
+    srmAutoSwitchSession = $true # Steam Deck: in Game Mode, borrow the desktop for the sync instead of queueing
     abPort          = $script:DEFAULT_AB_PORT   # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up

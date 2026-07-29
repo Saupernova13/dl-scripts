@@ -119,7 +119,23 @@ function Invoke-SrmDeferredDrain {
 
     $pending = @(Get-SrmDeferredJobs)
 
+    # Asked to sync from Game Mode, borrow the desktop and give it back rather than refusing:
+    # "sync my library" should just happen. Invoke-SrmInDesktopSession restores Game Mode on
+    # every path, so control returns here already back where it started.
     if (Test-DlGameMode) {
+        if ([bool](Get-CfgValue 'srmAutoSwitchSession' $true)) {
+            $romsBase = [string](Get-CfgValue 'romsBase' $script:DEFAULT_ROMS_BASE)
+            if (Invoke-SrmInDesktopSession -RomDest $romsBase -RomsBase $romsBase -InstalledCount 0) {
+                foreach ($entry in $pending) { Remove-SrmDeferredJob -Id $entry.id }
+                if ($AsJson) {
+                    [PSCustomObject]@{ drained = $pending.Count; pending = 0; fullSync = $true; viaDesktop = $true } | ConvertTo-Json
+                } else {
+                    Write-Log "Steam library updated from $romsBase (borrowed the desktop, back in Game Mode)." 'SUCCESS'
+                }
+                return $pending.Count
+            }
+            Write-Log "Could not borrow a desktop session for the sync." 'WARN'
+        }
         $msg = "Game Mode is active - not draining $($pending.Count) queued Steam sync(s). Switch to Desktop Mode."
         if ($AsJson) {
             [PSCustomObject]@{ drained = 0; pending = $pending.Count; skipped = 'gamemode' } | ConvertTo-Json

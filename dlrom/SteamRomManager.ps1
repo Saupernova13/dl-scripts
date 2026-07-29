@@ -244,17 +244,70 @@ function Invoke-SteamRomManager {
 #
 # -AlreadyDeferred is set by the queue drain, which has already established that this is a
 # safe moment to touch Steam. Without it the drain would re-queue everything it just picked up.
+# Borrow the desktop for the length of one Steam sync and hand the Deck straight back.
+#
+# A ROM asked for from Game Mode should arrive finished - downloaded, filed AND in the Steam
+# library - rather than half-done with a note to go and switch sessions. Only this step needs
+# the desktop; the download itself runs fine under gamescope, so the device is away from Game
+# Mode for about a minute rather than the length of the transfer.
+#
+# The switch stops the running session, which the worker survives only because it lives under
+# systemd --user rather than the session cgroup (see Jobs.ps1). Returns false when the round
+# trip could not be made, leaving the caller to queue instead - never leaves the Deck parked
+# on the desktop.
+function Invoke-SrmInDesktopSession {
+    param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount)
+
+    Write-Log "Game Mode is active - switching to Desktop Mode to run Steam ROM Manager..." 'INFO'
+    if (-not (Exit-DlGameMode)) {
+        Write-Log "Could not leave Game Mode (steamos-session-select unavailable or refused)." 'WARN'
+        return $false
+    }
+
+    if (-not (Wait-DlDesktopSession -TimeoutSec 120)) {
+        Write-Log "Desktop session did not become usable within 120s." 'WARN'
+        $null = Enter-DlGameMode        # never strand the Deck on a half-started desktop
+        return $false
+    }
+    Write-Log "Desktop session is up." 'DEBUG'
+
+    try {
+        Sync-RomToSteam -RomDest $RomDest -RomsBase $RomsBase -InstalledCount $InstalledCount -AlreadyDeferred
+        return $true
+    } catch {
+        Write-Log "Steam sync failed in the borrowed desktop session: $($_.Exception.Message)" 'ERROR'
+        return $false
+    } finally {
+        # Runs on every path, including the failure above: the Deck goes back to Game Mode
+        # whether or not the sync worked.
+        Write-Log "Returning the Deck to Game Mode..." 'INFO'
+        if (Enter-DlGameMode) { Write-Log "Back in Game Mode." 'SUCCESS' }
+        else { Write-Log "Could not switch back to Game Mode." 'WARN' }
+    }
+}
+
 function Sync-RomToSteam {
     param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount, [switch]$AlreadyDeferred)
 
-    # Game Mode gate. The download is already on disk and staying there; only the Steam
-    # step waits. See SteamDeferred.ps1 for why this cannot simply run anyway.
-    if (-not $AlreadyDeferred -and (Test-DlGameMode) -and [bool](Get-CfgValue 'srmDeferInGameMode' $true)) {
-        $id = Add-SrmDeferredJob -RomDest $RomDest -RomsBase $RomsBase -InstalledCount $InstalledCount
-        Write-Log "Game Mode detected - Steam sync deferred (queue id $id)." 'INFO'
-        Write-Log "The ROM is installed at $RomDest and will be added to Steam automatically in Desktop Mode." 'INFO'
-        Write-Log "To do it now: switch to Desktop Mode, or run 'dlrom --sync-steam'." 'INFO'
-        return
+    # Game Mode gate. The download is already on disk and staying there; only the Steam step
+    # is affected, because Steam ROM Manager cannot write the library from inside the
+    # gamescope session. See SteamDeferred.ps1 for why this cannot simply run anyway.
+    #
+    # Preferred answer is to borrow the desktop and give it straight back, so a download
+    # asked for from Game Mode finishes the whole job. Queueing is the fallback for when the
+    # session will not switch, and stays the configured behaviour if auto-switching is off.
+    if (-not $AlreadyDeferred -and (Test-DlGameMode)) {
+        if ([bool](Get-CfgValue 'srmAutoSwitchSession' $true)) {
+            if (Invoke-SrmInDesktopSession -RomDest $RomDest -RomsBase $RomsBase -InstalledCount $InstalledCount) { return }
+            Write-Log "Falling back to the deferred queue." 'WARN'
+        }
+        if ([bool](Get-CfgValue 'srmDeferInGameMode' $true)) {
+            $id = Add-SrmDeferredJob -RomDest $RomDest -RomsBase $RomsBase -InstalledCount $InstalledCount
+            Write-Log "Game Mode detected - Steam sync deferred (queue id $id)." 'INFO'
+            Write-Log "The ROM is installed at $RomDest and will be added to Steam automatically in Desktop Mode." 'INFO'
+            Write-Log "To do it now: switch to Desktop Mode, or run 'dlrom --sync-steam'." 'INFO'
+            return
+        }
     }
 
     Write-Log "Syncing $InstalledCount new ROM(s) to Steam..." 'INFO'

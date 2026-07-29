@@ -157,16 +157,51 @@ function Test-DlGameMode {
 # session, so anything still running there goes with it. Returns false when this is not a
 # Deck or steamos-session-select is absent, which is not an error - there is simply no Game
 # Mode to return to.
-function Enter-DlGameMode {
+function Enter-DlGameMode { return (Set-DlSteamSession 'gamescope') }
+
+# Drop to the desktop so a GUI tool can run. 'plasma' is SteamOS's ONE-SHOT desktop session
+# (plasma-steamos-oneshot.desktop) rather than a persistent one, which is what we want for a
+# temporary visit: it does not change what the Deck boots into.
+function Exit-DlGameMode { return (Set-DlSteamSession 'plasma') }
+
+# steamos-session-select re-execs itself through pkexec, so this depends on the polkit rule
+# SteamOS ships for it - there is no interactive agent on an SSH-driven run. It also stops the
+# current session, which is survivable here only because the worker runs under systemd --user
+# rather than in the session cgroup (see Jobs.ps1); a plain background child would die with it.
+function Set-DlSteamSession {
+    param([ValidateSet('gamescope', 'plasma')][string]$Session)
     if ($script:DL_IS_WINDOWS) { return $false }
     $exe = Get-Command 'steamos-session-select' -ErrorAction SilentlyContinue
     if (-not $exe) { return $false }
     try {
-        & $exe.Source 'gamescope' 2>$null | Out-Null
+        & $exe.Source $Session 2>$null | Out-Null
         return ($LASTEXITCODE -eq 0)
     } catch {
         return $false
     }
+}
+
+# Block until a desktop session is actually usable, not merely requested. Steam ROM Manager
+# is an Electron app and needs a real X display: starting it while plasma is still coming up
+# fails with "Missing X server or $DISPLAY" and a segfault. A session is ready once some
+# process in it is advertising DISPLAY, which is the same signal Import-DesktopSessionEnv
+# borrows the environment from.
+function Wait-DlDesktopSession {
+    param([int]$TimeoutSec = 120)
+    if ($script:DL_IS_WINDOWS) { return $true }
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $deadline) {
+        foreach ($name in @('kwin_x11', 'kwin_wayland', 'plasmashell')) {
+            foreach ($proc in @(Get-Process -Name $name -ErrorAction SilentlyContinue)) {
+                try {
+                    $raw = [System.IO.File]::ReadAllText("/proc/$($proc.Id)/environ")
+                    if ($raw.Split([char]0) -match '^DISPLAY=.') { return $true }
+                } catch { }
+            }
+        }
+        Start-Sleep -Seconds 2
+    }
+    return $false
 }
 
 # 'windows' | 'gamemode' | 'desktop' - the vocabulary written into deferred job files,
