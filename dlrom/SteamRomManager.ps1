@@ -109,11 +109,21 @@ function Get-SrmParserIdsForFolder {
     return @($ids)
 }
 
+# -WindowStyle is a Windows-only parameter and PowerShell on Linux throws rather than
+# ignoring it: "The parameter '-WindowStyle' is not supported ... on this edition of
+# PowerShell". Steam sync is wrapped in a warn-and-continue by design, so on the Deck every
+# sync failed quietly and shortcuts.vdf went untouched for weeks while ROMs kept arriving.
+function Get-HiddenWindowOption {
+    if (Test-DlWindows) { return @{ WindowStyle = 'Hidden' } }
+    return @{}
+}
+
 function Invoke-Srm {
     param([string]$SrmExe, [string[]]$SrmArgs)
     $workDir = Split-Path -Parent $SrmExe
+    $hidden  = Get-HiddenWindowOption
     $proc = Start-Process -FilePath $SrmExe -ArgumentList $SrmArgs -WorkingDirectory $workDir `
-        -WindowStyle Hidden -Wait -PassThru
+        -Wait -PassThru @hidden
     return $proc.ExitCode
 }
 
@@ -156,7 +166,8 @@ function Invoke-SteamRomManager {
     if ($restart -and $running) {
         if ($steamExe) {
             Write-Log "Shutting down Steam so SRM can apply changes..." 'INFO'
-            Start-Process -FilePath $steamExe -ArgumentList '-shutdown' -WindowStyle Hidden | Out-Null
+            $hidden = Get-HiddenWindowOption
+            Start-Process -FilePath $steamExe -ArgumentList '-shutdown' @hidden | Out-Null
             $deadline = (Get-Date).AddSeconds(20)
             while ((Get-Process -Name steam -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) {
                 Start-Sleep -Milliseconds 500
