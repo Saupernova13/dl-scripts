@@ -113,10 +113,31 @@ function Invoke-SrmDeferredDrain {
         return 0
     }
 
+    # An empty queue does not mean there is nothing to do. The queue only ever holds syncs
+    # that Game Mode postponed, but the request behind --sync-steam is almost always just
+    # "add the new ROMs to Steam" - and answering "No queued Steam syncs" to that is a dead
+    # end that leaves the caller believing remote Steam sync is impossible. Run a full SRM
+    # pass instead: 'srm add' walks every enabled parser, so it picks up anything new
+    # regardless of how it got onto the disk.
     if ($pending.Count -eq 0) {
-        if ($AsJson) { [PSCustomObject]@{ drained = 0; pending = 0 } | ConvertTo-Json }
-        else { Write-Log "No queued Steam syncs." 'INFO' }
-        return 0
+        Write-Log "Nothing queued - running a full Steam ROM Manager pass instead." 'INFO'
+        $romsBase = [string](Get-CfgValue 'romsBase' $script:DEFAULT_ROMS_BASE)
+        try {
+            Sync-RomToSteam -RomDest $romsBase -RomsBase $romsBase -InstalledCount 0 -AlreadyDeferred
+            if ($AsJson) {
+                [PSCustomObject]@{ drained = 0; pending = 0; fullSync = $true } | ConvertTo-Json
+            } else {
+                Write-Log "Steam library updated from $romsBase." 'SUCCESS'
+            }
+            return 0
+        } catch {
+            if ($AsJson) {
+                [PSCustomObject]@{ drained = 0; pending = 0; fullSync = $false; error = $_.Exception.Message } | ConvertTo-Json
+            } else {
+                Write-Log "Full Steam sync failed: $($_.Exception.Message)" 'ERROR'
+            }
+            return 0
+        }
     }
 
     Write-Log "Draining $($pending.Count) queued Steam sync(s)..." 'INFO'
