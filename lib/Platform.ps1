@@ -134,6 +134,26 @@ function Test-DlGameMode {
     } catch { return $false }
 }
 
+# Put the Deck back into Game Mode. steamos-session-select stops the plasma workspace and
+# starts gamescope-session, which brings Steam up in Big Picture - the state the device
+# normally lives in, and the one the user wants to be in once a library sync has finished.
+#
+# It is deliberately the last thing any caller does: the switch tears down the desktop
+# session, so anything still running there goes with it. Returns false when this is not a
+# Deck or steamos-session-select is absent, which is not an error - there is simply no Game
+# Mode to return to.
+function Enter-DlGameMode {
+    if ($script:DL_IS_WINDOWS) { return $false }
+    $exe = Get-Command 'steamos-session-select' -ErrorAction SilentlyContinue
+    if (-not $exe) { return $false }
+    try {
+        & $exe.Source 'gamescope' 2>$null | Out-Null
+        return ($LASTEXITCODE -eq 0)
+    } catch {
+        return $false
+    }
+}
+
 # 'windows' | 'gamemode' | 'desktop' - the vocabulary written into deferred job files,
 # so these strings are a contract with anything reading them back.
 function Get-DlSessionMode {

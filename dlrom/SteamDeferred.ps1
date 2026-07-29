@@ -100,6 +100,20 @@ function Save-SrmDeferredJob {
 #
 # Refuses to run in Game Mode rather than queueing again - draining there would produce
 # exactly the broken add the queue exists to avoid, and would empty the queue while doing it.
+# A library sync is something the user asks for so they can go and play, and on the Deck that
+# means Game Mode. Desktop Mode is only ever a means to an end here - SRM cannot write the
+# library from inside the gamescope session - so once the sync lands, hand the device back in
+# the state it normally lives in rather than parked on a desktop nobody asked for.
+#
+# Last thing before returning: the switch tears the desktop session down with it.
+function Complete-SrmSyncSession {
+    if (-not [bool](Get-CfgValue 'srmReturnToGameMode' $true)) { return }
+    if (Test-DlGameMode) { return }   # already there
+    Write-Log "Returning the Deck to Game Mode..." 'INFO'
+    if (Enter-DlGameMode) { Write-Log "Switched to Game Mode." 'SUCCESS' }
+    else { Write-Log "Could not switch to Game Mode (steamos-session-select unavailable)." 'DEBUG' }
+}
+
 function Invoke-SrmDeferredDrain {
     param([switch]$AsJson)
 
@@ -129,6 +143,7 @@ function Invoke-SrmDeferredDrain {
             } else {
                 Write-Log "Steam library updated from $romsBase." 'SUCCESS'
             }
+            Complete-SrmSyncSession
             return 0
         } catch {
             if ($AsJson) {
@@ -166,6 +181,7 @@ function Invoke-SrmDeferredDrain {
     } else {
         Write-Log "Drained $drained of $($pending.Count) queued Steam sync(s)." 'SUCCESS'
     }
+    if ($drained -gt 0) { Complete-SrmSyncSession }
     return $drained
 }
 

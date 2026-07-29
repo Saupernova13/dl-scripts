@@ -51,6 +51,7 @@ param(
     # Steam ROM Manager queue surface (Steam Deck Game Mode deferral)
     [switch]$SyncSteam,
     [switch]$SteamQueue,
+    [switch]$NoGameMode,        # stay in Desktop Mode after --sync-steam
 
     # Housekeeping surface
     [switch]$Clean,
@@ -108,6 +109,7 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     srmEnableParser = $true     # enable the SRM parser watching the destination folder before adding
     srmWrapperCmd   = ""        # path to srm-wrapper.cmd; blank = autodetect on PATH (preferred over built-in)
     srmDeferInGameMode = $true  # Steam Deck: in Game Mode, queue the Steam sync instead of running it
+    srmReturnToGameMode = $true # Steam Deck: after --sync-steam succeeds, switch back to Game Mode
     abPort          = $script:DEFAULT_AB_PORT   # AB Download Manager integration port (used when Motrix isn't running)
     abDownloadDir   = ""        # AB's download folder; blank = autodetect %USERPROFILE%\Downloads\ABDM
     abTimeoutSec    = 1800      # how long to wait for an AB download to finish before giving up
@@ -132,7 +134,12 @@ Set-DlromConfig $cfg
 
 # Drain the deferred Steam queue. Needs $cfg (srmExe, srmRestartSteam), hence its position
 # here rather than with the other query switches above.
-if ($SyncSteam) { $null = Invoke-SrmDeferredDrain -AsJson:$Json; exit 0 }
+if ($SyncSteam) {
+    # --no-game-mode is a per-run override of the srmReturnToGameMode config default.
+    if ($NoGameMode) { $cfg.srmReturnToGameMode = $false }
+    $null = Invoke-SrmDeferredDrain -AsJson:$Json
+    exit 0
+}
 
 if ($MaxResults -eq 0) { $MaxResults = [int](Get-CfgValue 'maxResults' 10) }
 $script:MOTRIX_URL = Get-CfgValue 'motrixRpcUrl' $script:DEFAULT_MOTRIX_RPC
