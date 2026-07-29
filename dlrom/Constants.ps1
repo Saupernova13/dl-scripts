@@ -92,7 +92,7 @@ $script:DOWNLOADER_LABELS = @{
     $script:DL_MOTRIX    = 'Motrix (aria2 RPC)'
     $script:DL_AB        = 'AB Download Manager'
     $script:DL_ARIA2C    = 'aria2c (standalone)'
-    $script:DL_CURL      = 'curl.exe (Windows built-in)'
+    $script:DL_CURL      = 'curl'
     $script:DL_BITS      = 'BITS (Background Intelligent Transfer)'
     $script:DL_WEBCLIENT = 'PowerShell Invoke-WebRequest (last resort)'
 }

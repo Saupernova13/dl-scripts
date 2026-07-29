@@ -63,7 +63,11 @@ function Get-DirectDownloader {
     foreach ($name in @('aria2c.exe', 'aria2c')) {
         if (Get-Command $name -ErrorAction SilentlyContinue) { return $script:DL_ARIA2C }
     }
-    if (Get-Command 'curl.exe' -ErrorAction SilentlyContinue)           { return $script:DL_CURL }
+    # 'curl' before 'curl.exe' so Linux finds /usr/bin/curl. Probing only the .exe name sent
+    # SteamOS straight past a working curl to the last-resort tier.
+    foreach ($name in @('curl.exe', 'curl')) {
+        if (Get-Command $name -ErrorAction SilentlyContinue) { return $script:DL_CURL }
+    }
     if (Get-Command 'Start-BitsTransfer' -ErrorAction SilentlyContinue) { return $script:DL_BITS }
     return $script:DL_WEBCLIENT
 }
@@ -153,29 +157,44 @@ function Invoke-MotrixDownload {
     return Wait-MotrixDownload -Gid $gid -Label $Label -PollMs ([int]$cfg.pollIntervalMs)
 }
 
+# First name on PATH wins; $null when none of them resolve.
+function Get-NativeTool {
+    param([string[]]$Names)
+    foreach ($name in $Names) {
+        $cmd = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if ($cmd) { return $cmd.Source }
+    }
+    return $null
+}
+
 function Invoke-Aria2cDownload {
     param([string]$Url, [string]$OutFile, [string]$Label)
+    $exe = Get-NativeTool @('aria2c.exe', 'aria2c')
+    if (-not $exe) { throw "aria2c was not found on PATH." }
     Write-Log "Downloading via aria2c: $Label" 'DEBUG'
     $outDir  = [System.IO.Path]::GetDirectoryName($OutFile)
     $outName = [System.IO.Path]::GetFileName($OutFile)
-    $proc = Start-Process 'aria2c' -ArgumentList @(
-        "--dir=`"$outDir`"", "--out=`"$outName`"",
-        "--console-log-level=warn", "--summary-interval=1",
-        "--max-connection-per-server=4", "--split=4",
-        "`"$Url`""
-    ) -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ne 0) { throw "aria2c exited with code $($proc.ExitCode)" }
+    & $exe "--dir=$outDir" "--out=$outName" '--console-log-level=warn' '--summary-interval=1' `
+           '--max-connection-per-server=4' '--split=4' `
+           "--user-agent=$($HTTP_HEADERS['User-Agent'])" $Url
+    if ($LASTEXITCODE -ne 0) { throw "aria2c exited with code $LASTEXITCODE" }
+    Write-Log "Download complete." 'SUCCESS'
     return $OutFile
 }
 
 function Invoke-CurlDownload {
     param([string]$Url, [string]$OutFile, [string]$Label)
+    $exe = Get-NativeTool @('curl.exe', 'curl')
+    if (-not $exe) { throw "curl was not found on PATH." }
     Write-Log "Downloading via curl: $Label" 'DEBUG'
-    $proc = Start-Process 'curl.exe' -ArgumentList @(
-        '-L', '--progress-bar', '--retry', '3', '--retry-delay', '2',
-        '-o', "`"$OutFile`"", "`"$Url`""
-    ) -Wait -PassThru -NoNewWindow
-    if ($proc.ExitCode -ne 0) { throw "curl.exe exited with code $($proc.ExitCode)" }
+    # Call operator with an argument array, not Start-Process with hand-quoted strings: on
+    # Linux the embedded quotes end up as literal characters in the output filename.
+    # --fail so an HTTP error page is a non-zero exit rather than a saved error page.
+    & $exe '-L' '--fail' '--progress-bar' '--retry' '3' '--retry-delay' '2' `
+           '-A' $HTTP_HEADERS['User-Agent'] '-o' $OutFile $Url
+    if ($LASTEXITCODE -ne 0) { throw "curl exited with code $LASTEXITCODE" }
+    Write-Log "Download complete." 'SUCCESS'
     return $OutFile
 }
 
@@ -238,12 +257,38 @@ function Invoke-AbDownload {
     return $OutFile
 }
 
+# Every backend reports success in its own way - an exit code, an RPC status, or merely
+# returning without throwing - and none of them proved the bytes landed. Invoke-WebRequest
+# in particular returned cleanly after a 978 MB download that left nothing on disk, so the
+# job logged "Download complete." and then "Downloaded file not found" in the same second.
+# One check on the way out means a backend cannot claim a file it did not produce.
+function Assert-DownloadedFile {
+    param([string]$Path, [string]$Backend)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        throw "$Backend reported success but returned no file path."
+    }
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "$Backend reported success but no file exists at: $Path"
+    }
+    $size = (Get-Item -LiteralPath $Path).Length
+    if ($size -le 0) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+        throw "$Backend produced an empty file at: $Path"
+    }
+    Write-Log "Downloaded $(Format-Bytes $size) to $Path" 'DEBUG'
+    return $Path
+}
+
 # Run the chosen downloader, falling through Motrix -> AB -> direct tiers on failure.
 function Invoke-FileDownload {
     param([string]$Url, [string]$OutFile, [string]$Label = "")
+    # Verification sits inside each try so a backend that "succeeded" without producing a
+    # file falls through to the next tier, exactly as a thrown error does.
     if ($script:DOWNLOADER -eq $script:DL_MOTRIX) {
         try {
-            return Invoke-MotrixDownload -Url $Url -OutFile $OutFile -Label $Label
+            $path = Invoke-MotrixDownload -Url $Url -OutFile $OutFile -Label $Label
+            return (Assert-DownloadedFile -Path $path -Backend 'Motrix')
         } catch {
             Write-Log "Motrix failed: $($_.Exception.Message)" 'WARN'
             $script:DOWNLOADER = Get-FallbackDownloader
@@ -252,18 +297,20 @@ function Invoke-FileDownload {
     }
     if ($script:DOWNLOADER -eq $script:DL_AB) {
         try {
-            return Invoke-AbDownload -Url $Url -OutFile $OutFile -Label $Label
+            $path = Invoke-AbDownload -Url $Url -OutFile $OutFile -Label $Label
+            return (Assert-DownloadedFile -Path $path -Backend 'AB Download Manager')
         } catch {
             Write-Log "AB Download Manager failed: $($_.Exception.Message)" 'WARN'
             $script:DOWNLOADER = Get-DirectDownloader
             Write-Log "Falling back to: $script:DOWNLOADER" 'WARN'
         }
     }
-    switch ($script:DOWNLOADER) {
-        $script:DL_ARIA2C    { return Invoke-Aria2cDownload    -Url $Url -OutFile $OutFile -Label $Label }
-        $script:DL_CURL      { return Invoke-CurlDownload      -Url $Url -OutFile $OutFile -Label $Label }
-        $script:DL_BITS      { return Invoke-BitsDownload      -Url $Url -OutFile $OutFile -Label $Label }
-        $script:DL_WEBCLIENT { return Invoke-WebClientDownload -Url $Url -OutFile $OutFile -Label $Label }
+    $path = switch ($script:DOWNLOADER) {
+        $script:DL_ARIA2C    { Invoke-Aria2cDownload    -Url $Url -OutFile $OutFile -Label $Label }
+        $script:DL_CURL      { Invoke-CurlDownload      -Url $Url -OutFile $OutFile -Label $Label }
+        $script:DL_BITS      { Invoke-BitsDownload      -Url $Url -OutFile $OutFile -Label $Label }
+        $script:DL_WEBCLIENT { Invoke-WebClientDownload -Url $Url -OutFile $OutFile -Label $Label }
         default              { throw "No supported downloader found." }
     }
+    return (Assert-DownloadedFile -Path $path -Backend $script:DOWNLOADER)
 }
