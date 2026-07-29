@@ -86,7 +86,17 @@ function ConvertTo-ComparablePath {
     return ([string]$Path -replace '\\', '/').TrimEnd('/')
 }
 
-# Returns parserIds of *disabled* SRM parsers whose romDirectory resolves to $RomDest.
+# Parsers whose romDirectory should be enabled so $RomDest gets picked up - or nothing at all
+# when an already-enabled parser covers it.
+#
+# One console must end up served by ONE emulator. Two enabled parsers over the same folder both
+# emit a shortcut for every game, so the Steam library shows each title once per emulator.
+#
+# Coverage is not folder equality. Plenty of SRM parsers sit on the *base* roms directory
+# (`${romsdirglobal}`) and select a platform by glob internally - "Nintendo 64 - Rosalie's Mupen
+# GUI" is one. A parser on <roms> therefore already covers <roms>/n64, so enabling the
+# folder-specific "RetroArch Mupen64Plus Next" on top of it duplicated all 27 N64 games. An
+# ancestor counts as covering, which is why this compares prefixes rather than whole paths.
 function Get-SrmParserIdsForFolder {
     param([string]$SrmExe, [string]$RomDest, [string]$RomsBase)
     $configPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userConfigurations.json"
@@ -99,17 +109,31 @@ function Get-SrmParserIdsForFolder {
     }
     $romsDir    = Get-SrmRomsDir -SrmExe $SrmExe -Fallback $RomsBase
     $targetNorm = ConvertTo-ComparablePath $RomDest
-    $ids = @()
+
+    $exact = @()
     foreach ($p in $parsers) {
         if (-not $p.romDirectory) { continue }
-        $dir = $p.romDirectory
-        $dir = $dir.Replace('${romsdirglobal}', $romsDir)
-        $dir = $dir.Replace('${/}', '/')
-        if ((ConvertTo-ComparablePath $dir) -ieq $targetNorm -and $p.disabled -eq $true) {
-            $ids += $p.parserId
+        $dir = ConvertTo-ComparablePath (($p.romDirectory -replace [regex]::Escape('${romsdirglobal}'), $romsDir) -replace [regex]::Escape('${/}'), '/')
+        # Enabled parser on this folder or any ancestor of it: already covered, add nothing.
+        if ($p.disabled -ne $true -and (Test-SrmPathCovers -Parent $dir -Child $targetNorm)) {
+            Write-Log "Folder $RomDest is already served by '$($p.name)' - not enabling another parser." 'DEBUG'
+            return @()
         }
+        if ($dir -ieq $targetNorm -and $p.disabled -eq $true) { $exact += $p.parserId }
     }
-    return @($ids)
+    # Only ever enable one, so a console with both a RetroArch core and a standalone emulator
+    # does not end up with both.
+    if ($exact.Count -gt 1) { return @($exact[0]) }
+    return @($exact)
+}
+
+# True when $Child is $Parent or sits underneath it. Both sides are already '/'-folded by
+# ConvertTo-ComparablePath; the trailing separator stops '/roms/n6' matching '/roms/n64'.
+function Test-SrmPathCovers {
+    param([string]$Parent, [string]$Child)
+    if (-not $Parent -or -not $Child) { return $false }
+    if ($Parent -ieq $Child) { return $true }
+    return $Child.StartsWith(($Parent.TrimEnd('/') + '/'), [StringComparison]::OrdinalIgnoreCase)
 }
 
 # -WindowStyle is a Windows-only parameter and PowerShell on Linux throws rather than
