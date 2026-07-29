@@ -173,9 +173,19 @@ Write-Log "API: $apiUrl" "DEBUG"
 try {
     Write-Log "Fetching results from The Pirate Bay API..." "INFO"
 
-    $json = curl.exe -s $apiUrl
+    # 'curl.exe' does not exist on Linux, where the binary is plain 'curl' - dltv is one of
+    # the commands reachable on the Deck, so the name has to be resolved rather than assumed.
+    $curl = $null
+    foreach ($name in @('curl.exe', 'curl')) {
+        $cmd = Get-Command $name -CommandType Application -ErrorAction SilentlyContinue |
+               Select-Object -First 1
+        if ($cmd) { $curl = $cmd.Source; break }
+    }
+    if (-not $curl) { throw "curl was not found on PATH." }
+
+    $json = & $curl -s $apiUrl
     if ($LASTEXITCODE -ne 0 -or -not $json) {
-        throw "curl.exe failed with exit code $LASTEXITCODE"
+        throw "curl failed with exit code $LASTEXITCODE"
     }
 
     $results = $json | ConvertFrom-Json
