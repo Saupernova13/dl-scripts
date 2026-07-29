@@ -4,7 +4,19 @@
 
 set -eu
 
-REPO_ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+# Resolve this script through any symlinks before locating its siblings. Putting a
+# launcher on PATH means linking it into ~/.local/bin, and `dirname $0` would then name
+# the link's directory - where neither the shared body nor the repo lives.
+DL_SELF=$0
+while [ -L "$DL_SELF" ]; do
+    dl_link=$(readlink -- "$DL_SELF")
+    case $dl_link in
+        /*) DL_SELF=$dl_link ;;
+        *)  DL_SELF=$(dirname -- "$DL_SELF")/$dl_link ;;
+    esac
+done
+DL_BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$DL_SELF")" && pwd)
+REPO_ROOT=$(CDPATH= cd -- "$DL_BIN_DIR/.." && pwd)
 PS_SCRIPT="$REPO_ROOT/dltv/Add-TV.ps1"
 DL_ARG_STYLE=passthrough
 VALUE_FLAGS=""
@@ -17,4 +29,4 @@ USAGE
 
 if [ $# -eq 0 ]; then dl_usage; exit 0; fi
 
-. "$(dirname -- "$0")/_dl-launcher.sh"
+. "$DL_BIN_DIR/_dl-launcher.sh"

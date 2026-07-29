@@ -17,7 +17,18 @@
 
 set -eu
 
-BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+# Resolve this script through any symlinks before locating its siblings. Putting a
+# launcher on PATH means linking it into ~/.local/bin, and `dirname $0` would then name
+# the link's directory - where the repo does not live.
+SELF=$0
+while [ -L "$SELF" ]; do
+    link=$(readlink -- "$SELF")
+    case $link in
+        /*) SELF=$link ;;
+        *)  SELF=$(dirname -- "$SELF")/$link ;;
+    esac
+done
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 DLROM="$BIN_DIR/dlrom"
 AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 ENTRY="$AUTOSTART_DIR/dlrom-sync-steam.desktop"
