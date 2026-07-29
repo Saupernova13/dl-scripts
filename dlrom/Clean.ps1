@@ -42,6 +42,9 @@ function Get-DlromProtectedNames {
         $job = Read-DlromJob ([System.IO.Path]::GetFileNameWithoutExtension($file.Name))
         if (-not $job) { continue }
         if ((Resolve-DlromJobStatus $job) -notin $script:JOB_STATUS_ACTIVE) { continue }
+        # A running job now owns a whole temp subdirectory named for its id, so the id has
+        # to be protected too - otherwise --clean deletes the folder mid-download.
+        if ($job.id) { $names[[string]$job.id] = $true }
         foreach ($link in @($job.links)) {
             if (-not $link.Label) { continue }
             $names[$link.Label] = $true

@@ -28,9 +28,18 @@ function Invoke-RomPipeline {
         New-Item -ItemType Directory -Path $romDest -Force | Out-Null
         Write-Log "Created ROM directory: $romDest" 'DEBUG'
     }
-    if (-not (Test-Path $TempDir)) {
-        New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+
+    # Each job downloads into its own subdirectory. The temp filename used to come from the
+    # link label alone, so two jobs for the same title shared one path -- and on Linux the
+    # first to finish unlinked the file the second was still downloading into. The writer
+    # gets no error from that (POSIX keeps the inode alive for the open descriptor), so the
+    # download ran to completion and then vanished, which is what "Download complete." on
+    # the same second as "Downloaded file not found" meant.
+    $jobTemp = Join-DlPath $TempDir ([string]$Job.id)
+    if (-not (Test-Path $jobTemp)) {
+        New-Item -ItemType Directory -Path $jobTemp -Force | Out-Null
     }
+    Write-Log "Job temp dir: $jobTemp" 'DEBUG'
 
     $installedCount = 0
     $linkIndex      = 0
@@ -59,7 +68,7 @@ function Invoke-RomPipeline {
 
         # Sanitise label for use as a Windows filename
         $safeLabel = $link.Label -replace '[<>:"/\\|?*]', '_'
-        $outFile   = Join-Path $TempDir $safeLabel
+        $outFile   = Join-Path $jobTemp $safeLabel
 
         $completedPath = $null
         try {
@@ -86,7 +95,7 @@ function Invoke-RomPipeline {
             }.GetNewClosure()
 
             $moved = Install-RomFromDownload -DownloadedPath $completedPath -RomDest $romDest `
-                        -WorkDir $TempDir -NoExtract:([bool]$Job.noExtract) -OnStep $onStep
+                        -WorkDir $jobTemp -NoExtract:([bool]$Job.noExtract) -OnStep $onStep
             if ($moved) {
                 Update-DlromJob -Job $Job -InstalledPath $moved
                 $installedCount++
@@ -103,7 +112,10 @@ function Invoke-RomPipeline {
         }
     }
 
-    if ($installedCount -eq 0) { return $false }
+    if ($installedCount -eq 0) {
+        Remove-DlromJobTemp $jobTemp
+        return $false
+    }
 
     # Add the freshly installed ROM(s) to Steam (srm-wrapper preferred, built-in fallback).
     if (-not $Job.noSteam -and [bool](Get-CfgValue 'steamSync' $true)) {
@@ -125,5 +137,20 @@ function Invoke-RomPipeline {
                    -Build ([string]$Job.vitaBuild) -Cfg $Cfg
     if ($handoff) { $Job.handoff = $handoff }
 
+    Remove-DlromJobTemp $jobTemp
     return $true
+}
+
+# The job's own scratch directory, gone once the ROM is filed. Best-effort: a leftover is
+# only wasted space and --clean sweeps it, whereas throwing here would fail a job whose
+# ROM is already installed.
+function Remove-DlromJobTemp {
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return }
+    try {
+        Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
+        Write-Log "Removed job temp dir: $Path" 'DEBUG'
+    } catch {
+        Write-Log "Could not remove job temp dir $Path : $($_.Exception.Message)" 'DEBUG'
+    }
 }
