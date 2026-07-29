@@ -157,6 +157,85 @@ function Invoke-MotrixDownload {
     return Wait-MotrixDownload -Gid $gid -Label $Label -PollMs ([int]$cfg.pollIntervalMs)
 }
 
+# The denominator for the progress bar. Best effort - a download with no percentage still
+# works, it just cannot be told apart from a stalled one, which is the whole problem.
+function Get-RemoteContentLength {
+    param([string]$Url)
+    try {
+        $resp = Invoke-WebRequest -Uri $Url -Method Head -UseBasicParsing -TimeoutSec 20 `
+                    -Headers @{ 'User-Agent' = $HTTP_HEADERS['User-Agent'] } -ErrorAction Stop
+        $len = $resp.Headers['Content-Length']
+        if ($len -is [array]) { $len = $len[0] }
+        return [long]$len
+    } catch {
+        return 0
+    }
+}
+
+# .NET Framework has no ProcessStartInfo.ArgumentList, only the single Arguments string.
+function Test-ArgumentListSupported {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    return [bool]($psi | Get-Member -Name 'ArgumentList' -MemberType Property)
+}
+
+# Run a download tool and report progress by watching its output file grow.
+#
+# Neither obvious way of starting it works here. Start-Process splits ArgumentList on
+# spaces on Linux, so an output path like "Iron Man (USA) (En,Fr,Es).7z" arrives as four
+# separate arguments and curl tries to resolve "Man" as a hostname. The call operator
+# quotes correctly but blocks this runspace, and a blocked runspace cannot poll anything -
+# which is why every native tier reported the job's floor percentage for the whole
+# download, making a working transfer look identical to a dead one.
+#
+# ArgumentList passes an argv array verbatim and leaves us free to poll. Windows PowerShell
+# 5.1 lacks it and falls back to a blocking run: there Motrix or aria2c normally serves,
+# and both report progress by other means.
+function Invoke-NativeDownload {
+    param(
+        [string]$Exe,
+        [string[]]$Arguments,
+        [string]$OutFile,
+        [string]$Label,
+        [long]$TotalBytes = 0
+    )
+
+    if (-not (Test-ArgumentListSupported)) {
+        & $Exe @Arguments
+        return $LASTEXITCODE
+    }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName        = $Exe
+    $psi.UseShellExecute = $false
+    foreach ($arg in $Arguments) { [void]$psi.ArgumentList.Add($arg) }
+
+    $proc       = [System.Diagnostics.Process]::Start($psi)
+    $shortLabel = Format-ShortLabel $Label
+    $lastDone   = 0
+    $lastTick   = Get-Date
+
+    while (-not $proc.HasExited) {
+        Start-Sleep -Milliseconds $script:NATIVE_POLL_MS
+        $done = 0
+        try {
+            if (Test-Path -LiteralPath $OutFile) { $done = (Get-Item -LiteralPath $OutFile).Length }
+        } catch { }
+
+        $now     = Get-Date
+        $elapsed = ($now - $lastTick).TotalSeconds
+        $speed   = if ($elapsed -gt 0) { [long](($done - $lastDone) / $elapsed) } else { -1 }
+        $lastDone = $done
+        $lastTick = $now
+
+        $pct = if ($TotalBytes -gt 0) { [int](($done / $TotalBytes) * 100) } else { -1 }
+        Write-ProgressLine -Percent $pct -Line (Format-TransferLine -Percent $pct -Done $done `
+            -Total $TotalBytes -BytesPerSec $speed -Label $shortLabel)
+    }
+    $proc.WaitForExit()
+    Stop-ProgressLine
+    return $proc.ExitCode
+}
+
 # First name on PATH wins; $null when none of them resolve.
 function Get-NativeTool {
     param([string[]]$Names)
@@ -175,10 +254,12 @@ function Invoke-Aria2cDownload {
     Write-Log "Downloading via aria2c: $Label" 'DEBUG'
     $outDir  = [System.IO.Path]::GetDirectoryName($OutFile)
     $outName = [System.IO.Path]::GetFileName($OutFile)
-    & $exe "--dir=$outDir" "--out=$outName" '--console-log-level=warn' '--summary-interval=1' `
-           '--max-connection-per-server=4' '--split=4' `
-           "--user-agent=$($HTTP_HEADERS['User-Agent'])" $Url
-    if ($LASTEXITCODE -ne 0) { throw "aria2c exited with code $LASTEXITCODE" }
+    $exit = Invoke-NativeDownload -Exe $exe -OutFile $OutFile -Label $Label `
+        -TotalBytes (Get-RemoteContentLength $Url) `
+        -Arguments @("--dir=$outDir", "--out=$outName", '--console-log-level=warn',
+                     '--summary-interval=0', '--max-connection-per-server=4', '--split=4',
+                     "--user-agent=$($HTTP_HEADERS['User-Agent'])", $Url)
+    if ($exit -ne 0) { throw "aria2c exited with code $exit" }
     Write-Log "Download complete." 'SUCCESS'
     return $OutFile
 }
@@ -188,12 +269,13 @@ function Invoke-CurlDownload {
     $exe = Get-NativeTool @('curl.exe', 'curl')
     if (-not $exe) { throw "curl was not found on PATH." }
     Write-Log "Downloading via curl: $Label" 'DEBUG'
-    # Call operator with an argument array, not Start-Process with hand-quoted strings: on
-    # Linux the embedded quotes end up as literal characters in the output filename.
     # --fail so an HTTP error page is a non-zero exit rather than a saved error page.
-    & $exe '-L' '--fail' '--progress-bar' '--retry' '3' '--retry-delay' '2' `
-           '-A' $HTTP_HEADERS['User-Agent'] '-o' $OutFile $Url
-    if ($LASTEXITCODE -ne 0) { throw "curl exited with code $LASTEXITCODE" }
+    # -sS keeps curl's own bar out of the log; progress comes from the file watcher.
+    $exit = Invoke-NativeDownload -Exe $exe -OutFile $OutFile -Label $Label `
+        -TotalBytes (Get-RemoteContentLength $Url) `
+        -Arguments @('-L', '--fail', '-sS', '--retry', '3', '--retry-delay', '2',
+                     '-A', $HTTP_HEADERS['User-Agent'], '-o', $OutFile, $Url)
+    if ($exit -ne 0) { throw "curl exited with code $exit" }
     Write-Log "Download complete." 'SUCCESS'
     return $OutFile
 }

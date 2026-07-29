@@ -97,6 +97,10 @@ $script:DOWNLOADER_LABELS = @{
     $script:DL_WEBCLIENT = 'PowerShell Invoke-WebRequest (last resort)'
 }
 
+# How often the native tiers (curl, aria2c) stat their output file to report progress.
+# One second matches Motrix's poll and is far cheaper than the transfer it is measuring.
+$script:NATIVE_POLL_MS = 1000
+
 # Suffixes a download manager leaves on a file that is still being written. Drives both the
 # "has AB finished?" check and what --clean recognises as an abandoned transfer.
 # .aria2 is aria2's own control file, which Motrix leaves beside every in-flight download.
