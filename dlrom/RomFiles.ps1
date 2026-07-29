@@ -223,7 +223,7 @@ function Install-RomFromDownload {
     }
 
     if (-not $WorkDir) { $WorkDir = [System.IO.Path]::GetDirectoryName($DownloadedPath) }
-    $extractDir = Join-Path $WorkDir ('extracted\{0}_{1}' -f
+    $extractDir = Join-DlPath $WorkDir 'extracted' ('{0}_{1}' -f
                     [System.IO.Path]::GetFileNameWithoutExtension($DownloadedPath), (New-ShortId 8))
 
     try {
