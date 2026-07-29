@@ -95,8 +95,8 @@ function ConvertTo-ComparablePath {
 # Coverage is not folder equality. Plenty of SRM parsers sit on the *base* roms directory
 # (`${romsdirglobal}`) and select a platform by glob internally - "Nintendo 64 - Rosalie's Mupen
 # GUI" is one. A parser on <roms> therefore already covers <roms>/n64, so enabling the
-# folder-specific "RetroArch Mupen64Plus Next" on top of it duplicated all 27 N64 games. An
-# ancestor counts as covering, which is why this compares prefixes rather than whole paths.
+# folder-specific "RetroArch Mupen64Plus Next" on top of it duplicated all 27 N64 games.
+# Test-SrmParserCovers below decides that, weighing romDirectory AND the glob.
 function Get-SrmParserIdsForFolder {
     param([string]$SrmExe, [string]$RomDest, [string]$RomsBase)
     $configPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userConfigurations.json"
@@ -303,6 +303,10 @@ function Invoke-SteamRomManager {
 function Invoke-SrmInDesktopSession {
     param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount)
 
+    # Noted before the first switch: Decky does not survive Steam going away, and only
+    # something that knew it was up beforehand can honestly put it back.
+    $deckyWasUp = Test-DlDeckyActive
+
     Write-Log "Game Mode is active - switching to Desktop Mode to run Steam ROM Manager..." 'INFO'
     if (-not (Exit-DlGameMode)) {
         Write-Log "Could not leave Game Mode (steamos-session-select unavailable or refused)." 'WARN'
@@ -312,6 +316,7 @@ function Invoke-SrmInDesktopSession {
     if (-not (Wait-DlDesktopSession -TimeoutSec 120)) {
         Write-Log "Desktop session did not become usable within 120s." 'WARN'
         $null = Enter-DlGameMode        # never strand the Deck on a half-started desktop
+        Restore-DlDecky -WasActive:$deckyWasUp
         return $false
     }
     Write-Log "Desktop session is up." 'DEBUG'
@@ -328,6 +333,7 @@ function Invoke-SrmInDesktopSession {
         Write-Log "Returning the Deck to Game Mode..." 'INFO'
         if (Enter-DlGameMode) { Write-Log "Back in Game Mode." 'SUCCESS' }
         else { Write-Log "Could not switch back to Game Mode." 'WARN' }
+        Restore-DlDecky -WasActive:$deckyWasUp
     }
 }
 

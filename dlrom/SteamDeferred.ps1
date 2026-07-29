@@ -109,9 +109,11 @@ function Save-SrmDeferredJob {
 function Complete-SrmSyncSession {
     if (-not [bool](Get-CfgValue 'srmReturnToGameMode' $true)) { return }
     if (Test-DlGameMode) { return }   # already there
+    $deckyWasUp = Test-DlDeckyActive
     Write-Log "Returning the Deck to Game Mode..." 'INFO'
     if (Enter-DlGameMode) { Write-Log "Switched to Game Mode." 'SUCCESS' }
     else { Write-Log "Could not switch to Game Mode (steamos-session-select unavailable)." 'DEBUG' }
+    Restore-DlDecky -WasActive:$deckyWasUp
 }
 
 function Invoke-SrmDeferredDrain {

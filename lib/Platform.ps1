@@ -181,6 +181,52 @@ function Set-DlSteamSession {
     }
 }
 
+# --- Decky Loader -------------------------------------------------------------
+# Switching sessions kills Steam, and Decky Loader exits when it loses Steam's CEF. systemd
+# records that as an explicit Stop, so the unit's own Restart=always does NOT bring it back -
+# the user just finds their homescreen unstyled and CSS Loader missing, with every plugin still
+# installed. Anything that restarts the session has to put it back.
+#
+# 'systemctl restart' on a system unit needs authorisation. SteamOS ships no polkit rule for
+# unit management (it does for steamos-session-select), so this only succeeds where the local
+# rule from install-decky-polkit.sh is present; without it we warn with the exact fix rather
+# than failing silently, because silence is what made this hard to find.
+
+function Test-DlDeckyPresent {
+    if ($script:DL_IS_WINDOWS) { return $false }
+    return (Test-Path '/etc/systemd/system/plugin_loader.service')
+}
+
+function Test-DlDeckyActive {
+    if (-not (Test-DlDeckyPresent)) { return $false }
+    try {
+        $state = & systemctl is-active plugin_loader 2>$null
+        return ("$state".Trim() -eq 'active')
+    } catch { return $false }
+}
+
+# $SettleSec is spent only when Decky was up beforehand: Game Mode restarts Steam, and Decky
+# needs a moment to reattach before it is fair to call it dead. Waiting unconditionally would
+# add the delay to every caller - including Windows, where there is no Decky at all.
+function Restore-DlDecky {
+    param([switch]$WasActive, [int]$SettleSec = 8)
+    if (-not $WasActive -or -not (Test-DlDeckyPresent)) { return }
+    if ($SettleSec -gt 0) { Start-Sleep -Seconds $SettleSec }
+    if (Test-DlDeckyActive) { return }          # survived the switch, nothing to do
+
+    Write-Log "Decky Loader stopped during the session switch - restarting it..." 'INFO'
+    try { & systemctl restart plugin_loader 2>$null | Out-Null } catch { }
+    Start-Sleep -Seconds 3
+    if (Test-DlDeckyActive) {
+        Write-Log "Decky Loader is back." 'SUCCESS'
+        return
+    }
+    Write-Log "Could not restart Decky Loader - it needs authorisation this session does not have." 'WARN'
+    Write-Log "Your plugins and themes are intact; only the loader is down. Fix it with:" 'WARN'
+    Write-Log "  sudo systemctl start plugin_loader        (one off)" 'WARN'
+    Write-Log "  sudo ~/install-decky-polkit.sh           (so this repairs itself in future)" 'WARN'
+}
+
 # Block until a desktop session is actually usable, not merely requested. Steam ROM Manager
 # is an Electron app and needs a real X display: starting it while plasma is still coming up
 # fails with "Missing X server or $DISPLAY" and a segfault. A session is ready once some
