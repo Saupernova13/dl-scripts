@@ -84,23 +84,34 @@ function Get-DlRoamingRoot {
 }
 
 # --- EmuDeck layout -----------------------------------------------------------
-# EmuDeck publishes its own paths in ~/emudeck/settings.sh as shell assignments, e.g.
-#   romsPath="/run/media/deck/<SD-CARD-LABEL>"/Emulation/roms
-# The quotes sit mid-value because the storage root is interpolated, so strip all of them
-# rather than expecting a fully-quoted value. Reading this beats hardcoding a default: it
-# follows the user's SD card, and it is already correct for whatever EmuDeck was told.
+# EmuDeck publishes its own paths as assignments, and both platforms can be read the same
+# way - only the file and a leading '$' differ:
+#   Linux    ~/emudeck/settings.sh          romsPath="/run/media/deck/<SD-LABEL>"/Emulation/roms
+#   Windows  %APPDATA%\EmuDeck\settings.ps1  $romsPath="G:\Emulation\roms"
+# The quotes sit mid-value on Linux because the storage root is interpolated, so strip all of
+# them rather than expecting a fully-quoted value.
+#
+# Reading this beats hardcoding a drive on either OS: it follows wherever EmuDeck was
+# pointed. Windows used to hardcode C:\Emulation, so moving the library to another drive
+# left every default pointing at a folder that no longer held the ROMs.
 
 $script:DL_EMUDECK_SETTINGS = $null
 
+function Get-DlEmuDeckSettingsFile {
+    if ($script:DL_IS_WINDOWS) {
+        return (Join-DlPath ([Environment]::GetFolderPath('ApplicationData')) 'EmuDeck' 'settings.ps1')
+    }
+    return (Join-DlPath (Get-DlHomeDir) 'emudeck' 'settings.sh')
+}
+
 function Get-DlEmuDeckSetting {
     param([Parameter(Mandatory)][string]$Name)
-    if ($script:DL_IS_WINDOWS) { return '' }
     if ($null -eq $script:DL_EMUDECK_SETTINGS) {
         $script:DL_EMUDECK_SETTINGS = @{}
-        $file = Join-DlPath (Get-DlHomeDir) 'emudeck' 'settings.sh'
+        $file = Get-DlEmuDeckSettingsFile
         if (Test-Path $file) {
             foreach ($line in (Get-Content $file -ErrorAction SilentlyContinue)) {
-                if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$') {
+                if ($line -match '^\s*\$?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$') {
                     $script:DL_EMUDECK_SETTINGS[$Matches[1]] = $Matches[2] -replace '["'']', ''
                 }
             }

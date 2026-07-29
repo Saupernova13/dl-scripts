@@ -43,12 +43,13 @@ $script:DEFAULT_QBIT_PORT    = 8075
 # EmuDeck's install locations. On Linux they come from EmuDeck's own settings.sh, so they
 # follow whichever drive it was pointed at (on a Deck that is usually the SD card, not
 # $HOME); the literals below are only the fallback for a machine without EmuDeck.
+$emuRoms  = Get-DlEmuDeckSetting 'romsPath'
+$emuTools = Get-DlEmuDeckSetting 'toolsPath'
 if (Test-DlWindows) {
-    $script:DEFAULT_ROMS_BASE = 'C:\Emulation\roms'
-    $script:DEFAULT_SRM_EXE   = 'C:\Emulation\tools\srm.exe'
+    $script:DEFAULT_ROMS_BASE = if ($emuRoms)  { $emuRoms }  else { 'G:\Emulation\roms' }
+    $script:DEFAULT_SRM_EXE   = if ($emuTools) { Join-Path $emuTools 'srm.exe' }
+                                else { 'G:\Emulation\tools\srm.exe' }
 } else {
-    $emuRoms  = Get-DlEmuDeckSetting 'romsPath'
-    $emuTools = Get-DlEmuDeckSetting 'toolsPath'
     $script:DEFAULT_ROMS_BASE = if ($emuRoms)  { $emuRoms }  else { Join-DlPath (Get-DlHomeDir) 'Emulation' 'roms' }
     $script:DEFAULT_SRM_EXE   = if ($emuTools) { Join-Path $emuTools 'Steam-ROM-Manager.AppImage' }
                                 else { Join-DlPath (Get-DlHomeDir) 'Applications' 'Steam-ROM-Manager.AppImage' }

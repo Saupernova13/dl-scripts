@@ -93,7 +93,7 @@ Download job spawned.  It will continue in the background.
   Job ID:   a3f9c21b8e04
   Source:   retrogametalk
   Title:    Gran Turismo 4
-  Dest:     C:\Emulation\roms\ps2
+  Dest:     G:\Emulation\roms\ps2
   Log:      C:\Users\you\AppData\Local\dlScripts\jobs\rom\a3f9c21b8e04.log
   Check:    dlrom --status a3f9c21b8e04
 ```
@@ -419,7 +419,7 @@ Motrix (aria2 RPC)  ->  AB Download Manager  ->  aria2c  ->  curl.exe  ->  BITS 
 dlrom picks the base folder in this order. The first one that works wins.
 
 1. `--dest PATH`. An explicit override for this run.
-2. `romsBase` from the config (default `C:\Emulation\roms`), if that folder exists.
+2. `romsBase` from the config (default `G:\Emulation\roms`), if that folder exists.
 3. **Drive picker.** A connected drive advertising a `rom_path` in its
    `drive-meta.json`. See the [root README](../README.md#where-files-are-saved).
 4. **Ask you.** Last resort, and only with `--interactive`.
@@ -464,7 +464,7 @@ dlrom prefers the standalone `srm-wrapper` CLI if it is on `PATH`, or set
 `srmWrapperCmd`. If the wrapper is missing or fails, dlrom uses its built-in
 driver:
 
-1. Find `srm.exe` (`srmExe`, else `C:\Emulation\tools\srm.exe`, else `PATH`).
+1. Find `srm.exe` (`srmExe`, else `G:\Emulation\tools\srm.exe`, else `PATH`).
 2. If `srmEnableParser` is on, enable any disabled SRM parser pointing at the
    destination folder.
 3. Follow `srmRestartSteam`: `auto` restarts Steam only if it is running, `never`
@@ -490,7 +490,7 @@ file is created with defaults on first run.
 ```json
 {
   "rom": {
-    "romsBase": "C:\\Emulation\\roms",
+    "romsBase": "G:\\Emulation\\roms",
     "tempDir": "%TEMP%\\dlrom",
     "motrixRpcUrl": "http://localhost:16800/jsonrpc",
     "maxResults": 10,
@@ -511,7 +511,7 @@ file is created with defaults on first run.
 
 | Key | Default | What it does |
 |-----|---------|--------------|
-| `romsBase` | `C:\Emulation\roms` | Where ROMs go. Used when the folder exists. |
+| `romsBase` | `G:\Emulation\roms` | Where ROMs go. Used when the folder exists. |
 | `tempDir` | `%TEMP%\dlrom` | Working folder for downloads and unpacking. |
 | `motrixRpcUrl` | `http://localhost:16800/jsonrpc` | Motrix aria2 RPC address. |
 | `maxResults` | `10` | How many search results to show. |
