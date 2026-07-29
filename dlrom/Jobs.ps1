@@ -125,9 +125,23 @@ function New-DlromJob {
 #
 # Linux needs the same two properties for a different reason: the common caller there is
 # `ssh deck 'dlrom ...'`, and when that session closes sshd SIGHUPs the whole process
-# group. setsid puts the worker in a new session so it survives, and the redirections keep
-# sshd from waiting on a pipe the worker still holds -- without them the ssh command hangs
-# until the download finishes, which is the same bug wearing a different hat.
+# group. The redirections keep sshd from waiting on a pipe the worker still holds --
+# without them the ssh command hangs until the download finishes, which is the same bug
+# wearing a different hat.
+#
+# Escaping the dying session needs more than setsid, though. SteamOS ships
+# /etc/systemd/logind.conf.d/killuserprocesses.conf with KillUserProcesses=True, and
+# logind kills the session's whole CGROUP when the session ends -- a new session id does
+# not take a process out of that cgroup. A setsid'd worker is therefore killed the instant
+# `ssh deck 'dlrom ...'` returns: the job file is written, the log file is created empty,
+# and the job sits at "pending" forever with nothing to show why.
+#
+# systemd-run --user puts the worker under the user manager (user@1000.service) instead,
+# which is a different cgroup that session teardown does not touch. Where it is
+# unavailable, setsid is still the best available answer, so it stays as the fallback.
+#
+# For a worker to outlive the *last* session as well (ssh in, spawn, ssh out, nothing else
+# logged in), the user manager itself has to persist: `loginctl enable-linger <user>`.
 function Start-DlromJob {
     param([PSCustomObject]$Job)
 
@@ -150,13 +164,33 @@ function Start-DlromJob {
         $psi.Arguments             = "/c `"$inner`""
         $psi.RedirectStandardInput = $true
     } else {
-        # sh -c 'setsid pwsh -File script -JobFile job >log 2>&1 </dev/null & echo $!'
-        # The trailing echo is why stdout is a pipe rather than the log: it hands back the
-        # worker's real pid. setsid without --fork execs in place, so $! is the pwsh pid
-        # and not a shell that is about to vanish.
+        # Prefer a transient user-manager unit; fall back to setsid where systemd-run or a
+        # user bus is missing (a non-systemd distro, or a container). The check is a real
+        # runtime probe rather than an OS guess, because either can be absent anywhere.
+        #
+        # --collect reaps the unit once it exits, so a finished download leaves no failed
+        # unit behind for the user to clean up. The pid comes from `systemctl show`: the
+        # worker is a grandchild of systemd, not of this shell, so $! would be the
+        # systemd-run client that exits immediately.
         $q = { param($s) "'" + ($s -replace "'", "'\''") + "'" }
-        $inner = 'setsid {0} -NoProfile -File {1} -JobFile {2} > {3} 2>&1 < /dev/null & echo $!' -f `
-                    (& $q $psExe), (& $q $scriptPath), (& $q $Job.jobFile), (& $q $Job.logFile)
+        $unit    = "dlrom-$($Job.id)"
+        $qLog    = & $q $Job.logFile
+        $worker  = '{0} -NoProfile -File {1} -JobFile {2}' -f `
+                    (& $q $psExe), (& $q $scriptPath), (& $q $Job.jobFile)
+
+        $sdRun = "systemd-run --user --collect --quiet --unit=$unit " +
+                 "--property=StandardOutput=append:$qLog " +
+                 "--property=StandardError=append:$qLog " +
+                 "--property=StandardInput=null $worker"
+
+        $inner = @(
+            'has_user_bus() { command -v systemd-run >/dev/null 2>&1 && [ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/bus" ]; }'
+            "if has_user_bus && $sdRun >/dev/null 2>&1; then"
+            "    systemctl --user show -p MainPID --value $unit.service 2>/dev/null"
+            '    exit 0'
+            'fi'
+            "setsid $worker > $qLog 2>&1 < /dev/null & echo `$!"
+        ) -join "`n"
         $psi.FileName               = '/bin/sh'
         $psi.ArgumentList.Add('-c')
         $psi.ArgumentList.Add($inner)
