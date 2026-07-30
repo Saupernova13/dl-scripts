@@ -5,7 +5,7 @@ Searches [nyaa.si](https://nyaa.si) for anime torrents and automatically adds th
 ## Command
 
 ```
-dlanime "Anime Name" [series|movie] [destination] [--list]
+dlanime "Anime Name" [series|movie] [destination] [flags]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
@@ -16,10 +16,27 @@ Add the repo root to `PATH` and call it from any terminal. Quotes are required w
 dlanime "Frieren"
 dlanime "Your Name" movie
 dlanime "Frieren" series "E:\Anime"
-dlanime "Demon Slayer" series "" --list
+dlanime "Demon Slayer" --list
+dlanime "Frieren" --dry-run
 ```
 
-The second positional argument is the type (`series` or `movie`). The third is an optional destination override. Pass `--list` anywhere to preview results without adding to qBittorrent.
+The second positional argument is the type (`series` or `movie`), and it is optional - a second bare word that is neither is read as the destination. The third is an optional destination override.
+
+## Flags
+
+| Flag | What it does |
+|------|--------------|
+| `--list` | Print the top 100 results with every magnet link, then stop. Nothing is sent to qBittorrent. |
+| `--dry-run` | Print the shortlist and the one torrent it would add, then stop. Narrower than `--list`. |
+| `--interactive` | Pick from the scored results list yourself. Needs a person at the keyboard. |
+| `--trusted-only` | Only consider torrents from trusted uploaders. |
+| `--max-results N` | Cap how many results are considered. |
+| `--filter TEXT` | Keep only results matching `TEXT`. |
+| `--dest PATH` | Override the destination. |
+| `--qbit-host URL` | Override the qBittorrent WebUI URL. |
+| `--help` | Print usage and exit. |
+
+The same spellings work on every `dl*` command, and `--list` is the only one that differs in what it shows: elsewhere it is a synonym of `--dry-run`. An unknown `--flag` is rejected rather than ignored, so a typo cannot turn a preview into a download.
 
 ## PowerShell Parameters
 

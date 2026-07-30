@@ -16,7 +16,7 @@ gives you a job id. It returns in seconds. You never wait for the download.
 ```
 dlrom "Game Name" [options]
 dlrom --status <jobId> [--json]
-dlrom --list [--json]
+dlrom --jobs [--json]
 dlrom --clean [--all] [--dry-run] [--json]
 ```
 
@@ -47,10 +47,10 @@ dlrom "Danganronpa V3" --platform vita        # Vita3K build, kept zipped
 dlrom "Persona 4 Golden" --vita console       # NoNpDrm build, for a real Vita
 
 dlrom --status a3f9c21b8e04                   # how is it going?
-dlrom --list                                  # all recent jobs
+dlrom --jobs                                  # all recent jobs
 dlrom --clean                                 # free disk space
 
-dlrom "Crash Bandicoot" --links-only          # print links, download nothing
+dlrom "Crash Bandicoot" --dry-run             # print links, download nothing
 dlrom "Spyro" --platform ps1 --verbose        # show every internal step
 dlrom "Zelda" --platform n64 --interactive    # pick from a list yourself
 dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
@@ -67,10 +67,10 @@ dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
 | `--dest PATH` | Install into this folder instead of the usual one. |
 | `--wait` | Download in this window instead of the background. For humans watching a progress bar. |
 | `--status ID` | Show one job's progress, then exit. Instant, even mid-download. |
-| `--list` | List recent jobs, newest first. |
+| `--jobs` | List recent jobs, newest first. `--list` with no game name does the same. |
 | `--clean` | Delete temp files, part-files and caches. See [Housekeeping](#housekeeping). |
 | `--all` | With `--clean`: also delete finished job records. |
-| `--dry-run` | With `--clean`: show what would go, delete nothing. |
+| `--dry-run` | Resolve everything and stop: with a game name, print the download links and download nothing; with `--clean`, show what would go and delete nothing. `--list` and `--links-only` are synonyms of the first sense. |
 | `--json` | Machine-readable output. |
 | `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
 | `--no-extract` | Keep the downloaded archive. Do not unpack or install it. |
@@ -78,7 +78,6 @@ dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
 | `--sync-steam` | Add ROMs to Steam now. Runs a full Steam ROM Manager pass when nothing is queued. |
 | `--no-game-mode` | With `--sync-steam` on a Steam Deck: stay in Desktop Mode afterwards. |
 | `--steam-queue` | Show Steam syncs waiting for a desktop session. |
-| `--links-only` | Print the download links and stop. Downloads nothing. |
 | `--no-torrent` | Turn off the PS2 torrent fallback this run. |
 | `--torrent-pick N` | Force file number `N` from the PS2 torrent. |
 | `--verbose` | Show every internal step. For troubleshooting. |
@@ -109,7 +108,7 @@ Check on it whenever you like:
 ```
 dlrom --status a3f9c21b8e04          # progress, step, and the last 20 log lines
 dlrom --status a3f9c21b8e04 --json   # the whole job record, for scripts
-dlrom --list                         # every recent job and its state
+dlrom --jobs                         # every recent job and its state
 ```
 
 **The search and the link lookup happen first, in your terminal.** That is on
@@ -643,7 +642,7 @@ nowhere else. That class of breakage is what ended the cdromance integration.
 
 | Problem | What to do |
 |---|---|
-| Search fails | Run `dlrom "..." --links-only --verbose` to see the request and the reason. |
+| Search fails | Run `dlrom "..." --dry-run --verbose` to see the request and the reason. |
 | No download links found | dlrom saves the page to `%TEMP%\dlrom-debug.html`. A `403` from the reveal endpoint would mean the site started gating The Repo server-side. |
 | An AB download never finishes | Set `abDownloadDir` to AB's real folder. Raise `abTimeoutSec`. |
 | ROM lands in `\roms` instead of a console folder | Pass `--platform`. The console could not be guessed from the search result. |

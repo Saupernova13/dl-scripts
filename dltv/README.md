@@ -5,7 +5,7 @@ Searches [The Pirate Bay](https://thepiratebay.org) for TV show torrents and aut
 ## Command
 
 ```
-dltv "Show Name" [destination]
+dltv "Show Name" [destination] [flags]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
@@ -15,9 +15,24 @@ Add the repo root to `PATH` and call it from any terminal. Quotes are required w
 ```
 dltv "Breaking Bad"
 dltv "The Office" "E:\TV Shows"
+dltv "Breaking Bad" --dry-run
 ```
 
 The second positional argument is an optional destination override. Omit it to use the path from config.
+
+## Flags
+
+| Flag | What it does |
+|------|--------------|
+| `--dry-run` | Search, print the matches and the torrent it would add, then stop. Nothing is sent to qBittorrent. |
+| `--list` | Same as `--dry-run`. |
+| `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
+| `--max-results N` | Cap how many results are considered. |
+| `--dest PATH` | Override the destination. |
+| `--qbit-host URL` | Override the qBittorrent WebUI URL. |
+| `--help` | Print usage and exit. |
+
+The same spellings work on every `dl*` command. An unknown `--flag` is rejected rather than ignored, so a typo cannot turn a preview into a download.
 
 ## PowerShell Parameters
 
