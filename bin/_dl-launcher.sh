@@ -1,20 +1,27 @@
 # Shared body for the Linux launchers in this directory. Sourced, never executed.
 #
-# Each launcher sets PS_SCRIPT, DL_ARG_STYLE and (for the kebab style) VALUE_FLAGS, then
-# sources this file. Finding pwsh, translating arguments and quoting all happen once here.
-#
 # These live in bin/ because the repo root already holds DIRECTORIES named dlrom, dlgame,
 # dlmovie, dltv and dlanime. On Windows PATHEXT still resolves `dlrom` to dlrom.cmd, but on
 # Linux the directory would shadow a launcher of the same name. Put bin/ on PATH:
 #
 #   export PATH="$PATH:/path/to/dl-scripts/bin"
 #
-# Two argument styles, because the wrappers genuinely differ and pretending otherwise would
-# break one of them:
+# Every launcher speaks one argument style: kebab-case double-dash flags, translated here
+# into the PowerShell parameters the scripts actually declare. There used to be a second
+# "passthrough" style for dlgame/dlmovie/dltv/dlanime that forwarded -PascalCase flags
+# verbatim, which meant `--dry-run` worked on dlrom and failed everywhere else. Native
+# flags are still accepted so older invocations keep working, but they are no longer the
+# documented way in.
 #
-#   kebab       dlrom's convention - `--platform ps2` becomes `-Platform ps2`.
-#   passthrough dlgame/dlmovie/dltv/dlanime - `dlgame "Name" [destination]` plus PowerShell
-#               flags forwarded verbatim (-DryRun, -Interactive, -MaxResults 5).
+# Each launcher sets, before sourcing:
+#
+#   PS_SCRIPT          path to the Add-*.ps1 it drives
+#   DL_POSITIONALS     PowerShell parameter names for the bare words, in order
+#                      ("Query Destination")
+#   DL_FLAG_SWITCHES   valid --kebab:Param pairs for flags taking no value
+#   DL_FLAG_VALUES     valid --kebab:Param pairs for flags taking a value
+#   DL_ANIME_TYPE      1 only for dlanime, whose second bare word may be series|movie
+#   dl_usage()         a function printing the usage block
 
 if [ ! -f "$PS_SCRIPT" ]; then
     echo "[ERROR] Script not found: $PS_SCRIPT" >&2
@@ -39,72 +46,46 @@ if [ -z "$PWSH" ]; then
     exit 1
 fi
 
-dl_value_flag() {
-    for _f in ${VALUE_FLAGS:-}; do
-        [ "$1" = "$_f" ] && return 0
+# Look "$2" up in the --kebab:Param table "$1"; print the parameter name on a hit.
+dl_lookup() {
+    for _pair in $1; do
+        case $_pair in
+            "$2":*) printf '%s' "${_pair#*:}"; return 0 ;;
+        esac
     done
     return 1
 }
 
-# --kebab-case -> -PascalCase, plus the few parameter names that differ from their flag.
-dl_to_param() {
-    case "$1" in
-        --dest)        printf 'Destination'; return 0 ;;
-        --vita)        printf 'VitaBuild';   return 0 ;;
-        --list|--jobs) printf 'ListJobs';    return 0 ;;
-        --clear)       printf 'Clean';       return 0 ;;
+# Native PowerShell flags that consume the word after them. Without this list that word
+# looks like a bare argument, which is how `dlmovie Name -MaxResults 5` used to end up
+# treating 5 as the destination.
+dl_raw_takes_value() {
+    case $1 in
+        -Destination|-QbitHost|-MaxResults|-Filter|-Platform|-Region|-Sort|-VitaBuild| \
+        -TorrentPick|-Status|-JobFile|-Dest)
+            return 0 ;;
     esac
-    printf '%s' "${1#--}" |
-        awk -F- '{ for (i = 1; i <= NF; i++) printf "%s%s", toupper(substr($i, 1, 1)), substr($i, 2) }'
+    return 1
 }
 
 # Translate in place: consume from the front of "$@", append the result to the back, and
 # stop at a sentinel marking where the original list ended. Every value stays in a real
 # positional parameter, so a title with spaces or quotes needs no escaping and no eval.
 dl_sentinel='--dl-args-end--'
-dl_query_taken=0
-dl_dest_taken=0
-dl_prev_was_flag=0
+dl_pos_n=0
 set -- "$@" "$dl_sentinel"
 
 while [ "$1" != "$dl_sentinel" ]; do
     dl_arg=$1
     shift
-    case "$dl_arg" in
-        -h|--help)
+
+    case $dl_arg in
+        -h|--help|-\?)
             dl_usage
             exit 0
             ;;
-    esac
-
-    if [ "${DL_ARG_STYLE:-kebab}" = passthrough ]; then
-        case "$dl_arg" in
-            -*)
-                # A PowerShell flag: forward it untouched. Remember it, because the next
-                # bare word may be its value (-MaxResults 5) rather than the destination.
-                set -- "$@" "$dl_arg"
-                dl_prev_was_flag=1
-                ;;
-            *)
-                if [ "$dl_prev_was_flag" = 1 ]; then
-                    set -- "$@" "$dl_arg"          # value of the flag before it
-                elif [ "$dl_query_taken" = 0 ]; then
-                    set -- "$@" -Query "$dl_arg"
-                    dl_query_taken=1
-                elif [ "$dl_dest_taken" = 0 ]; then
-                    set -- "$@" -Destination "$dl_arg"
-                    dl_dest_taken=1
-                fi
-                dl_prev_was_flag=0
-                ;;
-        esac
-        continue
-    fi
-
-    case "$dl_arg" in
         --*)
-            dl_param=$(dl_to_param "$dl_arg")
-            if dl_value_flag "$dl_arg"; then
+            if dl_param=$(dl_lookup "${DL_FLAG_VALUES:-}" "$dl_arg"); then
                 if [ "$1" = "$dl_sentinel" ]; then
                     echo "[ERROR] $dl_arg expects a value" >&2
                     exit 1
@@ -112,17 +93,45 @@ while [ "$1" != "$dl_sentinel" ]; do
                 dl_value=$1
                 shift
                 set -- "$@" "-$dl_param" "$dl_value"
-            else
+            elif dl_param=$(dl_lookup "${DL_FLAG_SWITCHES:-}" "$dl_arg"); then
                 set -- "$@" "-$dl_param"
+            else
+                # Forwarding a typo to PowerShell reports it as a missing parameter, which
+                # reads like the script is broken rather than the command being wrong.
+                echo "[ERROR] Unknown option: $dl_arg" >&2
+                dl_usage >&2
+                exit 1
+            fi
+            ;;
+        -*)
+            set -- "$@" "$dl_arg"
+            if dl_raw_takes_value "$dl_arg" && [ "$1" != "$dl_sentinel" ]; then
+                dl_value=$1
+                shift
+                set -- "$@" "$dl_value"
             fi
             ;;
         *)
-            # The first bare argument is the query; the batch wrappers ignore any further
-            # ones rather than silently searching for a concatenation, so match that.
-            if [ "$dl_query_taken" = 0 ]; then
-                set -- "$@" -Query "$dl_arg"
-                dl_query_taken=1
+            dl_pos_n=$((dl_pos_n + 1))
+
+            # dlanime only: the optional second bare word selects series or movie, and
+            # anything else there is the destination instead. Consuming a type undoes the
+            # increment, so a destination after it still lands in the second slot.
+            if [ "${DL_ANIME_TYPE:-0}" = 1 ] && [ "$dl_pos_n" = 2 ]; then
+                case $dl_arg in
+                    series) set -- "$@" -isAnimeSeries yes; dl_pos_n=1; continue ;;
+                    movie)  set -- "$@" -isAnimeSeries no;  dl_pos_n=1; continue ;;
+                esac
             fi
+
+            dl_slot=0
+            for dl_name in $DL_POSITIONALS; do
+                dl_slot=$((dl_slot + 1))
+                if [ "$dl_slot" = "$dl_pos_n" ]; then
+                    set -- "$@" "-$dl_name" "$dl_arg"
+                    break
+                fi
+            done
             ;;
     esac
 done
