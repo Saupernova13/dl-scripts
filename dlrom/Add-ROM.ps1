@@ -93,6 +93,12 @@ $script:LOG_QUIET   = [bool]$Quiet
 if ($Status)   { Show-DlromJobStatus -JobId $Status -AsJson:$Json; exit 0 }
 if ($ListJobs) { Show-DlromJobList -AsJson:$Json; exit 0 }
 
+# -DryRun belongs to --clean, where it previews deletions. Against a search it means the
+# same thing every other dl script means by it: look everything up and download nothing,
+# which here is -LinksOnly. Folding them together keeps one word for one idea, so a caller
+# reaching for --dry-run out of habit never starts a multi-GB download by accident.
+if ($DryRun -and $Query -and -not $Clean) { $LinksOnly = $true }
+
 # Steam queue surface. --steam-queue only reads; --sync-steam needs the config and the SRM
 # modules, so it runs after Initialize-DlConfig below.
 if ($SteamQueue) { Show-SrmDeferredQueue -AsJson:$Json; exit 0 }

@@ -1,8 +1,8 @@
 @echo off
 REM dlrom - Download ROMs from RetroGameTalk's Repo and install them to your emulator folders
-REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
 REM        dlrom --status <jobId> [--json]
-REM        dlrom --list [--json]
+REM        dlrom --jobs [--json]
 REM        dlrom --clean [--all] [--dry-run] [--json]
 REM
 REM --clean reclaims what dlrom is holding: interrupted downloads, extraction working dirs,
@@ -55,9 +55,9 @@ if /i "%~1"=="-clean"   goto :do_clean
 if /i "%~1"=="--clear"  goto :do_clean
 
 if "%~1"=="" (
-    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract] [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
     echo        dlrom --status ^<jobId^> [--json]
-    echo        dlrom --list [--json]
+    echo        dlrom --jobs [--json]
     echo        dlrom --clean [--all] [--dry-run] [--json]
     echo        dlrom --sync-steam [--json]   run Steam syncs deferred by Steam Deck Game Mode
     echo        dlrom --steam-queue [--json]  show deferred Steam syncs without running them
@@ -76,16 +76,17 @@ if "%~1"=="" (
     echo   --vita emu     PS Vita: take the Vita3K build - the default, kept as a .zip
     echo   --vita console PS Vita: take the NoNpDrm build for real hardware
     echo   --vita any     PS Vita: no preference, take whatever is listed first
+    echo   --dry-run      resolve and print the download links, then stop without
+    echo                  downloading. --list and --links-only do the same thing.
     echo   --wait         stay in the foreground until the ROM is installed
     echo   --status ID    show progress for a job
-    echo   --list         list recent jobs
+    echo   --jobs         list recent jobs ^(--list with no game name does the same^)
     echo   --clean        delete temp files, abandoned partials and caches
     echo                  add --all for job history, --dry-run to preview
     echo   --json         machine-readable output
     echo   --interactive  pick from the results list instead of auto-selecting
     echo   --no-extract   keep the downloaded archive; do not extract or install
     echo   --no-steam     skip adding the download to Steam via Steam ROM Manager
-    echo   --links-only   resolve and print the download links, then stop without downloading
     echo   --no-torrent   disable the PS2 torrent fallback used when RetroGameTalk fails
     echo   --torrent-pick N   force a specific file index from the PS2 archive torrent
     echo   --verbose      show detailed step-by-step debug output
@@ -130,13 +131,28 @@ if /i "%~1"=="--torrent-pick" goto :set_torrent_pick
 if /i "%~1"=="--interactive"  ( set "INTERACTIVE=1" & goto :shift_args )
 if /i "%~1"=="--no-extract"   ( set "NO_EXTRACT=1"  & goto :shift_args )
 if /i "%~1"=="--no-steam"     ( set "NO_STEAM=1"    & goto :shift_args )
+REM --dry-run, --list and --links-only all mean the same thing once a game name is present:
+REM resolve and show, download nothing. --list only reaches this loop after a query, since
+REM a bare "dlrom --list" was routed to the job history above.
 if /i "%~1"=="--links-only"   ( set "LINKS_ONLY=1"  & goto :shift_args )
+if /i "%~1"=="--dry-run"      ( set "LINKS_ONLY=1"  & goto :shift_args )
+if /i "%~1"=="--dryrun"       ( set "LINKS_ONLY=1"  & goto :shift_args )
+if /i "%~1"=="--list"         ( set "LINKS_ONLY=1"  & goto :shift_args )
 if /i "%~1"=="--no-torrent"   ( set "NO_TORRENT=1"  & goto :shift_args )
 if /i "%~1"=="--wait"         ( set "WAIT=1"        & goto :shift_args )
 if /i "%~1"=="--json"         ( set "JSON=1"        & goto :shift_args )
 if /i "%~1"=="--verbose"      ( set "VERBOSE=1"     & goto :shift_args )
 if /i "%~1"=="--quiet"        ( set "QUIET=1"       & goto :shift_args )
+REM A mistyped flag used to be ignored in silence, which turned "--dry-runn" into a real
+REM multi-GB download. Refuse instead.
+set "DL_ARG=%~1"
+if "%DL_ARG:~0,1%"=="-" goto :bad_flag
 goto :shift_args
+
+:bad_flag
+echo [ERROR] Unknown option: %DL_ARG% >&2
+echo Run "dlrom" with no arguments for the full list of options. >&2
+exit /b 1
 
 :set_platform
 shift
