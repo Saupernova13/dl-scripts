@@ -30,6 +30,7 @@ while [ -L "$SELF" ]; do
 done
 BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
 DLROM="$BIN_DIR/dlrom"
+RUNNER="$BIN_DIR/dlrom-autostart-sync"
 AUTOSTART_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/autostart"
 ENTRY="$AUTOSTART_DIR/dlrom-sync-steam.desktop"
 LOG_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dlScripts"
@@ -61,17 +62,25 @@ if [ ! -x "$DLROM" ]; then
     exit 1
 fi
 
+if [ ! -x "$RUNNER" ]; then
+    echo "[ERROR] autostart runner not found or not executable: $RUNNER" >&2
+    echo "Run: chmod +x \"$RUNNER\"" >&2
+    exit 1
+fi
+
 mkdir -p "$AUTOSTART_DIR" "$LOG_DIR"
 
-# The 20s delay is deliberate. At Desktop Mode login Steam is still starting, and SRM's
-# add is exactly the operation that needs Steam settled - draining into a half-started
-# Steam is the same lost-categories failure, just at the other end of the session.
+# Exec is a bare path to dlrom-autostart-sync, which holds the startup delay, the
+# queue test and the --no-game-mode flag. The Exec key is not a shell command line:
+# ';', '>', '|', '&', '*' and quotes are reserved characters there, and a launcher may
+# reject or mangle a value containing them without reporting anything. See that script
+# for why each guard is there.
 cat > "$ENTRY" <<EOF
 [Desktop Entry]
 Type=Application
 Name=dlrom deferred Steam sync
 Comment=Adds ROMs downloaded during Game Mode to Steam via Steam ROM Manager
-Exec=/bin/sh -c 'sleep 20; "$DLROM" --sync-steam >> "$LOG_DIR/sync-steam.log" 2>&1'
+Exec=$RUNNER
 Icon=steam
 Terminal=false
 X-GNOME-Autostart-enabled=true
