@@ -166,6 +166,42 @@ function Get-HiddenWindowOption {
     return @{}
 }
 
+# Relaunch Steam WITHOUT passing on an administrator token.
+#
+# Start-Process hands the child a copy of the caller's token, so a download run from an
+# elevated shell leaves an elevated Steam behind - and it stays that way until the next
+# reboot, long after the run that caused it. Every emulator Steam launches then inherits
+# admin: Ryujinx refuses outright ("Ryujinx is not intended to be run as administrator"),
+# and files an elevated Steam writes come out owned by Administrators.
+#
+# explorer.exe already runs as the desktop shell at medium integrity, so handing it the path
+# makes it - not us - the parent, and Steam starts unelevated. Note the launch is fire and
+# forget: explorer returns immediately and Steam is not its child process.
+function Start-SteamDeElevated {
+    param([string]$SteamExe)
+
+    if (-not (Test-DlWindows)) { Start-Process -FilePath $SteamExe | Out-Null; return }
+
+    $elevated = $false
+    try {
+        $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+        $elevated = (New-Object Security.Principal.WindowsPrincipal($identity)).IsInRole(
+            [Security.Principal.WindowsBuiltInRole]::Administrator)
+    } catch {
+        Write-Log "Could not determine elevation ($($_.Exception.Message)); starting Steam directly." 'DEBUG'
+    }
+
+    if (-not $elevated) { Start-Process -FilePath $SteamExe | Out-Null; return }
+
+    Write-Log "Shell is elevated - starting Steam via explorer.exe so it does not inherit administrator." 'INFO'
+    try {
+        Start-Process -FilePath (Join-Path $env:WINDIR 'explorer.exe') -ArgumentList "`"$SteamExe`"" | Out-Null
+    } catch {
+        Write-Log "explorer.exe handoff failed ($($_.Exception.Message)); starting Steam directly - it will be elevated." 'WARN'
+        Start-Process -FilePath $SteamExe | Out-Null
+    }
+}
+
 # Steam ROM Manager is an Electron app, and even its CLI subcommands start a renderer - so
 # it needs a desktop session. A job started over SSH has none: no DISPLAY, no XAUTHORITY,
 # and 'srm add' dies with "Missing X server or $DISPLAY" and exit 139. DISPLAY=:0 alone is
@@ -275,7 +311,7 @@ function Invoke-SteamRomManager {
     if ($restart -and ($running -or $policy -eq 'always')) {
         if ($steamExe) {
             Write-Log "Relaunching Steam..." 'INFO'
-            Start-Process -FilePath $steamExe | Out-Null
+            Start-SteamDeElevated -SteamExe $steamExe
         } else {
             Write-Log "Could not relaunch Steam (steam.exe path unknown); start it manually to see the new game." 'WARN'
         }
