@@ -1,13 +1,9 @@
 # Tests for RetroGameTalk.ps1 - the search/link-discovery half of dlrom.
 #
-# These exercise the real functions end to end. The ONLY thing mocked is Invoke-WebRequest,
-# the single external dependency; every URL, every regex and every selection rule below is
-# the production code path. Fixtures under tests/fixtures/ are trimmed captures of real
-# Repo pages, so the parsers are tested against the markup the site actually serves.
+# The ONLY thing mocked is Invoke-WebRequest; every URL, regex and selection rule below is the
+# production path. Fixtures under tests/fixtures/ are trimmed captures of real Repo pages.
 #
-# Run:  Invoke-Pester .\dlrom\tests
-# The live suite (real HTTP) is tagged 'Live' and skipped by default:
-#       Invoke-Pester .\dlrom\tests -Tag Live
+# The live suite (real HTTP) is tagged 'Live' and skipped by default.
 
 BeforeAll {
     $script:ModuleRoot  = Split-Path -Parent $PSScriptRoot
@@ -24,9 +20,8 @@ BeforeAll {
     $script:LOG_QUIET   = $true
     $script:LOG_VERBOSE = $false
 
-    # Several tests drive the WARN/ERROR paths on purpose. Write-Log always prints those,
-    # which puts scary-looking lines in the middle of a passing run - so silence it here.
-    # No test asserts on logging; the module's own behaviour is unchanged.
+    # Several tests drive the WARN/ERROR paths on purpose, and Write-Log always prints those.
+    # Silenced here so a passing run is not full of scary lines; no test asserts on logging.
     function Write-Log { param([string]$Message, [string]$Level = 'INFO') }
 
     function Get-Fixture {
@@ -40,9 +35,8 @@ BeforeAll {
         return [PSCustomObject]@{ Content = $Content; StatusCode = $StatusCode }
     }
 
-    # Invoke-WebRequest types -Uri as [System.Uri], and Uri.ToString() DECODES percent
-    # escapes. Asserting against that would hide an encoding bug, so always compare the
-    # string the caller actually passed.
+    # Uri.ToString() DECODES percent escapes, which would hide an encoding bug. Always compare
+    # the string the caller actually passed.
     function Get-RequestedUri {
         param($Uri)
         if ($Uri -is [uri]) { return $Uri.OriginalString }
@@ -67,8 +61,7 @@ Describe 'Platform tables' {
     }
 
     It 'resolves the console aliases to their real Repo category slugs' {
-        # Locked to the live values: several of these changed when the catalogue moved off
-        # cdromance, and a silent regression here sends ROMs to the wrong folder.
+        # Locked to the live values: a silent regression here sends ROMs to the wrong folder.
         $PLATFORM_SLUGS['ps2']       | Should -BeExactly 'ps2-iso'
         $PLATFORM_SLUGS['ps1']       | Should -BeExactly 'psx-iso'
         $PLATFORM_SLUGS['psx']       | Should -BeExactly 'psx-iso'
@@ -158,8 +151,8 @@ Describe 'Search URL construction' {
     }
 
     It 'translates the four slugs whose search filter differs from their URL path' {
-        # The dropdown and the permalinks disagree for these. Passing the category slug
-        # returns zero results instead of an error, so the mapping is load-bearing.
+        # The dropdown and the permalinks disagree for these, and the wrong one returns zero
+        # results rather than an error - so the mapping is load-bearing.
         $cases = @{
             'gamecube'           = 'gcn-iso'
             'gameboy-color-roms' = 'gbc_roms'
@@ -469,8 +462,7 @@ Describe 'PS Vita build selection' {
             [PSCustomObject]@{ Label = $Label; Url = "https://dl1.retrogametalk.com/download.php?file=$Label&key=1" }
         }
 
-        # Both builds of one game, exactly as The Repo lists them: identical but for the
-        # marker, so nothing except the marker can tell them apart.
+        # Both builds of one game as The Repo lists them: identical but for the marker.
         function New-VitaPair {
             param([string]$Emu, [string]$Console)
             return @((New-Link $Emu), (New-Link $Console))
@@ -500,14 +492,13 @@ Describe 'PS Vita build selection' {
     }
 
     It 'falls back to the console build when there is no Vita3K one' {
-        # Console-only titles are common (A-men, Sparkle 2). A build you have to convert
-        # beats no download at all.
+        # Console-only titles are common. A build you have to convert beats no download.
         $links = @(New-Link 'Sparkle 2 (USA)(NoNPDrm)(PCSE00454).7z')
         $r = @(Select-DownloadLinks -Links $links -PlatformSlug 'vita' -VitaBuild $script:VITA_BUILD_EMU)
         $r.Count    | Should -Be 1
         $r[0].Label | Should -Match 'NoNPDrm'
-        # ...and the caller must be able to see it did NOT get what it asked for, or it
-        # would keep a NoNpDrm archive zipped as if Vita3K were going to import it.
+        # ...and the caller must see it did NOT get what it asked for, or it would keep a
+        # NoNpDrm archive zipped as if Vita3K were going to import it.
         Get-VitaLinksBuild -Links $r | Should -BeExactly $script:VITA_BUILD_CONSOLE
     }
 

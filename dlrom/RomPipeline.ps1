@@ -1,9 +1,9 @@
 # The slow half of dlrom: download each selected link, extract it, file the ROM into the
 # console folder, sync to Steam, and report the result.
 #
-# This lives behind one function so that `--wait` (foreground) and the detached worker run
-# byte-for-byte the same code -- the only difference is who is watching. Everything it
-# learns is stamped onto the job, so `dlrom --status <id>` can answer without it.
+# One function so `--wait` and the detached worker run byte-for-byte the same code; the only
+# difference is who is watching. Everything it learns is stamped onto the job, so
+# `dlrom --status <id>` can answer without it.
 
 # Percent milestones. The download dominates the wall clock, so it owns most of the range
 # and the post-processing steps are near the top.
@@ -29,12 +29,10 @@ function Invoke-RomPipeline {
         Write-Log "Created ROM directory: $romDest" 'DEBUG'
     }
 
-    # Each job downloads into its own subdirectory. The temp filename used to come from the
-    # link label alone, so two jobs for the same title shared one path -- and on Linux the
-    # first to finish unlinked the file the second was still downloading into. The writer
-    # gets no error from that (POSIX keeps the inode alive for the open descriptor), so the
-    # download ran to completion and then vanished, which is what "Download complete." on
-    # the same second as "Downloaded file not found" meant.
+    # Each job downloads into its own subdirectory. With the temp filename taken from the link
+    # label alone, two jobs for the same title shared one path, and on Linux the first to
+    # finish unlinked the file the second was still writing. POSIX keeps the inode alive for
+    # the open descriptor, so that download completed and then vanished, with no error.
     $jobTemp = Join-DlPath $TempDir ([string]$Job.id)
     if (-not (Test-Path $jobTemp)) {
         New-Item -ItemType Directory -Path $jobTemp -Force | Out-Null

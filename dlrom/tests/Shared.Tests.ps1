@@ -1,12 +1,10 @@
-# Tests for the shared foundation: Constants.ps1, Common.ps1, the Logging formatters and
-# the file-handling helpers in RomFiles.ps1.
+# Tests for the shared foundation: Constants.ps1, Common.ps1, the Logging formatters and the
+# file-handling helpers in RomFiles.ps1.
 #
-# Everything here used to exist in two or three copies scattered across the modules, and
-# every one of those copies had drifted from its siblings. These tests pin the properties
-# that made the duplication a bug - one ROM extension table, one archive signature table,
+# These pin the ONE-of-each properties - one ROM extension table, one archive signature table,
 # one reject regex, one region vocabulary - so a future edit cannot quietly re-fork them.
 #
-# Only the filesystem is touched (in a temp dir); nothing here goes near the network.
+# Only the filesystem is touched (a temp dir); nothing here goes near the network.
 
 BeforeAll {
     $script:ModuleRoot = Split-Path -Parent $PSScriptRoot
@@ -46,10 +44,7 @@ AfterAll {
 Describe 'Constants: one table per concept' {
 
     It 'covers every console dlrom advertises with at least one ROM extension' {
-        # The old Find-RomFile list was written for cdromance's 16 platforms. After the move
-        # to The Repo it silently failed for Dreamcast (.cdi), Genesis (.md), Master System
-        # (.sms), WonderSwan (.ws), FDS (.fds) and Vita (.vpk) - the archive extracted and
-        # then "no ROM file found".
+        # A short list here fails silently: the archive extracts and then "no ROM file found".
         $mustHave = @('.cdi', '.gdi', '.md', '.gen', '.sms', '.gg', '.ws', '.fds', '.32x',
                       '.vpk', '.adf', '.ngp', '.d88', '.rvz', '.wbfs', '.gcm', '.cso')
         foreach ($ext in $mustHave) {
@@ -246,8 +241,8 @@ Describe 'Region helpers' {
     }
 
     It 'agrees with the web scraper on region names' {
-        # Get-RgtRegions reads a URL slug; Resolve-RegionRequest reads a --region argument.
-        # Different inputs, but they must produce the same vocabulary or ranking breaks.
+        # Different inputs - a URL slug and a --region argument - but they must produce the
+        # same vocabulary or ranking breaks.
         $fromSlug = Get-RgtRegions 'https://retrogametalk.com/repo/ps2-iso/game-usa/' ''
         $fromSlug | Should -Contain (Resolve-RegionRequest 'usa')
     }
@@ -310,8 +305,8 @@ Describe 'PS Vita build helpers' {
         $conLink = [PSCustomObject]@{ Label = 'Game (USA)[NoNpDrm].zip' }
         Get-VitaLinksBuild -Links @($emuLink)            | Should -BeExactly 'emu'
         Get-VitaLinksBuild -Links @($conLink)            | Should -BeExactly 'console'
-        # Mixed or unmarked is not a build: the caller must then extract as usual rather
-        # than assume Vita3K and leave a NoNpDrm dump zipped.
+        # Mixed or unmarked is not a build: the caller must extract as usual rather than
+        # assume Vita3K and leave a NoNpDrm dump zipped.
         Get-VitaLinksBuild -Links @($emuLink, $conLink)  | Should -BeExactly ''
         Get-VitaLinksBuild -Links @()                    | Should -BeExactly ''
     }
@@ -382,9 +377,8 @@ Describe 'Archive detection' {
     }
 
     It 'agrees with Test-IsArchive on every signature' {
-        # These were two implementations with two signature tables: the sniffer matched a
-        # 2-byte zip prefix while the test demanded 4, so a file could be typed 'zip' and
-        # simultaneously reported not-an-archive.
+        # Two signature tables disagreed on the zip prefix length, so a file could be typed
+        # 'zip' and simultaneously reported not-an-archive.
         foreach ($sig in @($script:SIG_ZIP, $script:SIG_7Z, $script:SIG_RAR)) {
             $f = New-SignedFile "agree-$([guid]::NewGuid().ToString('N').Substring(0,6)).dat" $sig
             Test-IsArchive $f          | Should -BeTrue
@@ -412,8 +406,8 @@ Describe 'Archive detection' {
 Describe 'Filename safety' {
 
     It 'strips the characters that break an SRM launch command' {
-        # SRM single-quotes the launch path, so an apostrophe ends the string early. The
-        # character is removed, not replaced: "Lunatea's" becomes "Lunateas".
+        # SRM single-quotes the launch path, so an apostrophe ends the string early. Removed,
+        # not replaced: "Lunatea's" becomes "Lunateas".
         Get-SafeRomName "Klonoa 2 - Lunatea's Veil.iso" | Should -BeExactly 'Klonoa 2 - Lunateas Veil.iso'
         Get-SafeRomName 'Game`name.iso'                 | Should -BeExactly 'Gamename.iso'
     }

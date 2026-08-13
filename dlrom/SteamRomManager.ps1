@@ -27,10 +27,9 @@ function Find-SrmWrapper {
 
 # Where SRM keeps userSettings.json and userConfigurations.json.
 #
-# The Windows build is a portable app: userData sits next to the exe. The Linux build is an
-# Electron AppImage, which cannot write inside its own read-only image and so uses the
-# standard Electron location instead - ~/.config/steam-rom-manager/userData. Looking beside
-# the AppImage there finds nothing, and the parser-enable step silently does nothing.
+# Windows SRM is portable: userData sits beside the exe. The Linux AppImage is read-only and
+# uses ~/.config/steam-rom-manager/userData instead - looking beside the AppImage finds
+# nothing, and the parser-enable step then silently does nothing.
 function Get-SrmUserDataDir {
     param([string]$SrmExe)
     if (-not (Test-DlWindows)) {
@@ -40,8 +39,8 @@ function Get-SrmUserDataDir {
     return Join-Path (Split-Path -Parent $SrmExe) "userData"
 }
 
-# SRM's userSettings.json, or $null. One reader: both callers below want a different key
-# out of the same file, and each used to open, parse and swallow errors on its own.
+# SRM's userSettings.json, or $null. One reader for both callers below, which each want a
+# different key out of the same file.
 function Get-SrmUserSettings {
     param([string]$SrmExe)
     $settingsPath = Join-Path (Get-SrmUserDataDir $SrmExe) 'userSettings.json'
@@ -63,9 +62,8 @@ function Get-SrmSteamExe {
     $exeName  = if (Test-DlWindows) { 'steam.exe' } else { 'steam' }
     if ($steamDir) {
         $candidate = Join-Path $steamDir $exeName
-        # -PathType Leaf: on Linux ~/.steam/steam/steam is a DIRECTORY, so a bare Test-Path
-        # matched it and handed Start-Process a folder ("The FileName property should not be
-        # a directory"). The real binary is /usr/bin/steam, found by the fallback below.
+        # -PathType Leaf: on Linux ~/.steam/steam/steam is a DIRECTORY, and a bare Test-Path
+        # matched it and handed Start-Process a folder. The fallback below finds the real one.
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
     }
     if (Test-DlWindows) {
@@ -79,24 +77,17 @@ function Get-SrmSteamExe {
     return $null
 }
 
-# Compare two paths as strings across platforms: SRM stores its parser folders with '${/}'
-# placeholders and mixed separators, so both sides are folded to '/' before matching.
+# SRM stores parser folders with '${/}' placeholders and mixed separators; fold to '/'.
 function ConvertTo-ComparablePath {
     param([string]$Path)
     return ([string]$Path -replace '\\', '/').TrimEnd('/')
 }
 
-# Parsers whose romDirectory should be enabled so $RomDest gets picked up - or nothing at all
-# when an already-enabled parser covers it.
+# Parsers to enable so $RomDest is picked up - or nothing, when an enabled parser already
+# covers it (Test-SrmParserCovers below decides, weighing romDirectory AND the glob).
 #
-# One console must end up served by ONE emulator. Two enabled parsers over the same folder both
-# emit a shortcut for every game, so the Steam library shows each title once per emulator.
-#
-# Coverage is not folder equality. Plenty of SRM parsers sit on the *base* roms directory
-# (`${romsdirglobal}`) and select a platform by glob internally - "Nintendo 64 - Rosalie's Mupen
-# GUI" is one. A parser on <roms> therefore already covers <roms>/n64, so enabling the
-# folder-specific "RetroArch Mupen64Plus Next" on top of it duplicated all 27 N64 games.
-# Test-SrmParserCovers below decides that, weighing romDirectory AND the glob.
+# One console must end up served by ONE emulator: two enabled parsers over the same folder
+# each emit a shortcut per game, so the Steam library shows every title twice.
 function Get-SrmParserIdsForFolder {
     param([string]$SrmExe, [string]$RomDest, [string]$RomsBase)
     $configPath = Join-Path (Get-SrmUserDataDir $SrmExe) "userConfigurations.json"
@@ -122,24 +113,22 @@ function Get-SrmParserIdsForFolder {
         }
         if ($dir -ieq $targetNorm -and $p.disabled -eq $true) { $exact += $p.parserId }
     }
-    # Only ever enable one, so a console with both a RetroArch core and a standalone emulator
-    # does not end up with both.
+    # Only ever one, so a RetroArch core and a standalone emulator never both get enabled.
     if ($exact.Count -gt 1) { return @($exact[0]) }
     return @($exact)
 }
 
 # Does a parser's search actually reach into $Target?
 #
-# romDirectory alone does not answer this. Plenty of parsers sit on the BASE roms directory and
-# pick their platform in the GLOB instead:
+# romDirectory alone does not answer it: many parsers sit on the BASE roms directory and pick
+# their platform in the GLOB instead.
 #
 #   Nintendo 64 - Rosalie's Mupen GUI    dir=<roms>      glob=@(n64|n64dd)/**/${title}@(.z64|…)
 #   Desktop Applications                 dir=<roms>      glob={desktop/**/…,desktop}/${title}…
 #   RetroArch Mupen64Plus Next           dir=<roms>/n64  glob=**/${title}@(.z64|…)
 #
-# So an ancestor romDirectory is necessary but not sufficient. Treating any ancestor as covering
-# would make "Desktop Applications" - enabled, and sitting on the base dir - look like it covers
-# every console, and no platform parser would ever be enabled again.
+# So an ancestor is necessary but not sufficient - treat any ancestor as covering and
+# "Desktop Applications", on the base dir, covers every console.
 function Test-SrmParserCovers {
     param([string]$ParserDir, [string]$Glob, [string]$Target)
     if (-not $ParserDir -or -not $Target) { return $false }
@@ -157,10 +146,8 @@ function Test-SrmParserCovers {
     return ($alts -contains $leaf)
 }
 
-# -WindowStyle is a Windows-only parameter and PowerShell on Linux throws rather than
-# ignoring it: "The parameter '-WindowStyle' is not supported ... on this edition of
-# PowerShell". Steam sync is wrapped in a warn-and-continue by design, so on the Deck every
-# sync failed quietly and shortcuts.vdf went untouched for weeks while ROMs kept arriving.
+# -WindowStyle is Windows-only and pwsh on Linux throws rather than ignoring it. Steam sync is
+# warn-and-continue by design, so this failed quietly and shortcuts.vdf went untouched.
 function Get-HiddenWindowOption {
     if (Test-DlWindows) { return @{ WindowStyle = 'Hidden' } }
     return @{}
@@ -168,15 +155,10 @@ function Get-HiddenWindowOption {
 
 # Relaunch Steam WITHOUT passing on an administrator token.
 #
-# Start-Process hands the child a copy of the caller's token, so a download run from an
-# elevated shell leaves an elevated Steam behind - and it stays that way until the next
-# reboot, long after the run that caused it. Every emulator Steam launches then inherits
-# admin: Ryujinx refuses outright ("Ryujinx is not intended to be run as administrator"),
-# and files an elevated Steam writes come out owned by Administrators.
-#
-# explorer.exe already runs as the desktop shell at medium integrity, so handing it the path
-# makes it - not us - the parent, and Steam starts unelevated. Note the launch is fire and
-# forget: explorer returns immediately and Steam is not its child process.
+# Start-Process copies the caller's token to the child, so an elevated shell leaves an elevated
+# Steam behind until the next reboot, and every emulator it launches inherits admin (Ryujinx
+# refuses to start at all). explorer.exe runs at medium integrity, so handing it the path makes
+# it the parent instead. Fire and forget: Steam is not explorer's child.
 function Start-SteamDeElevated {
     param([string]$SteamExe)
 
@@ -202,11 +184,10 @@ function Start-SteamDeElevated {
     }
 }
 
-# Steam ROM Manager is an Electron app, and even its CLI subcommands start a renderer - so
-# it needs a desktop session. A job started over SSH has none: no DISPLAY, no XAUTHORITY,
-# and 'srm add' dies with "Missing X server or $DISPLAY" and exit 139. DISPLAY=:0 alone is
-# not enough; the X cookie in XAUTHORITY is required too, and its filename is random per
-# session (/run/user/1000/xauth_aRsoaP), so it has to be discovered rather than assumed.
+# SRM is Electron: even its CLI subcommands start a renderer, so it needs a desktop session
+# and dies over SSH with "Missing X server or $DISPLAY". DISPLAY=:0 alone is not enough - the
+# XAUTHORITY cookie is required too and its filename is random per session, so it has to be
+# discovered rather than assumed.
 function Import-DesktopSessionEnv {
     if (Test-DlWindows) { return $true }
     if ($env:DISPLAY -and $env:XAUTHORITY) { return $true }
@@ -324,23 +305,20 @@ function Invoke-SteamRomManager {
 # to the built-in Invoke-SteamRomManager if the wrapper isn't installed or returns non-zero.
 #
 # -AlreadyDeferred is set by the queue drain, which has already established that this is a
-# safe moment to touch Steam. Without it the drain would re-queue everything it just picked up.
-# Borrow the desktop for the length of one Steam sync and hand the Deck straight back.
+# safe moment to touch Steam; without it the drain would re-queue what it just picked up.
 #
-# A ROM asked for from Game Mode should arrive finished - downloaded, filed AND in the Steam
-# library - rather than half-done with a note to go and switch sessions. Only this step needs
-# the desktop; the download itself runs fine under gamescope, so the device is away from Game
-# Mode for about a minute rather than the length of the transfer.
+# On a Deck this borrows the desktop for one sync and hands it straight back, so a ROM asked
+# for from Game Mode arrives finished rather than half-done. Only this step needs the desktop,
+# so the device is away for about a minute rather than the length of the transfer.
 #
 # The switch stops the running session, which the worker survives only because it lives under
-# systemd --user rather than the session cgroup (see Jobs.ps1). Returns false when the round
-# trip could not be made, leaving the caller to queue instead - never leaves the Deck parked
-# on the desktop.
+# systemd --user rather than the session cgroup (see Jobs.ps1). False means the round trip
+# could not be made and the caller should queue - the Deck is never left on the desktop.
 function Invoke-SrmInDesktopSession {
     param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount)
 
     # Noted before the first switch: Decky does not survive Steam going away, and only
-    # something that knew it was up beforehand can honestly put it back.
+    # something that knew it was up beforehand can put it back.
     $deckyWasUp = Test-DlDeckyActive
 
     Write-Log "Game Mode is active - switching to Desktop Mode to run Steam ROM Manager..." 'INFO'
@@ -364,8 +342,7 @@ function Invoke-SrmInDesktopSession {
         Write-Log "Steam sync failed in the borrowed desktop session: $($_.Exception.Message)" 'ERROR'
         return $false
     } finally {
-        # Runs on every path, including the failure above: the Deck goes back to Game Mode
-        # whether or not the sync worked.
+        # Every path, including the failure above: back to Game Mode whether the sync worked.
         Write-Log "Returning the Deck to Game Mode..." 'INFO'
         if (Enter-DlGameMode) { Write-Log "Back in Game Mode." 'SUCCESS' }
         else { Write-Log "Could not switch back to Game Mode." 'WARN' }
@@ -377,12 +354,9 @@ function Sync-RomToSteam {
     param([string]$RomDest, [string]$RomsBase, [int]$InstalledCount, [switch]$AlreadyDeferred)
 
     # Game Mode gate. The download is already on disk and staying there; only the Steam step
-    # is affected, because Steam ROM Manager cannot write the library from inside the
-    # gamescope session. See SteamDeferred.ps1 for why this cannot simply run anyway.
-    #
-    # Preferred answer is to borrow the desktop and give it straight back, so a download
-    # asked for from Game Mode finishes the whole job. Queueing is the fallback for when the
-    # session will not switch, and stays the configured behaviour if auto-switching is off.
+    # is affected, because SRM cannot write the library from inside the gamescope session.
+    # Preferred answer is to borrow the desktop and give it straight back; queueing is the
+    # fallback when the session will not switch, or when auto-switching is off.
     if (-not $AlreadyDeferred -and (Test-DlGameMode)) {
         if ([bool](Get-CfgValue 'srmAutoSwitchSession' $true)) {
             if (Invoke-SrmInDesktopSession -RomDest $RomDest -RomsBase $RomsBase -InstalledCount $InstalledCount) { return }

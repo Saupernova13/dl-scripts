@@ -1,11 +1,9 @@
 #!/bin/sh
 # Desktop Mode autostart body: apply the Steam syncs that Game Mode postponed.
 #
-# This exists as a script rather than a shell one-liner inside the .desktop Exec key
-# because Exec is not a shell command line. The desktop entry spec reserves ';', '>',
-# '|', '&', '*' and quotes, and a launcher is free to reject or mangle an Exec value
-# containing them - a failure with no error anywhere, just an autostart that stops
-# running. Keeping Exec a bare path sidesteps the whole question.
+# A script rather than a one-liner in the .desktop Exec key because Exec is not a shell
+# command line: the spec reserves ';', '>', '|', '&', '*' and quotes, and a launcher may
+# reject or mangle a value containing them with no error anywhere. A bare path sidesteps it.
 #
 #   dlrom-autostart-sync            normal run (sleeps first, as at login)
 #   dlrom-autostart-sync --now      skip the startup delay, for testing by hand
@@ -30,27 +28,22 @@ LOG="$DATA_DIR/sync-steam.log"
 
 mkdir -p "$DATA_DIR"
 
-# At Desktop Mode login Steam is still starting, and SRM's add is exactly the operation
-# that needs Steam settled - draining into a half-started Steam loses categories, the
-# same failure the queue exists to avoid, just at the other end of the session.
+# At Desktop Mode login Steam is still starting, and draining into a half-started Steam loses
+# categories - the same failure the queue exists to avoid, at the other end of the session.
 if [ "${1:-}" != "--now" ]; then
     sleep 20
 fi
 
-# Only act on work that was actually postponed.
-#
-# `dlrom --sync-steam` treats an empty queue as "run a full SRM pass anyway", which is
-# the right answer when a person types it and the wrong one here: nothing was deferred,
-# yet the pass still shuts Steam down and relaunches it. That made merely opening the
-# desktop cost a Steam restart, every time.
+# Only act on work that was actually postponed. `dlrom --sync-steam` treats an empty queue as
+# "run a full SRM pass anyway" - right when a person types it, wrong here, where it would make
+# merely opening the desktop cost a Steam restart every time.
 if ! ls "$QUEUE_DIR"/*.json >/dev/null 2>&1; then
     echo "[$(date '+%H:%M:%S')] [INFO] Autostart: nothing queued - no Steam sync needed." >> "$LOG"
     exit 0
 fi
 
-# --no-game-mode: the drain otherwise hands the Deck back to Game Mode when it finishes,
-# on the reasoning that a sync is asked for so you can go and play. That reasoning is
-# inverted when the trigger IS the user arriving on the desktop - they chose Desktop
-# Mode, and switching sessions tears it down under them, which is indistinguishable from
-# the device spontaneously rebooting. Running `dlrom --sync-steam` by hand is unaffected.
+# --no-game-mode: the drain otherwise hands the Deck back to Game Mode, on the reasoning that
+# a sync is asked for so you can go and play. That inverts when the trigger IS the user
+# arriving on the desktop - switching sessions there tears it down under them, which is
+# indistinguishable from a spontaneous reboot. Running --sync-steam by hand is unaffected.
 exec "$DLROM" --sync-steam --no-game-mode >> "$LOG" 2>&1

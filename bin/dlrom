@@ -4,9 +4,8 @@
 
 set -eu
 
-# Resolve this script through any symlinks before locating its siblings. Putting a
-# launcher on PATH means linking it into ~/.local/bin, and `dirname $0` would then name
-# the link's directory - where neither the shared body nor the repo lives.
+# Resolve symlinks first: a launcher linked into ~/.local/bin would otherwise resolve
+# `dirname $0` to the link's directory, where neither the shared body nor the repo lives.
 DL_SELF=$0
 while [ -L "$DL_SELF" ]; do
     dl_link=$(readlink -- "$DL_SELF")
@@ -22,9 +21,9 @@ DL_POSITIONALS="Query"
 DL_FLAG_VALUES="--platform:Platform --region:Region --sort:Sort --dest:Destination --destination:Destination --vita:VitaBuild --status:Status --torrent-pick:TorrentPick --max-results:MaxResults --job-file:JobFile"
 DL_FLAG_SWITCHES="--wait:Wait --interactive:Interactive --no-extract:NoExtract --no-steam:NoSteam --no-torrent:NoTorrent --no-game-mode:NoGameMode --json:Json --verbose:Verbose --quiet:Quiet --clean:Clean --clear:Clean --all:All --jobs:ListJobs --sync-steam:SyncSteam --steam-queue:SteamQueue"
 
-# --dry-run reads as "do the lookup, change nothing" either way, but which parameter that
-# is depends on the mode: previewing a search resolves links, previewing --clean lists what
-# would be deleted. Same for --list, which means the job history only when it stands alone.
+# --dry-run means "look everything up, change nothing" either way, but which parameter that is
+# depends on the mode: a search resolves links, --clean lists what would go. Same for --list,
+# which means the job history only when it stands alone.
 case ${1:-} in
     --clean|--clear)
         DL_FLAG_SWITCHES="$DL_FLAG_SWITCHES --dry-run:DryRun --dryrun:DryRun --list:ListJobs"

@@ -1,24 +1,16 @@
-# Ps2TorrentIndex.ps1
-# The PS2 torrent fallback for dlrom: when RetroGameTalk and the direct downloaders
-# can't produce a PS2 ROM, look the game up in the local Redump PS2 archive
-# torrent's index and fetch just that one file via qBittorrent's selective
-# download, then hand it to dlrom's normal extract/file/Steam pipeline.
+# The PS2 torrent fallback: when The Repo and the direct downloaders cannot produce a PS2 ROM,
+# look the game up in the local Redump PS2 archive torrent's index, fetch just that one file
+# through qBittorrent's selective download, and hand it to the normal extract/file/Steam path.
 #
-# Matching is auto-pick with heuristics (the user's chosen behaviour):
-#   - all query words (numbers included) must appear in the title;
-#   - demos/betas/prototypes are always rejected;
-#   - edition/variant releases (FES, Undub, Director's Cut, GOTY, ...) are
-#     rejected unless the query names them, so "Persona 3" never picks "Persona 3
-#     FES";
-#   - budget reprints (Greatest Hits, Platinum, ...) are allowed but deprioritised;
-#   - region preference is: the requested --region first, then USA, World, Europe,
-#     Japan, Korea; and the closest-to-base title wins ties.
-#   - if nothing matches, it refuses and lists near-misses rather than guessing.
-#
-# Depends on helpers already dot-sourced by Add-ROM.ps1: Resolve-MediaPath
-# (DriveResolver), Install-RomFromDownload (RomFiles), Sync-RomToSteam (SteamRomManager),
-# and the qBittorrent client (QbitTorrent.ps1). Write-Log/Format-* from Logging;
-# release-marker tables, region ranking and Get-CfgValue from Constants/Common.
+# Matching is auto-pick, and stricter than the web search because the archive always has the
+# base game:
+#   - every query word, numbers included, must appear in the title;
+#   - demos, betas and prototypes are always rejected;
+#   - editions (FES, Undub, Director's Cut, GOTY) are rejected unless the query names them;
+#   - budget reprints (Greatest Hits, Platinum) are allowed but deprioritised;
+#   - region order is --region first, then USA, World, Europe, Japan, Korea; closest-to-base
+#     title wins ties;
+#   - nothing matching means refuse and list near-misses, never guess.
 
 $script:PS2_ROMAN = @{ 'i'='1'; 'ii'='2'; 'iii'='3'; 'iv'='4'; 'v'='5'; 'vi'='6'; 'vii'='7'; 'viii'='8'; 'ix'='9'; 'x'='10' }
 $script:PS2_STOP  = @('the','of','a','an','and','to','in','for','vs','de','la')
@@ -320,8 +312,7 @@ function Invoke-Ps2TorrentFallback {
     Write-Log "Downloaded: $downloaded" 'SUCCESS'
 
     # Same extract/find/file/cleanup decision tree as a web download, so it is the same
-    # function. This used to be a second copy that had already drifted: it never warned
-    # about an unrecognised raw extension, and its cleanup ran on a different condition.
+    # function - a second copy of it had already drifted.
     $installedRomPath = $null
     try {
         $installedRomPath = Install-RomFromDownload -DownloadedPath $downloaded -RomDest $romDest `
@@ -345,9 +336,8 @@ function Invoke-Ps2TorrentFallback {
     # serial), so an agent can chain the texture download for this version.
     $resultTitle  = if ($chosen) { $chosen.Title } else { [System.IO.Path]::GetFileNameWithoutExtension([string]$match.File.path) }
     $resultRegion = if ($chosen -and $chosen.Regions) { @($chosen.Regions -split ',')[0] } elseif ($Region) { $Region } else { '' }
-    # Capture, never let this fall through as output: Write-DlromResult returns the
-    # [HANDOFF] line, and an uncaptured string here would ride out on this function's
-    # return value alongside the $true and break the caller's boolean test.
+    # Capture: Write-DlromResult returns the [HANDOFF] line, and letting it fall through would
+    # ride out alongside the $true and break the caller's boolean test.
     $handoff = Write-DlromResult -Title $resultTitle -Platform 'ps2' -Region $resultRegion `
         -Source 'torrent' -InstalledPath $installedRomPath -Cfg $Cfg
 

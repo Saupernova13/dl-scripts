@@ -3,26 +3,16 @@
 # it to Steam via Steam ROM Manager.
 #
 # This is the orchestrator; the real work lives in the sibling modules it dot-sources.
-# Settings come from %LOCALAPPDATA%\dlScripts\config.json (created on first run). The Repo
-# needs no account, so there are no credentials to configure.
+# Settings come from %LOCALAPPDATA%\dlScripts\config.json. The Repo needs no account.
 #
-# Normally invoked through dlrom.cmd:
-#   dlrom "Game Name" [--platform ps2] [--region usa] [--interactive] [--verbose]
-#
-# Downloads are ROM-sized, so the default is to hand the slow half to a detached worker
-# and return a job id immediately (see Jobs.ps1 / RomPipeline.ps1):
-#   dlrom "Game Name"            search + resolve links, spawn a worker, return a job id
-#   dlrom --status <jobId>       progress of a running or finished job
-#   dlrom --list                 every recent job
-#   dlrom "Game Name" --wait     stay in the foreground until it is installed
-#
-# Modes:
-#   -JobFile <path>  internal; the worker entry point, spawned by Start-DlromJob
+# Downloads are ROM-sized, so the default is to hand the slow half to a detached worker and
+# return a job id immediately (see Jobs.ps1 / RomPipeline.ps1). --wait stays in the
+# foreground instead; -JobFile is the worker's own entry point, spawned by Start-DlromJob.
 
 [CmdletBinding()]
 param(
-    # Not Mandatory: --status/--list/-JobFile carry no query, and a mandatory parameter
-    # would make PowerShell prompt for it -- hanging any run with no console attached.
+    # Not Mandatory: --status/--list/-JobFile carry no query, and a mandatory parameter would
+    # make PowerShell prompt for it - hanging any run with no console attached.
     [string]$Query = "",
 
     [string]$Platform = "",
@@ -59,11 +49,10 @@ param(
     [switch]$DryRun
 )
 
-# Load order matters for the two files that define script-scope VALUES rather than just
-# functions: Constants.ps1 must come first (Logging's formatters read PROGRESS_BAR_WIDTH
-# at parse time of their default parameters), then Common.ps1, then Logging so the
-# DriveResolver fallback sees a Write-Log already defined. Everything after that is
-# functions only, and resolves each other's calls at runtime.
+# Load order matters only for the files defining script-scope VALUES: Constants first
+# (Logging's formatters read PROGRESS_BAR_WIDTH in their default parameters, at parse time),
+# then Common, then Logging so the DriveResolver fallback sees a Write-Log. The rest are
+# functions only and resolve at runtime.
 $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $repoRoot     'lib/Platform.ps1')      # OS detection, per-platform paths, Steam Deck session mode
 . (Join-Path $PSScriptRoot 'Constants.ps1')         # shared literals: job/downloader vocab, extensions, regions
@@ -87,16 +76,15 @@ $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
 $script:LOG_QUIET   = [bool]$Quiet
 
 # ---------------------------------------------------------------------------
-# Job queries. Answered straight from the jobs dir -- no config, no network, so
+# Job queries. Answered straight from the jobs dir - no config, no network - so
 # `dlrom --status <id>` stays instant even while a download is saturating the line.
 # ---------------------------------------------------------------------------
 if ($Status)   { Show-DlromJobStatus -JobId $Status -AsJson:$Json; exit 0 }
 if ($ListJobs) { Show-DlromJobList -AsJson:$Json; exit 0 }
 
-# -DryRun belongs to --clean, where it previews deletions. Against a search it means the
-# same thing every other dl script means by it: look everything up and download nothing,
-# which here is -LinksOnly. Folding them together keeps one word for one idea, so a caller
-# reaching for --dry-run out of habit never starts a multi-GB download by accident.
+# -DryRun previews deletions under --clean. Against a search it means what it means in every
+# other dl script - resolve everything, download nothing - which here is -LinksOnly. One word
+# for one idea, so --dry-run out of habit never starts a multi-GB download by accident.
 if ($DryRun -and $Query -and -not $Clean) { $LinksOnly = $true }
 
 # Steam queue surface. --steam-queue only reads; --sync-steam needs the config and the SRM
@@ -159,16 +147,16 @@ $abDirCfg          = Get-CfgValue 'abDownloadDir' ''
 $script:AB_DOWNLOAD_DIR = if ($abDirCfg) { $abDirCfg } else { Join-DlPath (Get-DlDownloadsDir) 'ABDM' }
 
 # ---------------------------------------------------------------------------
-# Housekeeping. Placed after config (it needs tempDir, romsBase and the AB folder)
-# but before anything that wants a query -- --clean carries no game name.
+# Housekeeping. After config (it needs tempDir, romsBase and the AB folder) but before
+# anything that wants a query - --clean carries no game name.
 # ---------------------------------------------------------------------------
 if ($Clean) {
     exit (Invoke-DlromClean -TempDir $tempDir -All:$All -DryRun:$DryRun -AsJson:$Json)
 }
 
 # ---------------------------------------------------------------------------
-# Worker mode (internal). Runs the slow half of a job that the parent already
-# resolved, with nothing but a log file for company.
+# Worker mode (internal). Runs the slow half of a job the parent already resolved, with
+# nothing but a log file for company.
 # ---------------------------------------------------------------------------
 if ($JobFile) {
     $script:LOG_HEADLESS = $true
@@ -239,9 +227,8 @@ if ($script:DOWNLOADER -eq $script:DL_AB) { $downloaderLabel += " (port $script:
 Write-Log "Downloader: $downloaderLabel" 'INFO'
 
 # --- PS Vita build preference -------------------------------------------------
-# Vita games are published twice (NoNpDrm for a modded console, Vita3K for the emulator)
-# and the two will not run on each other's target. --vita decides; the config sets the
-# house default; emulation wins when neither says otherwise.
+# Vita games are published twice and the two will not run on each other's target. --vita
+# decides, the config sets the house default, emulation wins when neither says otherwise.
 $requestedVitaBuild = Resolve-VitaBuild $VitaBuild
 if ($VitaBuild -and -not $requestedVitaBuild) {
     Write-Log "Unknown --vita value '$VitaBuild' (expected emu, console or any) - ignoring it." 'WARN'
@@ -385,9 +372,9 @@ if ($Interactive -and $displayResults.Count -gt 1) {
     Write-Log "Auto-selecting: $($selected.Title)" 'INFO'
 }
 
-# The platform actually in play: what --platform named, else the category the chosen result
-# is filed under. Resolved here rather than with the destination further down because link
-# selection needs it first - on Vita it decides which of the two builds to take.
+# The platform actually in play: what --platform named, else the chosen result's category.
+# Resolved here rather than with the destination below because link selection needs it first
+# - on Vita it decides which of the two builds to take.
 $effectiveSlug = if ($resolvedSlug) { $resolvedSlug } else { [string]$selected.Platform }
 
 # Get download links (reveals the "Show Links" table)
@@ -413,9 +400,8 @@ if ($selectedLinks.Count -eq 0) {
     Invoke-RgtFallbackOrExit -ReasonCode 'no-suitable-links' -ReasonText $null -ExitCode 1
 }
 
-# What we actually ended up with. Read from the winning link rather than from what was
-# requested: Select-VitaLinks falls back to the other build when the requested one does not
-# exist, and installing a NoNpDrm dump as if it were a Vita3K repack would be wrong.
+# Read from the winning link, not from what was requested: Select-VitaLinks falls back to the
+# other build when the requested one does not exist, and the two are filed differently.
 $installedVitaBuild = ''
 $keepArchive        = [bool]$NoExtract
 if ($effectiveSlug -eq $script:VITA_SLUG) {
@@ -443,9 +429,8 @@ if ($LinksOnly) {
     exit 0
 }
 
-# Resolve ROM destination. $effectiveSlug already folds in the platform detected from the
-# chosen search result, so a bare `dlrom "Game"` still lands in the right console folder
-# rather than \roms.
+# $effectiveSlug already folds in the platform detected from the chosen search result, so a
+# bare `dlrom "Game"` still lands in the right console folder rather than \roms.
 $platformFolder = if ($effectiveSlug -and $PLATFORM_FOLDERS.ContainsKey($effectiveSlug)) {
     $PLATFORM_FOLDERS[$effectiveSlug]
 } elseif ($Platform) {
@@ -475,9 +460,8 @@ if ($Destination) {
         Write-Log "Drive picker selected ROMs base: $romsBase" 'INFO'
     } catch {
         Write-Log "No connected drive advertises a ROM path ($($_.Exception.Message))." 'DEBUG'
-        # Prompting is only safe when a human asked to be asked. An agent or a scheduled
-        # run has no console, so this would block forever on a prompt nobody can see --
-        # tell the caller how to fix it instead.
+        # Prompting is only safe when a human asked to be asked. An agent or scheduled run
+        # has no console and would block forever on a prompt nobody can see.
         if (-not $Interactive) {
             Write-Log "Cannot resolve a ROMs base directory and there is no console to ask." 'ERROR'
             Write-Log "Fix with one of:" 'ERROR'
@@ -501,8 +485,7 @@ $job = New-DlromJob -Kind $script:JOB_KIND_WEB -Query $Query -Title $selected.Ti
         -NoExtract:$keepArchive -NoSteam:$NoSteam
 
 # Default: hand the download to a detached worker and return now. ROM downloads run for
-# minutes to hours, and holding the caller (usually an agent) hostage for that is the
-# whole reason this exists. --wait opts back into the old blocking behaviour.
+# minutes to hours; --wait opts back into blocking.
 if (-not $Wait) {
     try {
         Start-DlromJob -Job $job | Out-Null

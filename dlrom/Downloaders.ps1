@@ -1,10 +1,9 @@
-# Download backends and the dispatcher that chooses between them. Order of preference:
-# a running manager (Motrix, then AB Download Manager), then direct tiers
+# Download backends and the dispatcher that chooses between them. Order of preference: a
+# running manager (Motrix, then AB Download Manager), then direct tiers
 # (aria2c -> curl -> BITS -> Invoke-WebRequest). Falls through on failure.
 #
-# Add-ROM sets the script-scope values we read: MOTRIX_URL, AB_PORT, AB_TIMEOUT,
-# AB_DOWNLOAD_DIR and DOWNLOADER. Backend ids, labels, HTTP_HEADERS and the partial-file
-# suffixes come from Constants.ps1; progress rendering from Logging.ps1.
+# Add-ROM sets the script-scope values read here: MOTRIX_URL, AB_PORT, AB_TIMEOUT,
+# AB_DOWNLOAD_DIR and DOWNLOADER.
 
 # Motrix speaks aria2's JSON-RPC. (RPC plumbing carried over from dlmotrix.)
 function Invoke-MotrixRpc {
@@ -27,8 +26,8 @@ function Test-MotrixRunning {
 }
 
 # AB Download Manager's local API (default port 15151): POST /ping -> "pong",
-# POST /add { items:[...], options:{...} }. There's no status/completion endpoint, so
-# we hand it a suggestedName and watch its download folder instead (Wait-AbFile).
+# POST /add { items:[...], options:{...} }. No status or completion endpoint, so we hand it a
+# suggestedName and watch its download folder instead (Wait-AbFile).
 function Get-AbBaseUrl {
     $port = if ($script:AB_PORT) { $script:AB_PORT } else { $script:DEFAULT_AB_PORT }
     return "http://$($script:LOOPBACK):$port"
@@ -180,16 +179,14 @@ function Test-ArgumentListSupported {
 
 # Run a download tool and report progress by watching its output file grow.
 #
-# Neither obvious way of starting it works here. Start-Process splits ArgumentList on
-# spaces on Linux, so an output path like "Iron Man (USA) (En,Fr,Es).7z" arrives as four
-# separate arguments and curl tries to resolve "Man" as a hostname. The call operator
-# quotes correctly but blocks this runspace, and a blocked runspace cannot poll anything -
-# which is why every native tier reported the job's floor percentage for the whole
-# download, making a working transfer look identical to a dead one.
+# Neither obvious way of starting it works. Start-Process splits ArgumentList on spaces on
+# Linux, so "Iron Man (USA) (En,Fr,Es).7z" arrives as four arguments and curl tries to resolve
+# "Man" as a hostname. The call operator quotes correctly but blocks this runspace, and a
+# blocked runspace cannot poll - which is why every native tier reported the job's floor
+# percentage for the whole download.
 #
-# ArgumentList passes an argv array verbatim and leaves us free to poll. Windows PowerShell
-# 5.1 lacks it and falls back to a blocking run: there Motrix or aria2c normally serves,
-# and both report progress by other means.
+# ArgumentList passes an argv array verbatim and leaves us free to poll. PS 5.1 lacks it and
+# falls back to a blocking run; there Motrix or aria2c normally serves.
 function Invoke-NativeDownload {
     param(
         [string]$Exe,
@@ -339,11 +336,10 @@ function Invoke-AbDownload {
     return $OutFile
 }
 
-# Every backend reports success in its own way - an exit code, an RPC status, or merely
-# returning without throwing - and none of them proved the bytes landed. Invoke-WebRequest
-# in particular returned cleanly after a 978 MB download that left nothing on disk, so the
-# job logged "Download complete." and then "Downloaded file not found" in the same second.
-# One check on the way out means a backend cannot claim a file it did not produce.
+# Every backend reports success its own way - an exit code, an RPC status, or merely returning
+# without throwing - and none of them proves the bytes landed. Invoke-WebRequest once returned
+# cleanly after a 978 MB download that left nothing on disk. One check on the way out means a
+# backend cannot claim a file it did not produce.
 function Assert-DownloadedFile {
     param([string]$Path, [string]$Backend)
 

@@ -1,15 +1,13 @@
-# QbitTorrent.ps1
-# qBittorrent WebUI client for dlrom's PS2 torrent fallback. Adds a large
-# multi-file archive .torrent, marks every file except the one the user asked for
-# as "do not download", starts it, waits for that single file to complete, then
-# (only if this run added the torrent) removes the torrent entry while keeping the
-# downloaded file on disk. No seeding is left running.
+# qBittorrent WebUI client for the PS2 torrent fallback. Adds the archive .torrent, marks
+# every file but the wanted one "do not download", waits for that one file, then - only if
+# this run added the torrent - removes the entry while keeping the file. Nothing is left
+# seeding.
 #
 # Confirmed against qBittorrent 5.1.2 / WebAPI 2.11.4:
-#   - add returns "Ok." (not the hash); the v1 infohash we compute matches the
-#     hash qBittorrent assigns, and a per-run tag is a reliable fallback lookup.
-#   - a torrent's file "name" includes the root folder and matches the index path
-#     built by ps2_torrent.py, so on disk the file is savepath\<name-as-path>.
+#   - add returns "Ok.", not the hash. The v1 infohash computed here matches what
+#     qBittorrent assigns, and a per-run tag is a reliable fallback lookup.
+#   - a torrent's file "name" includes the root folder and matches the index path built by
+#     ps2_torrent.py, so on disk the file is savepath\<name-as-path>.
 #
 # Add-ROM sets $script:QBIT_BASE (and optional creds) before calling in.
 # Write-Log, ConvertTo-ResponseText, Format-* come from Logging.ps1.

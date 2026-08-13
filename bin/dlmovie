@@ -4,9 +4,8 @@
 
 set -eu
 
-# Resolve this script through any symlinks before locating its siblings. Putting a
-# launcher on PATH means linking it into ~/.local/bin, and `dirname $0` would then name
-# the link's directory - where neither the shared body nor the repo lives.
+# Resolve symlinks first: a launcher linked into ~/.local/bin would otherwise resolve
+# `dirname $0` to the link's directory, where neither the shared body nor the repo lives.
 DL_SELF=$0
 while [ -L "$DL_SELF" ]; do
     dl_link=$(readlink -- "$DL_SELF")

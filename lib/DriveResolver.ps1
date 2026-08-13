@@ -1,24 +1,13 @@
-# lib/DriveResolver.ps1
-# Shared library for dl-scripts. Provides:
-#   Initialize-DlConfig    - Bootstraps %LOCALAPPDATA%\dlScripts\config.json sections,
-#                            backfilling any new keys from $Defaults into existing sections.
-#   Get-DriveRegistryUrl   - Base URL of the drive-registry API (env / config / default).
-#   Get-DriveMetaInventory - Connected drives, from the drive-registry API.
-#   Get-FallbackMediaPath  - Safe local default path for a media type (no API needed).
-#   Resolve-MediaPath      - Picks a destination drive for a media type via the API.
+# Shared config bootstrap and destination-drive resolution for every dl-script.
 #
-# The drive-picking logic no longer lives here: it is owned by the drive-registry service
-# (Documents\github\drive-registry, http://127.0.0.1:9600), which also stamps the
-# drive-meta.json file onto every connected drive - including drives plugged in after it
-# started. This library is a thin API client.
+# A thin client for the drive-registry service (http://127.0.0.1:9600), which owns the
+# drive-picking logic and stamps drive-meta.json onto every connected drive, including drives
+# plugged in after it started.
 #
-# The API is OPTIONAL: if the service isn't configured or isn't running, Resolve-MediaPath
-# degrades to a safe default destination (the caller's configured folder, else a per-type
-# folder under the home directory) so every dl-script works standalone. Only -Strict callers
-# (dlrom's ROM base) get a thrown error instead, so they can run their own fallback.
-#
-# Each script dot-sources this file via:
-#   . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib\DriveResolver.ps1")
+# The API is OPTIONAL: with the service absent, Resolve-MediaPath degrades to a safe default
+# (the caller's configured folder, else a per-type folder under home) so every script works
+# standalone. Only -Strict callers - dlrom's ROM base - get a thrown error, so they can run
+# their own fallback.
 #
 # Run this file directly to invoke the test harness.
 
@@ -115,9 +104,8 @@ function Get-DriveMetaInventory {
     return $resp.drives
 }
 
-# Safe local default destination for a media type, used when the drive-registry service is
-# unavailable or advertises no drive for the type. Keeps every script usable with no API
-# configured. Mirrors each script's own configured default so behaviour is consistent.
+# Safe local default for a media type, used when the drive-registry service is unavailable or
+# advertises no drive for it. Mirrors each script's own configured default.
 function Get-FallbackMediaPath {
     param([Parameter(Mandatory=$true)][string]$MediaType)
     switch ($MediaType) {
@@ -174,9 +162,8 @@ function Resolve-MediaPath {
 
     $pick = $resp.pick
     if (-not $pick) {
-        # Non-strict, and the service reports no drive for this media type. Fall back so the
-        # download still lands somewhere (the API is up; it just had no candidate - e.g. every
-        # target drive is disconnected).
+        # Non-strict, and the service reports no drive for this type - the API is up, it just
+        # had no candidate. Fall back so the download still lands somewhere.
         Write-Log "[resolver] drive-registry has no drive for '$MediaType' - using safe default $fallback" "WARN"
         if ($DryRun) { return $null }
         return $fallback

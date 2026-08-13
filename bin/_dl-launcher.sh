@@ -6,12 +6,9 @@
 #
 #   export PATH="$PATH:/path/to/dl-scripts/bin"
 #
-# Every launcher speaks one argument style: kebab-case double-dash flags, translated here
-# into the PowerShell parameters the scripts actually declare. There used to be a second
-# "passthrough" style for dlgame/dlmovie/dltv/dlanime that forwarded -PascalCase flags
-# verbatim, which meant `--dry-run` worked on dlrom and failed everywhere else. Native
-# flags are still accepted so older invocations keep working, but they are no longer the
-# documented way in.
+# Every launcher speaks one argument style: kebab-case double-dash flags, translated here into
+# the PowerShell parameters the scripts declare. Native -PascalCase flags are still accepted so
+# older invocations keep working, but they are not the documented way in.
 #
 # Each launcher sets, before sourcing:
 #
@@ -28,9 +25,8 @@ if [ ! -f "$PS_SCRIPT" ]; then
     exit 1
 fi
 
-# PowerShell 7. On an immutable OS like SteamOS there is no package to install, so a
-# tarball extracted into $HOME is the normal case; check PATH first so a system-wide
-# install still wins. DL_PWSH pins a specific interpreter when several are present.
+# PowerShell 7. On an immutable OS like SteamOS a tarball in $HOME is the normal case; check
+# PATH first so a system-wide install still wins. DL_PWSH pins one when several are present.
 PWSH="${DL_PWSH:-}"
 [ -n "$PWSH" ] || PWSH=$(command -v pwsh 2>/dev/null || true)
 if [ -z "$PWSH" ]; then
@@ -56,9 +52,8 @@ dl_lookup() {
     return 1
 }
 
-# Native PowerShell flags that consume the word after them. Without this list that word
-# looks like a bare argument, which is how `dlmovie Name -MaxResults 5` used to end up
-# treating 5 as the destination.
+# Native PowerShell flags that consume the word after them. Without this list that word looks
+# like a bare argument, and `dlmovie Name -MaxResults 5` treats 5 as the destination.
 dl_raw_takes_value() {
     case $1 in
         -Destination|-QbitHost|-MaxResults|-Filter|-Platform|-Region|-Sort|-VitaBuild| \
@@ -68,9 +63,9 @@ dl_raw_takes_value() {
     return 1
 }
 
-# Translate in place: consume from the front of "$@", append the result to the back, and
-# stop at a sentinel marking where the original list ended. Every value stays in a real
-# positional parameter, so a title with spaces or quotes needs no escaping and no eval.
+# Consume from the front of "$@", append to the back, stop at a sentinel marking where the
+# original list ended. Every value stays a real positional parameter, so a title with spaces
+# or quotes needs no escaping and no eval.
 dl_sentinel='--dl-args-end--'
 dl_pos_n=0
 set -- "$@" "$dl_sentinel"
@@ -114,9 +109,9 @@ while [ "$1" != "$dl_sentinel" ]; do
         *)
             dl_pos_n=$((dl_pos_n + 1))
 
-            # dlanime only: the optional second bare word selects series or movie, and
-            # anything else there is the destination instead. Consuming a type undoes the
-            # increment, so a destination after it still lands in the second slot.
+            # dlanime only: the optional second bare word selects series or movie, anything
+            # else there is the destination. Consuming a type undoes the increment, so a
+            # destination after it still lands in the second slot.
             if [ "${DL_ANIME_TYPE:-0}" = 1 ] && [ "$dl_pos_n" = 2 ]; then
                 case $dl_arg in
                     series) set -- "$@" -isAnimeSeries yes; dl_pos_n=1; continue ;;

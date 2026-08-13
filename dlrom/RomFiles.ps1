@@ -1,13 +1,11 @@
-# Local-file side of things: spotting and extracting archives, finding the ROM inside one,
-# cleaning up filenames so Steam launch commands don't choke, and filing the ROM into its
-# console folder.
+# Local-file side: spotting and extracting archives, finding the ROM inside one, cleaning up
+# filenames so Steam launch commands don't choke, and filing the ROM into its console folder.
 #
 # Extension and signature tables come from Constants.ps1; there is exactly one of each.
 
-# 7-Zip is what extracts .7z and .rar - the two formats The Repo publishes most often - so
-# a miss here is not cosmetic: the download succeeds and the install then fails.
-# SteamOS ships 7z in /usr/bin, so on Linux PATH is the whole story; Windows also has to
-# look in Program Files because the installer does not add itself to PATH.
+# 7-Zip extracts .7z and .rar, the two formats The Repo publishes most often, so a miss here
+# is not cosmetic: the download succeeds and the install then fails. On Linux PATH is the
+# whole story; Windows also has to look in Program Files, since the installer skips PATH.
 function Find-7zip {
     $names = if (Test-DlWindows) { @('7z.exe') } else { @('7z', '7za', '7zz') }
     foreach ($name in $names) {
@@ -23,9 +21,8 @@ function Find-7zip {
     return $null
 }
 
-# Read the leading bytes of a file as an uppercase hex string. One reader for both the
-# archive test and the type sniffer, which used to open the file two different ways and
-# compare against two different signature tables.
+# Leading bytes as an uppercase hex string. One reader for both the archive test and the
+# type sniffer, so they cannot disagree.
 function Get-FileHeaderHex {
     param([string]$Path, [int]$Length = 8)
     try {
@@ -52,17 +49,15 @@ function Get-ArchiveSignatureType {
     return ''
 }
 
-# True only when the file really begins with an archive signature. This drives the
-# extract-or-file-directly decision, so it must never guess from the extension: a ROM
-# named .zip that isn't one has to be filed, not handed to 7-Zip.
+# Drives the extract-or-file-directly decision, so it must never guess from the extension:
+# a ROM named .zip that isn't one has to be filed, not handed to 7-Zip.
 function Test-IsArchive {
     param([string]$Path)
     return [bool](Get-ArchiveSignatureType -Path $Path)
 }
 
-# Which extractor a file needs. Signature first; the extension is only a fallback for a
-# truncated read, and 'zip' is the last resort because Expand-Archive can handle it
-# without 7-Zip installed.
+# Signature first; the extension is only a fallback for a truncated read. 'zip' is the last
+# resort because Expand-Archive handles it without 7-Zip.
 function Get-ArchiveType {
     param([string]$FilePath)
     $bySignature = Get-ArchiveSignatureType -Path $FilePath
@@ -99,9 +94,8 @@ function Expand-RomArchive {
     throw "7z.exe is required to extract .$archType archives but was not found."
 }
 
-# Biggest ROM-shaped file in the extract is almost always the ROM. Searches the same
-# extension table used to recognise a raw download, so anything dlrom will file directly
-# is also something it can find inside an archive.
+# Biggest ROM-shaped file in the extract is almost always the ROM. Same extension table as
+# raw-download recognition, so anything dlrom files directly it can also find in an archive.
 function Find-RomFile {
     param([string]$ExtractedDir)
     return Get-ChildItem -Path $ExtractedDir -Recurse -File |
@@ -110,10 +104,10 @@ function Find-RomFile {
         Select-Object -First 1
 }
 
-# Drop characters that are illegal in Windows filenames or that break Steam launches.
-# SRM wraps each launch path in a single-quoted PowerShell string, so an apostrophe or
-# backtick in the name (e.g. "Klonoa 2 - Lunatea's Veil") ends the string early and the
-# game won't boot. Every install funnels through here, so disk and shortcut stay in sync.
+# Drop characters illegal in Windows filenames or that break Steam launches. SRM wraps each
+# launch path in a single-quoted PowerShell string, so an apostrophe in the name ("Klonoa 2 -
+# Lunatea's Veil") ends the string early and the game won't boot. Every install goes through
+# here, so disk and shortcut stay in sync.
 function Get-SafeRomName {
     param([string]$Name)
     $strip = @("'", '`', '<', '>', ':', '"', '/', '\', '|', '?', '*')
@@ -178,14 +172,12 @@ function Move-RomToDest {
 
 # Turn one completed download into an installed ROM.
 #
-# The web pipeline and the PS2 torrent fallback both had their own copy of this decision
-# tree and had already drifted - only one of them warned about an unrecognised raw
-# extension, and only one pruned its extraction directory. It is the same problem in both
-# cases (a file arrived; put a ROM in the console folder), so it is one function.
+# The ONE path from downloaded file to filed ROM, shared by the web pipeline and the PS2
+# torrent fallback - they had drifting copies of this decision tree, and it is the same
+# problem in both cases.
 #
-# Returns the installed path, or $null when nothing could be installed. Callers decide
-# what that means for their job. Cleanup always runs, except under -NoExtract where
-# keeping the downloaded archive is the whole point.
+# Returns the installed path, or $null when nothing could be installed. Cleanup always runs,
+# except under -NoExtract where keeping the archive is the whole point.
 function Install-RomFromDownload {
     param(
         [Parameter(Mandatory)][string]$DownloadedPath,

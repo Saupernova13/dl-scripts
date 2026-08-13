@@ -1,21 +1,14 @@
-# Ps2Serial.ps1
-# Resolves an installed PS2 game's title to its serial via PCSX2's GameIndex.yaml
-# (the same source dlps2tex uses), so dlrom can tell an agent exactly which version
-# to fetch matching HD textures for. Also prints dlrom's end-of-run result block
-# plus the ready-to-run dlps2tex handoff.
-#
-# Reuses ConvertTo-Ps2Norm / Get-Ps2Significant from Ps2TorrentIndex.ps1 and
-# Resolve-RegionRequest / Get-CfgValue from Common.ps1 (all dot-sourced into the same
-# scope). Region codes and the demo marker come from Constants.ps1.
+# Resolves an installed PS2 game's title to its serial via PCSX2's GameIndex.yaml - the same
+# source dlps2tex uses - so dlrom can name the exact version to fetch HD textures for. Also
+# prints the end-of-run result block and the ready-to-run dlps2tex handoff.
 
 function Get-Ps2GameIndexPath {
     param($Cfg)
     $cfgPath = [string](Get-CfgValue 'ps2GameIndexPath' '' -Cfg $Cfg)
     if ($cfgPath -and (Test-Path $cfgPath)) { return $cfgPath }
-    # PCSX2's data root differs by platform: EmuDeck's Emulators tree on Windows,
-    # ~/.config/PCSX2 on Linux. The Linux AppImage keeps GameIndex.yaml inside the image
-    # and only populates resources/ once it has run, so a miss here is normal and the
-    # caller falls back to matching on title instead of serial.
+    # PCSX2's data root differs by platform. The Linux AppImage keeps GameIndex.yaml inside
+    # the image and only populates resources/ once it has run, so a miss here is normal - the
+    # caller then matches on title instead of serial.
     $candidates = if (Test-DlWindows) {
         @(Join-DlPath (Get-DlRoamingRoot) 'EmuDeck' 'Emulators' 'PCSX2-Qt' 'resources' 'GameIndex.yaml')
     } else {
@@ -78,9 +71,8 @@ function Import-Ps2GameDb {
     return $arr
 }
 
-# Resolve a downloaded title (+ its region) to the matching GameIndex serial.
-# Mirrors dlps2tex's scoring so the two agree, and strongly prefers the serial of
-# the region actually downloaded. Returns the entry object or $null.
+# Resolve a downloaded title and region to the matching GameIndex serial. Mirrors dlps2tex's
+# scoring so the two agree, and strongly prefers the region actually downloaded.
 function Resolve-Ps2Serial {
     param([string]$Title, [string]$Region, $Cfg)
 
@@ -134,11 +126,9 @@ function Resolve-Ps2Serial {
     return $best
 }
 
-# Print the end-of-run result and, for PS2, the dlps2tex handoff for the SAME
-# version. The machine-readable [HANDOFF] line lets an agent grab the exact
-# texture command without parsing prose.
 # Prints the human-readable result block and returns the machine-readable [HANDOFF] line
-# (empty for non-PS2), so a caller can stash it on the job for --status/--json to serve.
+# (empty for non-PS2), so a caller can stash it on the job for --status/--json to serve. The
+# handoff names the SAME version that was just downloaded, so the textures line up.
 function Write-DlromResult {
     param([string]$Title, [string]$Platform, [string]$Region = '', [string]$Source = '',
           [string]$InstalledPath = '', [string]$Build = '', $Cfg)
