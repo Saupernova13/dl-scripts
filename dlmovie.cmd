@@ -1,6 +1,6 @@
 @echo off
 REM Quick movie downloader from YTS.bz
-REM Usage: dlmovie "Movie Name" [destination] [--dry-run] [--interactive] [--max-results N]
+REM Usage: dlmovie "Movie Name" [destination] [--quality Q] [--dry-run] [--interactive] [--max-results N]
 REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.ps1)
 
 setlocal EnableDelayedExpansion
@@ -31,11 +31,13 @@ echo Usage: dlmovie "Movie Name" [destination] [flags]
 echo Example: dlmovie "Inception"
 echo Example: dlmovie "Inception" "E:\Movies"
 echo Example: dlmovie "Inception" --dry-run
+echo Example: dlmovie "Inception" --quality 2160p
 echo.
 echo   --dry-run        show the matches and the torrent it would add, download nothing
 echo   --list           same as --dry-run
 echo   --interactive    pick from the results instead of auto-selecting
 echo   --max-results N  cap how many results are considered
+echo   --quality Q      preferred resolution: 720p, 1080p (default), 2160p/4k, 3D
 echo   --dest PATH      override the destination
 echo.
 echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.ps1

@@ -150,6 +150,7 @@ Kebab-case is the documented style across every command:
 | `--interactive` | Pick from the results instead of auto-selecting |
 | `--dest PATH` | Override the destination |
 | `--max-results N` | Cap how many results are considered |
+| `--quality Q` | Preferred resolution, `dlmovie` only (default `1080p`; `720p`, `2160p`/`4k`, `3D`) |
 | `--help` | Usage for that command |
 
 PowerShell's native `-DryRun`, `-Interactive`, `-MaxResults N` and friends still work,

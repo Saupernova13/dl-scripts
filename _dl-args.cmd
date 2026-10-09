@@ -56,6 +56,7 @@ if /i "%DL_ARG%"=="--destination"   goto :dl_val_dest
 if /i "%DL_ARG%"=="--qbit-host"     goto :dl_val_qbit
 if /i "%DL_ARG%"=="--max-results"   goto :dl_val_max
 if /i "%DL_ARG%"=="--filter"        goto :dl_val_filter
+if /i "%DL_ARG%"=="--quality"       goto :dl_val_quality
 
 REM --- kebab switches ---
 if /i "%DL_ARG%"=="--dry-run"       goto :dl_sw_dryrun
@@ -119,6 +120,11 @@ set "DL_FLAGS=%DL_FLAGS% -Filter "%~1""
 shift
 goto :dl_args_loop
 
+:dl_val_quality
+set "DL_FLAGS=%DL_FLAGS% -Quality "%~1""
+shift
+goto :dl_args_loop
+
 REM A native flag that takes a value must swallow the word after it, or that word would be
 REM mistaken for a positional - which is how "dlmovie Name -MaxResults 5" used to end up
 REM treating 5 as the destination.
@@ -129,6 +135,7 @@ if /i "%DL_ARG%"=="-Destination" set "DL_TAKES_VALUE=1"
 if /i "%DL_ARG%"=="-QbitHost"    set "DL_TAKES_VALUE=1"
 if /i "%DL_ARG%"=="-MaxResults"  set "DL_TAKES_VALUE=1"
 if /i "%DL_ARG%"=="-Filter"      set "DL_TAKES_VALUE=1"
+if /i "%DL_ARG%"=="-Quality"     set "DL_TAKES_VALUE=1"
 if not defined DL_TAKES_VALUE goto :dl_args_loop
 set "DL_FLAGS=%DL_FLAGS% "%~1""
 shift
@@ -149,7 +156,7 @@ goto :dl_args_loop
 :dl_unknown_flag
 echo [ERROR] Unknown option: %DL_ARG% >&2
 echo Valid options: --dry-run --list --interactive --trusted-only --dest PATH >&2
-echo                --max-results N --filter TEXT --qbit-host URL --help >&2
+echo                --max-results N --filter TEXT --quality Q --qbit-host URL --help >&2
 set "DL_ARGS_ERROR=1"
 goto :eof
 

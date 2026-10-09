@@ -57,7 +57,7 @@ dl_lookup() {
 dl_raw_takes_value() {
     case $1 in
         -Destination|-QbitHost|-MaxResults|-Filter|-Platform|-Region|-Sort|-VitaBuild| \
-        -TorrentPick|-Status|-JobFile|-Dest)
+        -TorrentPick|-Status|-JobFile|-Dest|-Quality)
             return 0 ;;
     esac
     return 1

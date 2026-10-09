@@ -15,6 +15,10 @@ param(
     [Parameter(Mandatory=$false)]
     [int]$MaxResults = 0,
 
+    # Preferred resolution: 720p, 1080p, 2160p (or 4k), 3D. Empty = config default (1080p).
+    [Parameter(Mandatory=$false)]
+    [string]$Quality = "",
+
     [Parameter(Mandatory=$false)]
     [switch]$Interactive = $false,
 
@@ -29,12 +33,20 @@ $cfg = Initialize-DlConfig -Section "movie" -Defaults ([PSCustomObject]@{
     qbitHost         = "http://localhost:8080"
     destination      = (Join-DlPath (Get-DlHomeDir) "Movies")
     maxResults       = 15
+    quality          = "1080p"
     useDriveMetadata = $true
 })
 
 # Apply config defaults if not specified
 if (-not $QbitHost)    { $QbitHost    = $cfg.qbitHost }
 if ($MaxResults -eq 0) { $MaxResults  = $cfg.maxResults }
+if (-not $Quality)     { $Quality     = if ($cfg.quality) { $cfg.quality } else { "1080p" } }
+
+# Normalise to the labels YTS uses: "720" -> "720p", "4k"/"uhd" -> "2160p", "3d" -> "3D".
+$Quality = $Quality.Trim().ToLower()
+if ($Quality -in @("4k", "uhd"))   { $Quality = "2160p" }
+elseif ($Quality -match '^\d+$')   { $Quality = "${Quality}p" }
+elseif ($Quality -eq "3d")         { $Quality = "3D" }
 
 # Resolve destination:
 #   -Destination CLI > drive-meta resolver (when useDriveMetadata) > cfg.destination > $HOME fallback.
@@ -99,6 +111,7 @@ $trackers = @(
 Write-Log "Starting movie download process" "INFO"
 Write-Log "Search query: $Query" "INFO"
 Write-Log "Destination: $Destination" "INFO"
+Write-Log "Preferred quality: $Quality" "INFO"
 
 $encodedQuery = [System.Web.HttpUtility]::UrlEncode($Query)
 $apiUrl = "https://yts.bz/api/v2/list_movies.json?query_term=$encodedQuery" + "$amp" + "sort_by=seeds" + "$amp" + "limit=50"
@@ -131,17 +144,17 @@ try {
         }
 
         $bestTorrent = $movie.torrents |
-            Where-Object { $_.quality -eq "1080p" -and $_.type -match "bluray|blu.ray" } |
+            Where-Object { $_.quality -eq $Quality -and $_.type -match "bluray|blu.ray" } |
             Sort-Object seeds -Descending |
             Select-Object -First 1
-        $qualityLabel = if ($bestTorrent) { "1080p BluRay" } else { $null }
+        $qualityLabel = if ($bestTorrent) { "$Quality BluRay" } else { $null }
 
         if (-not $bestTorrent) {
             $bestTorrent = $movie.torrents |
-                Where-Object { $_.quality -eq "1080p" } |
+                Where-Object { $_.quality -eq $Quality } |
                 Sort-Object seeds -Descending |
                 Select-Object -First 1
-            $qualityLabel = if ($bestTorrent) { "1080p $($bestTorrent.type)" } else { $null }
+            $qualityLabel = if ($bestTorrent) { "$Quality $($bestTorrent.type)" } else { $null }
         }
 
         if (-not $bestTorrent) {
@@ -149,6 +162,9 @@ try {
                 Sort-Object seeds -Descending |
                 Select-Object -First 1
             $qualityLabel = if ($bestTorrent) { "$($bestTorrent.quality) $($bestTorrent.type)" } else { $null }
+            if ($bestTorrent) {
+                Write-Log "No $Quality torrent for '$($movie.title)' - falling back to $qualityLabel" "WARN"
+            }
         }
 
         if (-not $bestTorrent) { continue }
