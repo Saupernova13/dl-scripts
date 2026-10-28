@@ -23,19 +23,18 @@ function Write-Log {
         'DEBUG'   { 'Gray' }
         default   { 'White' }
     }
-    # A worker's stdout is a redirected file with no color support, and -ForegroundColor
-    # against a non-console host throws. Plain text also keeps the log greppable.
+    # A worker's stdout is a redirected file, and -ForegroundColor against a non-console host
+    # throws. Plain text also keeps the log greppable.
     if ($script:LOG_HEADLESS) { Write-Host "[$ts] [$Level] $Message" }
     else { Write-Host "[$ts] [$Level] $Message" -ForegroundColor $color }
 }
 
 # Live progress for the download wait loops.
 #
-# On a terminal this is a carriage-return overwrite, so one line animates in place. That
-# is exactly wrong for a worker, whose stdout is a file: \r writes no newline, so a
-# multi-GB download would land as one endless line and swamp the log tail. Headless runs
-# therefore push the numbers into the job state (which is what --status reads) and emit a
-# plain line only every $PROGRESS_LOG_EVERY_SEC, leaving a readable trail behind.
+# On a terminal this is a carriage-return overwrite, so one line animates in place - exactly
+# wrong for a worker, whose stdout is a file, where \r writes no newline and a multi-GB
+# download lands as one endless line. Headless runs push the numbers into the job state
+# instead and emit a plain line only every $PROGRESS_LOG_EVERY_SEC.
 $script:PROGRESS_LOG_EVERY_SEC = 30
 $script:JOB_PROGRESS_CB        = $null   # set by the worker: { param($Percent, $Line) ... }
 $script:_lastProgressLog       = $null
@@ -43,8 +42,8 @@ $script:_lastProgressLog       = $null
 function Write-ProgressLine {
     param([string]$Line, [int]$Percent = -1)
 
-    # The job is fed regardless of who is rendering: a --wait run in one terminal should
-    # still answer `dlrom --status` truthfully from another.
+    # Fed regardless of who is rendering, so a --wait run in one terminal still answers
+    # `dlrom --status` truthfully from another.
     if ($script:JOB_PROGRESS_CB) {
         try { & $script:JOB_PROGRESS_CB $Percent $Line } catch { }
     }
@@ -77,8 +76,8 @@ function Format-Bytes {
     return "$B B"
 }
 
-# A fixed-width [####    ] bar. Every download backend and `--status` renders one, so the
-# width and fill character are decided here instead of by whichever loop drew it last.
+# A fixed-width [####    ] bar. Every backend and `--status` renders one, so width and fill
+# are decided here rather than by whichever loop drew it last.
 function Format-ProgressBar {
     param(
         [int]$Percent,

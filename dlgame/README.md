@@ -5,7 +5,7 @@ Authenticates with [appnetica.com](https://appnetica.com), searches for a PC gam
 ## Command
 
 ```
-dlgame "Game Name" [destination]
+dlgame "Game Name" [destination] [flags]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
@@ -16,9 +16,24 @@ Add the repo root to `PATH` and call it from any terminal. Quotes are required w
 dlgame "Spider-Man"
 dlgame "Resident Evil" "E:\Games"
 dlgame "Elden Ring" --interactive
+dlgame "Spider-Man" --dry-run
 ```
 
 The second positional argument is an optional destination override. Omit it to use the path from config.
+
+## Flags
+
+| Flag | What it does |
+|------|--------------|
+| `--dry-run` | Search, print the match and the link it would fetch, then stop. Nothing is downloaded or sent to qBittorrent. |
+| `--list` | Same as `--dry-run`. |
+| `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
+| `--max-results N` | Cap how many results are considered. |
+| `--dest PATH` | Override the destination. |
+| `--qbit-host URL` | Override the qBittorrent WebUI URL. |
+| `--help` | Print usage and exit. |
+
+The same spellings work on every `dl*` command. An unknown `--flag` is rejected rather than ignored, so a typo cannot turn a preview into a download.
 
 ## PowerShell Parameters
 

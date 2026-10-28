@@ -1,14 +1,13 @@
 # Tests for the deferred Steam sync queue (SteamDeferred.ps1) and the Game Mode gate in
 # Sync-RomToSteam.
 #
-# The property that matters is not "does it queue" but "is the queue never lost": a Steam
-# Deck user starts a download mid-game, and the only thing standing between them and a
-# silently-dropped shortcut is that this queue survives a refused drain, a failed sync and
-# a second ROM landing in the same folder. Each of those is pinned below.
+# The property that matters is not "does it queue" but "is the queue never lost": it has to
+# survive a refused drain, a failed sync, and a second ROM landing in the same folder. Each is
+# pinned below.
 #
-# Test-DlGameMode is redefined per-context rather than mocked, because the production code
-# calls it as a plain function from a dot-sourced file - Pester's Mock cannot intercept
-# that without the module scaffolding this repo deliberately does not have.
+# Test-DlGameMode is redefined per-context rather than mocked: the production code calls it as
+# a plain function from a dot-sourced file, which Pester's Mock cannot intercept without module
+# scaffolding this repo does not have.
 #
 # Only the filesystem is touched (a temp dir); nothing here runs Steam ROM Manager.
 

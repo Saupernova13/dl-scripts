@@ -1,11 +1,11 @@
 # Background job lifecycle for dlrom: persist a job to JSON, spawn a detached worker,
 # and read job state back for --status / --list.
 #
-# This mirrors ps2tex's JobService (ps2-texture-grabber\Services\JobService.cs) on purpose:
-# both tools are driven by the same agents, so a job id means the same thing in both.
+# Mirrors ps2tex's JobService on purpose: both tools are driven by the same agents, so a job
+# id means the same thing in both.
 #
-# Job files live in %LOCALAPPDATA%\dlScripts\jobs\rom\<id>.json, with the worker's
-# console output beside them in <id>.log.
+# Job files live in %LOCALAPPDATA%\dlScripts\jobs\rom\<id>.json, the worker's console output
+# beside them in <id>.log.
 
 function Get-DlromJobsDir {
     return (Get-DlScriptsDataDir 'jobs\rom')
@@ -21,9 +21,9 @@ function Get-DlromJobLogPath {
     return (Join-Path (Get-DlromJobsDir) "$JobId.log")
 }
 
-# Write the job state to disk. Progress writes happen every couple of seconds, so a
-# transient sharing violation (a --status reader holding the file) must never kill the
-# download: callers treat a failed save as a lost progress tick, nothing more.
+# Progress writes happen every couple of seconds, so a transient sharing violation (a
+# --status reader holding the file) must never kill the download - a failed save is a lost
+# progress tick, nothing more.
 function Save-DlromJob {
     param([PSCustomObject]$Job, [switch]$Strict)
     $path = Get-DlromJobPath $Job.id
@@ -114,34 +114,24 @@ function New-DlromJob {
 
 # Launch the worker as a detached process and return immediately.
 #
-# Two details here are load-bearing, both learned from ps2tex:
-#   * CreateNoWindow + UseShellExecute=$false, via raw ProcessStartInfo. PowerShell's
-#     Start-Process cannot express CreateNoWindow, so it flashes a console window.
-#   * The worker must NOT inherit this console's handles, or dlrom.cmd stays attached to
-#     the background worker and the caller's terminal hangs -- which is the whole bug we
-#     are fixing. cmd.exe's own `> log 2>&1` gives the worker a file for stdout/stderr,
-#     and redirecting stdin here (then closing it) means a stray prompt hits EOF and
-#     fails fast instead of blocking forever on a console nobody is watching.
+# Two load-bearing details on Windows:
+#   * CreateNoWindow + UseShellExecute=$false, via raw ProcessStartInfo. Start-Process
+#     cannot express CreateNoWindow, so it flashes a console window.
+#   * The worker must NOT inherit this console's handles, or dlrom.cmd stays attached to it
+#     and the caller's terminal hangs. cmd's own `> log 2>&1` gives the worker a file for
+#     stdout/stderr, and redirecting stdin (then closing it) makes a stray prompt hit EOF
+#     rather than block forever.
 #
-# Linux needs the same two properties for a different reason: the common caller there is
-# `ssh deck 'dlrom ...'`, and when that session closes sshd SIGHUPs the whole process
-# group. The redirections keep sshd from waiting on a pipe the worker still holds --
-# without them the ssh command hangs until the download finishes, which is the same bug
-# wearing a different hat.
+# Linux needs both for a different reason: the common caller is `ssh deck 'dlrom ...'`, and
+# sshd waits on any pipe the worker still holds.
 #
-# Escaping the dying session needs more than setsid, though. SteamOS ships
-# /etc/systemd/logind.conf.d/killuserprocesses.conf with KillUserProcesses=True, and
-# logind kills the session's whole CGROUP when the session ends -- a new session id does
-# not take a process out of that cgroup. A setsid'd worker is therefore killed the instant
-# `ssh deck 'dlrom ...'` returns: the job file is written, the log file is created empty,
-# and the job sits at "pending" forever with nothing to show why.
+# Escaping the dying session needs more than setsid. SteamOS sets KillUserProcesses=True, and
+# logind kills the session's whole CGROUP on teardown - a new session id does not leave that
+# cgroup, so a setsid'd worker dies the instant the ssh command returns, leaving the job at
+# "pending" with an empty log. systemd-run --user puts it under user@1000.service instead,
+# which teardown does not touch; setsid stays as the fallback where that is unavailable.
 #
-# systemd-run --user puts the worker under the user manager (user@1000.service) instead,
-# which is a different cgroup that session teardown does not touch. Where it is
-# unavailable, setsid is still the best available answer, so it stays as the fallback.
-#
-# For a worker to outlive the *last* session as well (ssh in, spawn, ssh out, nothing else
-# logged in), the user manager itself has to persist: `loginctl enable-linger <user>`.
+# To outlive the *last* session too, the user manager must persist: `loginctl enable-linger`.
 function Start-DlromJob {
     param([PSCustomObject]$Job)
 
@@ -165,13 +155,10 @@ function Start-DlromJob {
         $psi.RedirectStandardInput = $true
     } else {
         # Prefer a transient user-manager unit; fall back to setsid where systemd-run or a
-        # user bus is missing (a non-systemd distro, or a container). The check is a real
-        # runtime probe rather than an OS guess, because either can be absent anywhere.
-        #
-        # --collect reaps the unit once it exits, so a finished download leaves no failed
-        # unit behind for the user to clean up. The pid comes from `systemctl show`: the
-        # worker is a grandchild of systemd, not of this shell, so $! would be the
-        # systemd-run client that exits immediately.
+        # user bus is missing. A runtime probe, not an OS guess - either can be absent
+        # anywhere. --collect reaps the unit on exit so no failed unit is left behind, and
+        # the pid comes from `systemctl show` because the worker is a grandchild of systemd,
+        # not of this shell, so $! would be the systemd-run client that exits immediately.
         $q = { param($s) "'" + ($s -replace "'", "'\''") + "'" }
         $unit    = "dlrom-$($Job.id)"
         $qLog    = & $q $Job.logFile
@@ -208,10 +195,9 @@ function Start-DlromJob {
         if ($workerPid) { return $workerPid }
     }
 
-    # Deliberately NOT saved: the worker owns the job file from the moment it starts, and it
-    # records its own $PID. Writing here would race it -- the worker reads the file, we
-    # overwrite with our stale in-memory copy, and the worker's next update (built from what
-    # it read) puts pid back to 0, permanently blinding the orphan check.
+    # Deliberately NOT saved: the worker owns the job file from the moment it starts and
+    # records its own $PID. Writing here would race it, and the worker's next update would
+    # put pid back to 0, permanently blinding the orphan check.
     $Job.pid = $proc.Id   # in-memory only, for the caller to display
     return $proc.Id
 }

@@ -1,0 +1,49 @@
+#!/bin/sh
+# Desktop Mode autostart body: apply the Steam syncs that Game Mode postponed.
+#
+# A script rather than a one-liner in the .desktop Exec key because Exec is not a shell
+# command line: the spec reserves ';', '>', '|', '&', '*' and quotes, and a launcher may
+# reject or mangle a value containing them with no error anywhere. A bare path sidesteps it.
+#
+#   dlrom-autostart-sync            normal run (sleeps first, as at login)
+#   dlrom-autostart-sync --now      skip the startup delay, for testing by hand
+
+set -eu
+
+# Resolve through symlinks before locating siblings: the launcher is normally reached
+# through ~/.local/bin, where the repo does not live.
+SELF=$0
+while [ -L "$SELF" ]; do
+    link=$(readlink -- "$SELF")
+    case $link in
+        /*) SELF=$link ;;
+        *)  SELF=$(dirname -- "$SELF")/$link ;;
+    esac
+done
+BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+DLROM="$BIN_DIR/dlrom"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/dlScripts"
+QUEUE_DIR="$DATA_DIR/srm-queue"
+LOG="$DATA_DIR/sync-steam.log"
+
+mkdir -p "$DATA_DIR"
+
+# At Desktop Mode login Steam is still starting, and draining into a half-started Steam loses
+# categories - the same failure the queue exists to avoid, at the other end of the session.
+if [ "${1:-}" != "--now" ]; then
+    sleep 20
+fi
+
+# Only act on work that was actually postponed. `dlrom --sync-steam` treats an empty queue as
+# "run a full SRM pass anyway" - right when a person types it, wrong here, where it would make
+# merely opening the desktop cost a Steam restart every time.
+if ! ls "$QUEUE_DIR"/*.json >/dev/null 2>&1; then
+    echo "[$(date '+%H:%M:%S')] [INFO] Autostart: nothing queued - no Steam sync needed." >> "$LOG"
+    exit 0
+fi
+
+# --no-game-mode: the drain otherwise hands the Deck back to Game Mode, on the reasoning that
+# a sync is asked for so you can go and play. That inverts when the trigger IS the user
+# arriving on the desktop - switching sessions there tears it down under them, which is
+# indistinguishable from a spontaneous reboot. Running --sync-steam by hand is unaffected.
+exec "$DLROM" --sync-steam --no-game-mode >> "$LOG" 2>&1

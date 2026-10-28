@@ -1,24 +1,19 @@
 # `dlrom --clean`: reclaim the disk dlrom itself is holding.
 #
-# Four kinds of leftover accumulate, and none of them are the user's problem to find:
+# Four kinds of leftover accumulate:
 #
-#   * working files      a download that died mid-transfer leaves its part-file in tempDir,
-#                        and a crash between extract and file leaves an extracted\ tree
-#   * partial downloads  aria2/AB control files (.aria2, .part, ...) in the folder dlrom
-#                        watches, left when a transfer was abandoned
-#   * caches             ps2-gamedb.json (rebuilt from GameIndex.yaml on demand) and
-#                        cf_session.json (dead: the Cloudflare bypass died with cdromance)
-#   * job records        the JSON + log history under jobs\rom, pruned by age at runtime
-#                        but never on demand
+#   * working files      part-files in tempDir, and extracted\ trees from a crash between
+#                        extract and file
+#   * partial downloads  aria2/AB control files in the folder dlrom watches
+#   * caches             ps2-gamedb.json (rebuilt on demand) and the dead cf_session.json
+#   * job records        JSON + log history under jobs\rom, pruned by age but never on demand
 #
 # THE RULE THIS FILE EXISTS TO ENFORCE: never delete anything a live job is using. A running
-# worker's part-file looks exactly like an abandoned one, and removing it corrupts a transfer
-# that is minutes from finishing. Every target is filtered through Get-DlromProtectedNames
-# before it is offered for deletion, and job records for active jobs are never touched.
+# worker's part-file looks exactly like an abandoned one, so every target is filtered through
+# Get-DlromProtectedNames first, and active jobs' records are never touched.
 #
-# dlrom also deliberately does NOT clean the download manager's own folder (Motrix's, and
-# anything else in ~\Downloads). Those are the user's and the manager's, not dlrom's; the
-# only exception is the AB watch folder, which dlrom told AB to use.
+# dlrom also does NOT clean the download manager's own folder - that belongs to the user and
+# the manager. The one exception is the AB watch folder, which dlrom told AB to use.
 
 # Kind labels, used for grouping in the report and in --json output.
 $script:CLEAN_KIND_WORK   = 'work'
@@ -26,16 +21,15 @@ $script:CLEAN_KIND_PART   = 'partial'
 $script:CLEAN_KIND_CACHE  = 'cache'
 $script:CLEAN_KIND_JOB    = 'job'
 
-# Files that live in tempDir but are NOT interrupted downloads. The sweep of that directory
-# would otherwise offer them a second time under the wrong label, and the duplicate delete
-# then fails because the first one already removed the file.
+# Files in tempDir that are NOT interrupted downloads. The directory sweep would otherwise
+# offer them a second time under the wrong label, and the duplicate delete then fails.
 $script:CLEAN_TEMP_CLAIMED = @('cf_session.json')
 
-# Names an active job is (or will be) writing. A download in flight is indistinguishable
-# from an abandoned one by looking at the file, so identity has to come from the job.
+# Names an active job is (or will be) writing. A download in flight is indistinguishable from
+# an abandoned one by looking at the file, so identity has to come from the job.
 #
-# Both spellings are returned: the raw link label is what a download manager saves under,
-# and the sanitised one is what RomPipeline writes into tempDir.
+# Both spellings: the raw link label is what a download manager saves under, the sanitised one
+# is what RomPipeline writes into tempDir.
 function Get-DlromProtectedNames {
     $names = @{}
     foreach ($file in @(Get-ChildItem -LiteralPath (Get-DlromJobsDir) -Filter '*.json' -ErrorAction SilentlyContinue)) {

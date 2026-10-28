@@ -1,9 +1,5 @@
 # Small helpers with no dependencies beyond Constants.ps1, shared by every other module.
-#
-# Each of these replaces a pattern that was open-coded in several places. Get-CfgValue in
-# particular existed once as a function (closing over Add-ROM's $cfg) and about eight more
-# times as an inline PSObject.Properties.Name test, so the modules that could not reach the
-# function grew their own copy of the idea.
+# Each replaces a pattern that was open-coded in several places.
 
 # The [rom] config section, published once by Add-ROM.ps1 so the modules that only ever
 # read one or two keys do not each need it threaded through their signatures.
@@ -20,12 +16,9 @@ function Set-DlromConfig {
 # missing one, and $cfg.missingKey is $null rather than an error. Every read goes through
 # here so "absent" and "explicitly blank" both fall back to the documented default.
 #
-# -Cfg is last and optional on purpose: it keeps the common positional form
-# `Get-CfgValue 'steamSync' $true` reading naturally against the ambient section, while
-# Invoke-Ps2TorrentFallback - which is handed a section explicitly - can still say
-# `Get-CfgValue 'qbitHost' '' -Cfg $Cfg`. Before this there were two spellings of the
-# same idea: a closure in Add-ROM.ps1 and an inline PSObject.Properties test in every
-# module that could not reach it.
+# -Cfg is last and optional so the positional form `Get-CfgValue 'steamSync' $true` reads
+# naturally against the ambient section, while a caller handed a section explicitly can still
+# say `Get-CfgValue 'qbitHost' '' -Cfg $Cfg`.
 function Get-CfgValue {
     param(
         [Parameter(Mandatory, Position = 0)][string]$Name,
@@ -80,9 +73,8 @@ function Remove-EmptyDirectory {
 }
 
 # --- Region helpers -----------------------------------------------------------
-# Shared by the web scraper (region from a URL slug) and the torrent matcher (region from
-# a Redump parenthetical). The two read different formats, but the vocabulary they produce
-# and the preference order they rank by are the same, so both live here.
+# Shared by the web scraper (region from a URL slug) and the torrent matcher (region from a
+# Redump parenthetical). Different input formats, one vocabulary and one preference order.
 
 # A --region argument's synonym -> canonical code ('' when unrecognised).
 function Resolve-RegionRequest {
@@ -113,10 +105,9 @@ function Test-Phrase {
 }
 
 # --- PS Vita build helpers ----------------------------------------------------
-# The Repo ships most Vita games as both a console (NoNpDrm) and an emulator (Vita3K)
-# build. These turn the two inputs that mention them - a --vita argument and a download
-# filename - into the one vocabulary defined in Constants.ps1, so the link filter, the
-# extract-or-keep decision and the result block cannot disagree about what was downloaded.
+# Turn the two inputs that mention a Vita build - a --vita argument and a download filename -
+# into the one vocabulary from Constants.ps1, so the link filter, the extract-or-keep decision
+# and the result block cannot disagree about what was downloaded.
 
 # A --vita argument's synonym -> canonical build ('' when unrecognised or absent).
 function Resolve-VitaBuild {
@@ -129,9 +120,8 @@ function Resolve-VitaBuild {
     return ''
 }
 
-# Which build a download filename advertises, or '' when it says nothing - an unmarked
-# release, or one of the bonus files a page sometimes carries alongside the game
-# ("AR Cards.zip"). Never guesses: an unmarked file is unmarked.
+# Which build a filename advertises, or '' when it says nothing - an unmarked release, or a
+# bonus file a page carries alongside the game. Never guesses: an unmarked file is unmarked.
 function Get-VitaLinkBuild {
     param([string]$Label)
     $l = [string]$Label
@@ -140,9 +130,9 @@ function Get-VitaLinkBuild {
     return ''
 }
 
-# The build a whole set of chosen links represents, or '' when they are unmarked or
-# disagree. Callers act on this rather than on what was requested, because link selection
-# is allowed to fall back to the other build when the requested one does not exist.
+# The build a whole set of chosen links represents, or '' when unmarked or in disagreement.
+# Callers act on this rather than on what was requested, because link selection is allowed to
+# fall back to the other build.
 function Get-VitaLinksBuild {
     param([object[]]$Links)
     $builds = @($Links | ForEach-Object { Get-VitaLinkBuild $_.Label } |

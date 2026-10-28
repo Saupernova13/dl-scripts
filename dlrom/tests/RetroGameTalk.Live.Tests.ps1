@@ -1,18 +1,13 @@
 # Live integration tests: these hit retrogametalk.com for real. Nothing is mocked.
 #
-# They exist because the mocked suite can only prove dlrom is self-consistent - it cannot
-# notice that the site renamed a category, changed a filter value, or started demanding a
-# login. That is exactly the class of breakage that killed the cdromance integration, so
-# these assert against the live catalogue: every platform slug, the filter values, and a
-# real, byte-serving download URL for a known ROM on each major console.
-#
-# Excluded from a normal run because they are slow and depend on the network:
-#     Invoke-Pester .\dlrom\tests -Tag Live      # run them
-#     Invoke-Pester .\dlrom\tests                # skip them (default)
+# The mocked suite can only prove dlrom is self-consistent - it cannot notice that the site
+# renamed a category, changed a filter value, or started demanding a login. That is the class
+# of breakage that killed the cdromance integration, so these assert against the live
+# catalogue. Slow and network-dependent, hence tagged 'Live' and skipped by default.
 
-# Pester expands -ForEach while DISCOVERING tests, which happens before BeforeAll runs.
-# The platform tables therefore have to be loaded here as well, or the per-platform cases
-# below silently expand to nothing and the suite reports success having tested no platform.
+# Pester expands -ForEach during DISCOVERY, before BeforeAll runs, so the platform tables have
+# to be loaded here too - otherwise the cases below expand to nothing and the suite reports
+# success having tested no platform.
 BeforeDiscovery {
     . (Join-Path (Split-Path -Parent $PSScriptRoot) 'Constants.ps1')
     . (Join-Path (Split-Path -Parent $PSScriptRoot) 'Common.ps1')
@@ -56,8 +51,8 @@ Describe 'The Repo is reachable and open' -Tag Live {
     }
 
     It 'still gates only in the browser, never server-side' {
-        # If this ever fails, The Repo has started enforcing membership for real and dlrom
-        # needs a login again. That is the single assumption the whole no-auth design rests on.
+        # Failing here means The Repo now enforces membership server-side and dlrom needs a
+        # login - the single assumption the whole no-auth design rests on.
         $html = Get-LiveHtml 'https://retrogametalk.com/repo/'
         $html | Should -Match 'xf_online'   # the client-side check is still the gate
         $html | Should -Not -Match '<form[^>]*action="/login/login"'
@@ -139,10 +134,9 @@ Describe 'Known ROMs resolve to real download URLs' -Tag Live {
 
 Describe 'PS Vita still publishes both builds' -Tag Live {
 
-    # The whole Vita path rests on one property of the live catalogue: a game page carries
-    # a [Vita3K] file and a [NoNpDrm] file, and the marker in the filename is the only thing
-    # that distinguishes them. If the uploaders adopt a new marker, or drop one of the two
-    # builds, this is where it shows up - the mocked suite is pinned to labels captured today.
+    # The whole Vita path rests on one live property: a game page carries both a [Vita3K] and a
+    # [NoNpDrm] file, told apart only by the marker. A new marker, or a dropped build, shows up
+    # here - the mocked suite is pinned to labels captured today.
 
     BeforeAll {
         $script:VitaPage = 'https://retrogametalk.com/repo/vita/danganronpa-v3-killing-harmony-usa/'
@@ -184,10 +178,9 @@ Describe 'PS Vita still publishes both builds' -Tag Live {
 Describe 'A resolved link actually serves the ROM' -Tag Live {
 
     It 'returns file bytes with no cookies at all' {
-        # This is the assumption Motrix/AB/aria2c depend on: the ?key= in the query string
-        # is the whole authorisation, so a downloader with an empty cookie jar can fetch it.
-        # @() matters: PowerShell unwraps a one-element array, and .Count on a bare
-        # PSCustomObject is $null under PowerShell 5.1.
+        # What Motrix/AB/aria2c depend on: the ?key= is the whole authorisation, so a
+        # downloader with an empty cookie jar can fetch it. @() matters - PowerShell unwraps a
+        # one-element array, and .Count on a bare PSCustomObject is $null under 5.1.
         $links = @(Resolve-LiveLinks -Query 'Tetris' -Alias 'gb')
         $links.Count | Should -BeGreaterThan 0
 

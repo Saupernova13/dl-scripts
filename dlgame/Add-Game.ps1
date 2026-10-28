@@ -1,8 +1,6 @@
-# dlgame.ps1
-# Search appnetica.com for games and add torrents to qBittorrent
-# Usage: .\dlgame.ps1 -Query "Spider-Man"
-# Configuration sourced from %LOCALAPPDATA%\dlScripts\config.json
-# Credentials sourced from .settings file in the same directory as this script
+# Search appnetica.com for games and add torrents to qBittorrent.
+# Config from %LOCALAPPDATA%\dlScripts\config.json; credentials from .settings alongside this
+# script.
 
 param(
     [Parameter(Mandatory=$true)]
@@ -244,9 +242,8 @@ try {
 
             Write-Log "Found game: $title (type: $publicationType)" "DEBUG"
 
-            # Filter: Only include Steam folder versions, exclude repacks
-            # Repack sources: dec, fit, dodi, etc.
-            # Steam sources: steam_folder, steam_rip, etc. (we want these)
+            # Steam folder versions only (steam_folder, steam_rip); repacks (dec, fit, dodi)
+            # are excluded.
             if ($publicationType -and $publicationType -match "^(dec|fit|dodi|elamigos|r\.g\.|repack)") {
                 Write-Log "  Skipping repack: $publicationType" "DEBUG"
                 $skippedRepacks++
@@ -323,8 +320,7 @@ try {
     $gamePage = Invoke-WebRequest -Uri $selectedGame.URL -WebSession $session -UseBasicParsing
     $gameHtml = $gamePage.Content
 
-    # Look for download link in format: /file/{fileId}?game={gameId}
-    # This is typically in a href or onclick handler
+    # Download link format: /file/{fileId}?game={gameId}, in a href or onclick handler.
     Write-Log "Searching for download link pattern..." "DEBUG"
 
     # Try multiple patterns

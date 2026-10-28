@@ -4,9 +4,8 @@
 
 set -eu
 
-# Resolve this script through any symlinks before locating its siblings. Putting a
-# launcher on PATH means linking it into ~/.local/bin, and `dirname $0` would then name
-# the link's directory - where neither the shared body nor the repo lives.
+# Resolve symlinks first: a launcher linked into ~/.local/bin would otherwise resolve
+# `dirname $0` to the link's directory, where neither the shared body nor the repo lives.
 DL_SELF=$0
 while [ -L "$DL_SELF" ]; do
     dl_link=$(readlink -- "$DL_SELF")
@@ -18,19 +17,39 @@ done
 DL_BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$DL_SELF")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$DL_BIN_DIR/.." && pwd)
 PS_SCRIPT="$REPO_ROOT/dlrom/Add-ROM.ps1"
-DL_ARG_STYLE=kebab
-VALUE_FLAGS="--platform --region --sort --dest --vita --status --torrent-pick"
+DL_POSITIONALS="Query"
+DL_FLAG_VALUES="--platform:Platform --region:Region --sort:Sort --dest:Destination --destination:Destination --vita:VitaBuild --status:Status --torrent-pick:TorrentPick --max-results:MaxResults --job-file:JobFile"
+DL_FLAG_SWITCHES="--wait:Wait --interactive:Interactive --no-extract:NoExtract --no-steam:NoSteam --no-torrent:NoTorrent --no-game-mode:NoGameMode --json:Json --verbose:Verbose --quiet:Quiet --clean:Clean --clear:Clean --all:All --jobs:ListJobs --sync-steam:SyncSteam --steam-queue:SteamQueue"
+
+# --dry-run means "look everything up, change nothing" either way, but which parameter that is
+# depends on the mode: a search resolves links, --clean lists what would go. Same for --list,
+# which means the job history only when it stands alone.
+case ${1:-} in
+    --clean|--clear)
+        DL_FLAG_SWITCHES="$DL_FLAG_SWITCHES --dry-run:DryRun --dryrun:DryRun --list:ListJobs"
+        ;;
+    --list|--jobs|--status|--sync-steam|--steam-queue)
+        DL_FLAG_SWITCHES="$DL_FLAG_SWITCHES --dry-run:DryRun --dryrun:DryRun --list:ListJobs"
+        ;;
+    *)
+        DL_FLAG_SWITCHES="$DL_FLAG_SWITCHES --dry-run:LinksOnly --dryrun:LinksOnly --links-only:LinksOnly --list:LinksOnly"
+        ;;
+esac
 
 dl_usage() {
     cat <<'USAGE'
 Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
-             [--sort SORT] [--dest PATH] [--wait] [--interactive] [--no-extract]
-             [--no-steam] [--links-only] [--json] [--verbose] [--quiet]
+             [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive]
+             [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
        dlrom --status <jobId> [--json]
-       dlrom --list [--json]
+       dlrom --jobs [--json]
        dlrom --clean [--all] [--dry-run] [--json]
        dlrom --sync-steam [--json]     run any Steam syncs deferred by Game Mode
        dlrom --steam-queue [--json]    show what is waiting, without running it
+
+  --dry-run  resolve and print the download links, then stop without downloading.
+             --list and --links-only do the same thing.
+  --jobs     list recent jobs (--list with no game name does the same)
 
 Downloads run in the BACKGROUND by default and return a job id immediately.
 

@@ -89,7 +89,7 @@ This matters when the caller is a script, a scheduled task, or an AI agent.
 | Script | Returns when | Check progress with |
 |--------|--------------|---------------------|
 | `dlanime`, `dlgame`, `dlmovie`, `dltv` | the torrent is queued in qBittorrent | qBittorrent's web page on `:8075` |
-| `dlrom` | the links are found and a worker has started | `dlrom --status <jobId>` or `dlrom --list` |
+| `dlrom` | the links are found and a worker has started | `dlrom --status <jobId>` or `dlrom --jobs` |
 
 The four torrent scripts hand the file to qBittorrent. qBittorrent owns the
 download and is where you watch it. They need no job system of their own.
@@ -115,17 +115,46 @@ Use `--wait` on `dlrom` only when you want to sit and watch a progress bar.
 Without it, they choose the best match and continue. A run with no console
 attached never stops to ask a question. It fails with an explanation instead.
 
-## Testing without downloading
+## Seeing what is available, without downloading
 
-Add `-DryRun` to see what a script would do:
+`--dry-run` means the same thing everywhere: run the search, show what was found and
+what would be taken, then stop. Nothing is queued, spawned or written.
 
 ```
-dlmovie "Inception" -DryRun
-dltv "Breaking Bad" -DryRun
-dlanime "Frieren" series -DryRun
-dlgame "Spider-Man" -DryRun
-dlrom "Crash Bandicoot" --links-only     # dlrom's version of the same idea
+dlmovie "Inception" --dry-run
+dltv "Breaking Bad" --dry-run
+dlanime "Frieren" series --dry-run
+dlgame "Spider-Man" --dry-run
+dlrom "Crash Bandicoot" --platform ps1 --dry-run
 ```
+
+`--list` is accepted as a synonym, so neither word can start a download by accident.
+Two places where it is worth knowing the difference:
+
+- `dlanime --list` prints the top 100 results with every magnet, where `--dry-run`
+  prints the shortlist and the one torrent it would add.
+- `dlrom --list` with no game name is the job history, the same as `--jobs`. Give it a
+  game name and it previews that search like everywhere else.
+
+A mistyped flag is rejected rather than ignored. `dlrom "Game" --dry-runn` used to slip
+through and start a real multi-GB download; now it stops and tells you the option is
+not recognised.
+
+### Flags
+
+Kebab-case is the documented style across every command:
+
+| Flag | Effect |
+|---|---|
+| `--dry-run`, `--list` | Search and report; download nothing |
+| `--interactive` | Pick from the results instead of auto-selecting |
+| `--dest PATH` | Override the destination |
+| `--max-results N` | Cap how many results are considered |
+| `--quality Q` | Preferred resolution, `dlmovie` only (default `1080p`; `720p`, `2160p`/`4k`, `3D`) |
+| `--help` | Usage for that command |
+
+PowerShell's native `-DryRun`, `-Interactive`, `-MaxResults N` and friends still work,
+so existing scripts and habits keep running.
 
 ## Requirements
 
@@ -352,7 +381,7 @@ dl-scripts/
     ├── Constants.ps1        ← shared values (job names, extensions, regions, Vita markers)
     ├── Common.ps1           ← shared helpers (config, timestamps, region and Vita ranking)
     ├── Add-ROM.ps1          ← orchestrator + worker entry point (-JobFile)
-    ├── Jobs.ps1             ← job state, starting the worker, --status and --list
+    ├── Jobs.ps1             ← job state, starting the worker, --status and --jobs
     ├── Clean.ps1            ← --clean, and the rule that protects live jobs
     ├── RomPipeline.ps1      ← download, unpack, install, Steam (worker and --wait share it)
     ├── Logging.ps1          ← Write-Log, progress lines, formatters
@@ -385,16 +414,27 @@ each a single file.
 
 ### What each wrapper accepts
 
-- `dlanime.cmd`: `"Query" [series|movie] [destination] [--list]`. `--list` can go
-  anywhere.
+Positional arguments differ because the commands genuinely differ. Flags do not:
+`_dl-args.cmd` translates kebab-case into PowerShell parameter names for `dlanime`,
+`dlgame`, `dlmovie` and `dltv`, and `dlrom.cmd` matches the same spellings in its own
+loop. Add a flag in one place and add it in both, or they drift.
+
+- `dlanime.cmd`: `"Query" [series|movie] [destination]`. The type is optional, so a
+  second bare word that is not `series` or `movie` is read as the destination.
 - `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd`: `"Query" [destination]`.
-- **All four also forward flags.** Any argument starting with `-` goes straight to
-  the `.ps1`. Examples: `-DryRun`, `-Interactive`, `-MaxResults 20`,
-  `-TrustedOnly`. The first bare word after the query is still the destination.
 - `dlrom.cmd`: `"Query"` plus the options listed in
   [`dlrom/README.md`](dlrom/#flags). It also takes the subcommands `--status`,
-  `--list` and `--clean`. Those are matched before `%1` is treated as a game name,
-  because none of them carry one.
+  `--jobs`/`--list` and `--clean`. Those are matched before `%1` is treated as a game
+  name, because none of them carry one.
+- **Native PowerShell flags still pass through.** Anything starting with a single `-`
+  goes straight to the `.ps1`, and the parser knows which of them take a value, so
+  `dlmovie "Name" -MaxResults 5` no longer reads `5` as the destination.
+- **An unknown `--flag` is an error, not a no-op.** Silently ignoring one meant a typo
+  in `--dry-run` turned a preview into a real download.
+
+`_dl-args.cmd` sets `DL_POS1..3` and `DL_FLAGS` in the caller's environment, plus
+`DL_ARGS_ERROR` and `DL_ARGS_HELP` for the caller to act on. It has no `setlocal` of its
+own, which is what lets it write into the launcher that called it.
 
 ## How dlrom's background worker starts
 

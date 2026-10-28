@@ -5,7 +5,7 @@ Searches the [YTS](https://yts.bz) API for movies and automatically adds the bes
 ## Command
 
 ```
-dlmovie "Movie Name" [destination]
+dlmovie "Movie Name" [destination] [flags]
 ```
 
 Add the repo root to `PATH` and call it from any terminal. Quotes are required when the name contains spaces.
@@ -15,16 +15,33 @@ Add the repo root to `PATH` and call it from any terminal. Quotes are required w
 ```
 dlmovie "Inception"
 dlmovie "Inception" "E:\Movies"
+dlmovie "Inception" --dry-run
+dlmovie "Inception" --quality 2160p
 ```
 
 The second positional argument is an optional destination override. Omit it to use the path from config.
+
+## Flags
+
+| Flag | What it does |
+|------|--------------|
+| `--dry-run` | Search, print the matches and the torrent it would add, then stop. Nothing is sent to qBittorrent. |
+| `--list` | Same as `--dry-run`. |
+| `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
+| `--max-results N` | Cap how many results are considered. |
+| `--quality Q` | Preferred resolution: `720p`, `1080p` (default), `2160p` (or `4k`), `3D`. |
+| `--dest PATH` | Override the destination. |
+| `--qbit-host URL` | Override the qBittorrent WebUI URL. |
+| `--help` | Print usage and exit. |
+
+The same spellings work on every `dl*` command. An unknown `--flag` is rejected rather than ignored, so a typo cannot turn a preview into a download.
 
 ## PowerShell Parameters
 
 The CMD wrapper passes these through. You can also call the script directly for full control:
 
 ```powershell
-.\dlmovie\Add-Movie.ps1 -Query "Inception" [-Destination "path"] [-QbitHost "url"] [-MaxResults N] [-Interactive]
+.\dlmovie\Add-Movie.ps1 -Query "Inception" [-Destination "path"] [-QbitHost "url"] [-MaxResults N] [-Quality Q] [-Interactive]
 ```
 
 | Parameter | Required | Default | Description |
@@ -33,6 +50,7 @@ The CMD wrapper passes these through. You can also call the script directly for 
 | `-Destination` | No | from config | Download save path |
 | `-QbitHost` | No | from config | qBittorrent WebUI URL |
 | `-MaxResults` | No | from config | Max results to consider |
+| `-Quality` | No | from config (`1080p`) | Preferred resolution |
 | `-Interactive` | No | `$false` | Manually pick from the results list |
 
 ## Configuration
@@ -46,7 +64,8 @@ Default location: `C:\Users\<you>\AppData\Local\dlScripts\config.json`
   "movie": {
     "qbitHost": "http://localhost:8080",
     "destination": "C:\\Users\\you\\Movies",
-    "maxResults": 15
+    "maxResults": 15,
+    "quality": "1080p"
   }
 }
 ```
@@ -63,11 +82,11 @@ All values can be overridden at runtime with the corresponding command-line para
 
 ## Quality Priority
 
-Torrents are selected in this order of preference:
+Torrents are selected in this order of preference, where *Q* is `--quality` (default `1080p`):
 
-1. **1080p BluRay** � highest quality
-2. **1080p Web** � streaming source
-3. **Best available** � fallback to the highest-seeded torrent of any quality
+1. **Q BluRay**
+2. **Q Web** - any other source at that resolution
+3. **Best available** - the highest-seeded torrent of any quality, logged as a warning
 
 ## Example Output
 

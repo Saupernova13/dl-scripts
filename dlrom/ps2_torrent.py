@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-# Build a compact index of a multi-file PS2 archive .torrent for dlrom's torrent
-# fallback. Pure standard library (no pip deps). Emits JSON with the v1 infohash,
-# the torrent name, its trackers, and every file's (index, path, length).
+# Build a compact index of a multi-file PS2 archive .torrent for dlrom's torrent fallback.
+# Standard library only. Emits JSON with the v1 infohash, the torrent name, its trackers, and
+# every file's (index, path, length).
 #
-# The file order in a v1 torrent's info dict is exactly the file-index order that
-# qBittorrent uses for per-file priority, so the emitted "index" can drive a
-# selective (single-file) download.
+# File order in a v1 torrent's info dict is exactly the file-index order qBittorrent uses for
+# per-file priority, so the emitted "index" can drive a selective single-file download.
 #
 # Usage:
 #   python ps2_torrent.py build --torrent <path.torrent> --out <index.json> [--force]
@@ -86,9 +85,8 @@ def _trackers(top):
 
 def build(torrent_path, out_path, force):
     src_stat = os.stat(torrent_path)
-    # Identity is the torrent's byte size only: it is stable across machines and
-    # keeps no absolute/home path in the committed index. A 20+ MB archive torrent
-    # will not collide on size in practice.
+    # Byte size only: stable across machines, and it keeps no absolute path in the committed
+    # index. A 20+ MB archive torrent will not collide on size in practice.
     src_meta = {"name": os.path.basename(torrent_path), "size": src_stat.st_size}
 
     if not force and os.path.exists(out_path):

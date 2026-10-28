@@ -1,18 +1,15 @@
 # Deferred Steam sync queue.
 #
-# On a Steam Deck in Game Mode, Steam *is* the session: it cannot be shut down, and Steam
-# ROM Manager's own CLI warns that adding while Steam runs applies the shortcuts but
-# silently drops categories. Worse, SRM writes files Steam holds open and rewrites on exit,
-# so a mid-session add can be discarded outright.
+# In Game Mode Steam *is* the session: it cannot be shut down, SRM's CLI warns that adding
+# while Steam runs silently drops categories, and SRM writes files Steam holds open and
+# rewrites on exit - so a mid-session add can be discarded outright.
 #
-# Downloading has none of those problems. So the download half runs whenever it is asked
-# and only the Steam-facing half is gated: in Game Mode it is written here as a pending
-# entry instead of run, and drained the next time a Desktop Mode session starts.
+# Downloading has none of those problems, so only the Steam-facing half is gated: in Game Mode
+# it is written here as a pending entry and drained when a Desktop Mode session starts.
 #
-# The queue is a directory of small JSON files rather than one index, for the same reason
-# the job store is: the worker writing an entry and the drain reading them are different
-# processes, often minutes or hours apart, and a directory has no file to corrupt when two
-# of them land at once.
+# A directory of small JSON files rather than one index, for the same reason the job store is:
+# writer and drain are different processes, often hours apart, and a directory has no file to
+# corrupt when two land at once.
 
 function Get-SrmQueueDir {
     return (Get-DlScriptsDataDir 'srm-queue')
@@ -98,14 +95,11 @@ function Save-SrmDeferredJob {
 # Run every queued sync. Called by `dlrom --sync-steam`, which the Desktop Mode autostart
 # entry invokes; safe to run by hand at any time.
 #
-# Refuses to run in Game Mode rather than queueing again - draining there would produce
-# exactly the broken add the queue exists to avoid, and would empty the queue while doing it.
-# A library sync is something the user asks for so they can go and play, and on the Deck that
-# means Game Mode. Desktop Mode is only ever a means to an end here - SRM cannot write the
-# library from inside the gamescope session - so once the sync lands, hand the device back in
-# the state it normally lives in rather than parked on a desktop nobody asked for.
-#
-# Last thing before returning: the switch tears the desktop session down with it.
+# Never drains in Game Mode: that would produce exactly the broken add the queue exists to
+# avoid, and empty the queue doing it. Desktop Mode is only ever a means to an end here, so
+# the device is handed back to Game Mode once the sync lands rather than parked on a desktop
+# nobody asked for - and that is the last thing before returning, because the switch tears
+# the desktop session down with it.
 function Complete-SrmSyncSession {
     if (-not [bool](Get-CfgValue 'srmReturnToGameMode' $true)) { return }
     if (Test-DlGameMode) { return }   # already there
@@ -121,9 +115,9 @@ function Invoke-SrmDeferredDrain {
 
     $pending = @(Get-SrmDeferredJobs)
 
-    # Asked to sync from Game Mode, borrow the desktop and give it back rather than refusing:
-    # "sync my library" should just happen. Invoke-SrmInDesktopSession restores Game Mode on
-    # every path, so control returns here already back where it started.
+    # Asked to sync from Game Mode: borrow the desktop and give it back rather than refusing.
+    # Invoke-SrmInDesktopSession restores Game Mode on every path, so control returns here
+    # already back where it started.
     if (Test-DlGameMode) {
         if ([bool](Get-CfgValue 'srmAutoSwitchSession' $true)) {
             $romsBase = [string](Get-CfgValue 'romsBase' $script:DEFAULT_ROMS_BASE)
@@ -145,12 +139,10 @@ function Invoke-SrmDeferredDrain {
         return 0
     }
 
-    # An empty queue does not mean there is nothing to do. The queue only ever holds syncs
-    # that Game Mode postponed, but the request behind --sync-steam is almost always just
-    # "add the new ROMs to Steam" - and answering "No queued Steam syncs" to that is a dead
-    # end that leaves the caller believing remote Steam sync is impossible. Run a full SRM
-    # pass instead: 'srm add' walks every enabled parser, so it picks up anything new
-    # regardless of how it got onto the disk.
+    # An empty queue does not mean there is nothing to do. The queue only holds syncs Game
+    # Mode postponed, but --sync-steam almost always means "add the new ROMs to Steam", and
+    # answering "No queued Steam syncs" is a dead end. 'srm add' walks every enabled parser,
+    # so a full pass picks up anything new however it got onto the disk.
     if ($pending.Count -eq 0) {
         Write-Log "Nothing queued - running a full Steam ROM Manager pass instead." 'INFO'
         $romsBase = [string](Get-CfgValue 'romsBase' $script:DEFAULT_ROMS_BASE)

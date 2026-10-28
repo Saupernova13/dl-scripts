@@ -1,35 +1,22 @@
-# Scraping for RetroGameTalk's ROM repository ("The Repo", https://retrogametalk.com/repo/),
-# which is where the old cdromance.org catalogue now lives: platform tables, search, and
-# per-game link discovery.
+# Scraping for RetroGameTalk's ROM repository ("The Repo", https://retrogametalk.com/repo/):
+# platform tables, search, and per-game link discovery.
 #
-# The Repo is a WordPress catalogue mounted under a XenForo forum. Two things follow:
+# The Repo is a WordPress catalogue under a XenForo forum. Two things follow:
 #
-#   * There is no sign-in step. The Repo advertises a members-only gate, but it is
-#     enforced entirely in the browser:
-#         if (!document.cookie.includes("xf_online=1")) { location.replace("/login/") }
-#     A script never executes that, so browsing, searching and link reveal all work
-#     anonymously. Every request below is therefore unauthenticated, and the module keeps
-#     one cookie jar purely so the WordPress nonce and the PHPSESSID that minted it stay
-#     consistent across the two calls that need each other.
-#   * The download table is not in the page. "Show Links" POSTs the post id plus a
-#     per-page WordPress nonce to the cdr-main ajax endpoint, which returns the table as
-#     an HTML fragment. Both values are scraped from the game page (see Get-RgtDownloadLinks).
+#   * There is no sign-in step. The members-only gate is browser-side JavaScript, which a
+#     script never executes, so every request below is unauthenticated. The one cookie jar
+#     exists only to keep a WordPress nonce and the PHPSESSID that minted it consistent.
+#   * The download table is not in the page. "Show Links" POSTs the post id plus a per-page
+#     nonce to the cdr-main ajax endpoint, which returns the table as an HTML fragment.
 #
-# Unlike cdromance, retrogametalk.com serves plain HTTP clients without a Cloudflare
-# challenge, so there is no FlareSolverr/curl_cffi machinery here - Invoke-WebRequest is
-# enough. The resolved dl*.retrogametalk.com URLs are unauthenticated too (the ?key= in
-# the query string is the authorisation), which is what lets Motrix/AB/aria2c fetch them
-# with no cookie of their own.
-#
-# Dot-sourced by Add-ROM.ps1. Write-Log and ConvertTo-ResponseText come from Logging.ps1;
-# the base URL, HTTP headers, download extensions and release-marker tables from
-# Constants.ps1; region ranking and phrase matching from Common.ps1.
+# retrogametalk.com serves plain HTTP clients with no Cloudflare challenge, so
+# Invoke-WebRequest is enough. The resolved dl*.retrogametalk.com URLs carry their own
+# authorisation in the ?key=, which is what lets Motrix/AB/aria2c fetch them cookieless.
 
 Add-Type -AssemblyName System.Web
 
-# Platform alias -> Repo category slug used in the search URL and game page paths.
-# These are NOT the old cdromance slugs: gba/snes/gbc/gb/dreamcast/saturn/wii all
-# changed when the catalogue moved, and 3DS did not come across at all.
+# Platform alias -> Repo category slug, used in the search URL and game page paths.
+# There is no 3DS entry: The Repo does not carry 3DS games.
 $PLATFORM_SLUGS = @{
     "ps2"          = "ps2-iso"
     "ps1"          = "psx-iso"
@@ -84,11 +71,9 @@ $PLATFORM_SLUGS = @{
 
 # Category slug -> value the search form's `platform=` filter expects.
 #
-# For most platforms the two are the same string, but not all: the search dropdown and the
-# permalink structure were clearly built at different times. Passing the category slug for
-# one of these returns ZERO results rather than an error - a silent "not found" - so any
-# slug that disagrees must be listed here. Verified against the <select id="platform">
-# options on /repo/?s=<anything>; re-check this table if a platform starts finding nothing.
+# Usually the same string, but not always. Passing the category slug for one of the odd ones
+# returns ZERO results rather than an error, so every slug that disagrees must be listed here.
+# Source of truth is <select id="platform"> on /repo/?s=<anything>.
 $PLATFORM_SEARCH_VALUES = @{
     "gamecube"            = "gcn-iso"
     "gameboy-color-roms"  = "gbc_roms"
@@ -96,8 +81,8 @@ $PLATFORM_SEARCH_VALUES = @{
     "psx2psp-eboots"      = "psx2psp"
 }
 
-# Category slug -> on-disk console folder. Names follow EmuDeck's roms layout so the
-# emulators and Steam ROM Manager parsers both find the files (PS1 -> 'psx', etc.).
+# Category slug -> on-disk console folder. Names follow EmuDeck's roms layout so emulators
+# and SRM parsers both find the files (PS1 -> 'psx', etc.).
 $PLATFORM_FOLDERS = @{
     "ps2-iso"             = "ps2"
     "psx-iso"             = "psx"
@@ -146,11 +131,8 @@ $RGT_NON_GAME_SLUGS = @('page', 'category', 'tag', 'author', 'guides', 'news', '
 
 # --- Session ------------------------------------------------------------------
 #
-# One cookie jar for the whole run. There is no login: The Repo serves anonymous HTTP
-# clients in full (its members-only gate is browser-side JavaScript, which a script never
-# executes). The jar exists because the link-reveal call has to present the WordPress
-# nonce scraped from the game page, and WordPress ties that nonce to the PHPSESSID it was
-# minted under - reusing one session keeps the two consistent.
+# One cookie jar for the whole run, and not for a login - there isn't one. WordPress ties the
+# reveal nonce to the PHPSESSID it was minted under, so one session keeps the two consistent.
 
 $script:RGT_SESSION = $null    # Microsoft.PowerShell.Commands.WebRequestSession
 
@@ -162,14 +144,14 @@ function Get-RgtSession {
     return $script:RGT_SESSION
 }
 
-# Drop the cookie jar so the next request starts a fresh PHPSESSID. Used when a reveal is
-# rejected, which is the symptom of a nonce whose session the server has already expired.
+# Drop the cookie jar so the next request starts a fresh PHPSESSID. A rejected reveal is the
+# symptom of a nonce whose session the server has already expired.
 function Reset-RgtSession {
     $script:RGT_SESSION = $null
 }
 
-# Unified Repo request. Returns an object with a .Content property (page HTML), so callers
-# use it exactly like Invoke-WebRequest; the session handling underneath is invisible.
+# Returns an object with a .Content property, so callers use it exactly like
+# Invoke-WebRequest; the session handling underneath is invisible.
 function Invoke-RgtWeb {
     param(
         [Parameter(Mandatory = $true)][string]$Uri,
@@ -215,8 +197,8 @@ function Get-LinksFromHtml {
     $links = @()
     $archExts = $script:DOWNLOAD_EXTS_RX
 
-    # Primary: anchor text is the filename. The Repo's reveal table is built this way -
-    # the href is a download.php?file=... redirector, so only the text carries the name.
+    # Primary: anchor text is the filename. The href is a download.php?file=... redirector,
+    # so only the text carries the name.
     $pattern = '<a[\s\S]+?href="([^"]+)"[^>]*>\s*([^<]+\.' + '(' + $archExts + '))\s*</a>'
     $found = [regex]::Matches($Html, $pattern, [System.Text.RegularExpressions.RegexOptions]::IgnoreCase)
     foreach ($m in $found) {
@@ -272,8 +254,8 @@ function Invoke-RgtSearch {
     try {
         $resp = Invoke-RgtWeb -Uri $url -Referer "$RGT_REPO_URL/"
     } catch {
-        # Re-throw so the orchestrator can classify the cause and decide whether to try
-        # the PS2 torrent fallback instead of exiting here.
+        # Re-throw so the orchestrator can classify the cause and decide whether to try the
+        # PS2 torrent fallback.
         throw "retrogametalk search request failed: $($_.Exception.Message)"
     }
 
@@ -282,9 +264,9 @@ function Invoke-RgtSearch {
 
 # Parse a Repo listing (search results, platform index) into title/url/platform rows.
 #
-# The Repo renders one <div class="game-container"> per game, holding a .cover-link anchor
-# and a .game-title div. Splitting on the container keeps the two associated even when a
-# card grows extra markup between them, which a single flat regex could not promise.
+# One <div class="game-container"> per game, holding a .cover-link anchor and a .game-title
+# div. Splitting on the container keeps the two associated even when a card grows extra
+# markup between them, which a single flat regex could not promise.
 function Get-RgtResultsFromHtml {
     param([string]$Html)
 
@@ -344,10 +326,9 @@ function Get-RgtResultsFromHtml {
 
 # Open a game page and dig out its actual download links.
 #
-# The "Show Links" button POSTs { post_id, _wpnonce } to the cdr-main ajax endpoint with
-# X-Requested-With: XMLHttpRequest, and gets the download table back as an HTML fragment.
-# All three inputs are per-page, so they are scraped fresh from the game page every time -
-# the nonce in particular is short-lived and tied to the current session.
+# "Show Links" POSTs { post_id, _wpnonce } to the cdr-main ajax endpoint with
+# X-Requested-With: XMLHttpRequest and gets the table back as an HTML fragment. All three
+# inputs are per-page and scraped fresh every time; the nonce is short-lived.
 function Get-RgtDownloadLinks {
     param([string]$GamePageUrl)
 
@@ -363,9 +344,8 @@ function Get-RgtDownloadLinks {
     $links = @(Invoke-RgtLinkReveal -Html $html -GamePageUrl $GamePageUrl)
     if ($links.Count -gt 0) { return $links }
 
-    # An expired session shows up here: the page renders, but the nonce it carries was
-    # minted under a PHPSESSID the server has since dropped, so the reveal is refused.
-    # Start a fresh session and retry once with a newly minted nonce before giving up.
+    # An expired session shows up here: the page renders, but its nonce was minted under a
+    # PHPSESSID the server has dropped. Start a fresh session and retry once.
     Write-Log "Link reveal came back empty; retrying once with a fresh session." 'DEBUG'
     Reset-RgtSession
     try {
@@ -429,12 +409,10 @@ function Invoke-RgtLinkReveal {
 
 # Narrow a Vita game's links to the build that will actually run on the target.
 #
-# Returns just the requested build when the page carries it. When it does not - a fair few
-# older titles are console-only, and a handful are unmarked entirely - it hands back
-# everything it was given rather than nothing, because a build you have to convert still
-# beats no download at all. That fallback is safe because the caller re-reads the winning
-# link's own marker (Get-VitaLinksBuild) instead of trusting the request, so a NoNpDrm dump
-# returned here is never mistaken for a Vita3K one.
+# When the page has no such build - older titles are often console-only - it hands back
+# everything rather than nothing: a build you have to convert beats no download. That is safe
+# because the caller re-reads the winning link's own marker (Get-VitaLinksBuild) instead of
+# trusting the request.
 function Select-VitaLinks {
     param([object[]]$Links, [string]$Build)
 
@@ -452,21 +430,18 @@ function Select-VitaLinks {
     return @($Links)
 }
 
-# Narrow a list of candidate links down to what we actually want to grab:
-# choose the Vita build, skip demos, prefer English/USA, and keep one link per disc for
-# multi-disc sets.
+# Narrow candidate links to what we want: the Vita build, no demos, English/USA preferred,
+# one link per disc for multi-disc sets.
 #
-# -PlatformSlug is the Repo category the game came from; it only changes anything for Vita.
+# -PlatformSlug is the Repo category the game came from; it only matters for Vita.
 function Select-DownloadLinks {
     param([object[]]$Links, [string]$PlatformSlug = '', [string]$VitaBuild = '')
 
     if ($Links.Count -eq 0) { return @() }
 
-    # Phase 0: Vita - the console and emulator builds are separate downloads of the same
-    # game, so that choice has to be made before any later preference gets a say (both
-    # builds carry identical region and language markers, so the phases below cannot tell
-    # them apart and would just take whichever the page listed first). It also drops the
-    # unmarked extras some pages carry - manuals, "AR Cards.zip" - which nothing else rejects.
+    # Phase 0: Vita - both builds carry identical region and language markers, so the phases
+    # below cannot tell them apart and would take whichever the page listed first. Also drops
+    # the unmarked extras some pages carry (manuals, "AR Cards.zip") that nothing else rejects.
     $candidates = if ($PlatformSlug -eq $script:VITA_SLUG) {
         @(Select-VitaLinks -Links $Links -Build $VitaBuild)
     } else {
@@ -520,8 +495,7 @@ function Select-DownloadLinks {
     return @($working | Select-Object -First 1)
 }
 
-# Region codes for a Repo result, read from its slug/title (the region rides in the URL
-# slug, e.g. ...-fes-usa-2/ or ...-persona-3-europe/).
+# Region codes for a Repo result. The region rides in the URL slug, e.g. ...-fes-usa-2/.
 function Get-RgtRegions {
     param([string]$Url, [string]$Title)
     $s = (($Url + ' ' + $Title)).ToLower()
@@ -534,11 +508,10 @@ function Get-RgtRegions {
     return @($r | Select-Object -Unique)
 }
 
-# Pick the best Repo search result. Same spirit as the torrent matcher but a SOFT
-# preference: prefer a full query match, a base release over an edition/variant (FES,
-# Undub, ...) unless the query named it, non-hack over hack, and the requested region -
-# yet ALWAYS return something. An edition beats no game at all (the Repo often carries
-# only FES, not the base). Helpers come from Ps2TorrentIndex.ps1.
+# Pick the best Repo search result. Same spirit as the torrent matcher, but SOFT: prefer a
+# full query match, a base release over an edition unless the query named it, non-hack over
+# hack, and the requested region - yet ALWAYS return something. The Repo often carries only
+# FES and not the base, and an edition beats no game at all.
 function Select-RgtResult {
     param([object[]]$Results, [string]$Query, [string]$Region)
     if (-not $Results -or $Results.Count -eq 0) { return $null }
@@ -578,8 +551,8 @@ function Select-RgtResult {
     return $best.R
 }
 
-# Classify a Repo failure message into a short reason code plus human text, so the
-# orchestrator can report the real cause and decide whether to try the torrent fallback.
+# Reason code plus human text, so the orchestrator can report the real cause and decide
+# whether to try the torrent fallback.
 function Get-RgtFailureReason {
     param([string]$Message)
     $m = [string]$Message
