@@ -10,7 +10,7 @@ Runs on **Windows and Linux**, including the **Steam Deck**.
 | [dlanime](dlanime/) | Anime series and films | nyaa.si | qBittorrent |
 | [dlgame](dlgame/) | PC games | appnetica.com | qBittorrent |
 | [dlmovie](dlmovie/) | Movies | YTS | qBittorrent |
-| [dltv](dltv/) | TV shows | The Pirate Bay | qBittorrent |
+| [dltv](dltv/) | TV shows, incl. Asian drama | The Pirate Bay, KissKH | qBittorrent, or curl in a background job |
 | [dlrom](dlrom/) | Console ROMs | retrogametalk.com/repo | Motrix, AB, aria2c, curl, BITS, or PowerShell |
 
 `dlrom` does more than download. It unpacks the ROM, installs it into the right
@@ -89,13 +89,14 @@ This matters when the caller is a script, a scheduled task, or an AI agent.
 | Script | Returns when | Check progress with |
 |--------|--------------|---------------------|
 | `dlanime`, `dlgame`, `dlmovie`, `dltv` | the torrent is queued in qBittorrent | qBittorrent's web page on `:8075` |
+| `dltv` from KissKH | a worker has started and printed a Job ID | `dltv --status <jobId>` or `dltv --jobs` |
 | `dlrom` | the links are found and a worker has started | `dlrom --status <jobId>` or `dlrom --jobs` |
 
-The four torrent scripts hand the file to qBittorrent. qBittorrent owns the
-download and is where you watch it. They need no job system of their own.
+The torrent scripts hand the file to qBittorrent. qBittorrent owns the download
+and is where you watch it. They need no job system of their own.
 
-`dlrom` downloads over HTTP itself. So it runs its own background worker and
-tracks it as a job:
+`dlrom`, and `dltv` when it uses KissKH, download over HTTP themselves. So they run
+a background worker and track it as a job:
 
 ```
 $ dlrom "Gran Turismo 4" --platform ps2
@@ -151,7 +152,13 @@ Kebab-case is the documented style across every command:
 | `--dest PATH` | Override the destination |
 | `--max-results N` | Cap how many results are considered |
 | `--quality Q` | Preferred resolution, `dlmovie` only (default `1080p`; `720p`, `2160p`/`4k`, `3D`) |
+| `--asian` | `dltv` only: download from KissKH, skip torrents |
+| `--episodes RANGE` | `dltv` with KissKH only: `3`, `1-4`, `5-` |
+| `--status ID`, `--jobs` | Inspect background jobs (`dltv`, `dlrom`) |
 | `--help` | Usage for that command |
+
+`dltv` also falls back to KissKH on its own when the best torrent has fewer than
+`minSeeders` seeds and KissKH has the exact title. See [`dltv/README.md`](dltv/).
 
 PowerShell's native `-DryRun`, `-Interactive`, `-MaxResults N` and friends still work,
 so existing scripts and habits keep running.
@@ -160,7 +167,8 @@ so existing scripts and habits keep running.
 
 - **Windows** with PowerShell 5.1 or newer. This is built into Windows 10 and 11.
 - **qBittorrent** with the Web UI enabled, for `dlanime`, `dlgame`, `dlmovie` and
-  `dltv`.
+  `dltv`'s torrent path.
+- **curl**, for `dltv` and `dlrom`. It is built into Windows 10 1803 and later.
 - **7-Zip**, for `dlrom` to unpack archives.
 
 Optional for `dlrom`: Motrix or AB Download Manager (faster, resumable downloads),
@@ -178,7 +186,7 @@ Settings live in `%LOCALAPPDATA%\dlScripts\config.json`, one section per script:
 {
   "anime":  { "qbitHost": "...", "seriesDestination": "...", "moviesDestination": "...", "maxResults": 75, "autoAppendDualAudio": true, "preferredUploaders": ["judas", "..."], "useDriveMetadata": true },
   "movie":  { "qbitHost": "...", "destination": "...", "maxResults": 15, "useDriveMetadata": true },
-  "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true },
+  "tv":     { "qbitHost": "...", "destination": "...", "maxResults": 50, "useDriveMetadata": true, "minSeeders": 5, "kisskhFallback": true, "kisskhBaseUrl": "https://kisskh.co", "kisskhSubLangs": ["en"], "jobKeepDays": 7 },
   "game":   { "qbitHost": "...", "destination": "...", "maxResults": 10, "useDriveMetadata": true },
   "rom":    { "romsBase": "C:\\Emulation\\roms", "tempDir": "%TEMP%\\dlrom", "motrixRpcUrl": "http://localhost:16800/jsonrpc", "maxResults": 10, "pollIntervalMs": 2000, "steamSync": true, "srmExe": "", "srmRestartSteam": "auto", "srmEnableParser": true, "srmWrapperCmd": "", "abPort": 15151, "abDownloadDir": "", "abTimeoutSec": 1800, "vitaBuild": "emu", "jobKeepDays": 7 }
 }
@@ -333,6 +341,10 @@ Report it and stop.
 For `dlrom`, the Job ID block **is** success. Report the Job ID and stop. Check
 later with `dlrom --status <jobId>` only when the user asks.
 
+`dltv` can end either way. If it falls back to KissKH, or you passed `--asian`, it
+prints a Job ID instead of "added to qBittorrent". Report the Job ID and stop. Check
+with `dltv --status <jobId>` only when the user asks.
+
 ## Rule 2: pick the right script
 
 Decide series or film before calling `dlanime`. TV anime and OVAs are `series`.
@@ -340,12 +352,16 @@ A standalone anime film is `movie`. This picks the save folder.
 
 Always pass `--platform` to `dlrom`. Only leave it out if nothing was found.
 
+For Korean, Chinese, Thai and other Asian live-action series, use `dltv "Name" --asian`.
+Their torrents are rarely seeded. Plain `dltv "Name"` still reaches KissKH through the
+low-seeder fallback, but only on an exact title match.
+
 ## Rule 3: read the job state before reporting
 
 | Status | What to tell the user |
 |---|---|
 | `pending` | It is starting. |
-| `running` | Give the percent and the `step`. |
+| `running` | `dlrom`: give the percent and the `step`. `dltv`: give `done/total` episodes and the current one. |
 | `completed` | It finished. |
 | `failed` | Read the `message` field and say why. |
 | `orphaned` | The worker died. Nothing is running. Offer to run it again. |
@@ -362,7 +378,9 @@ dl-scripts/
 ├── dltv.cmd
 ├── dlrom.cmd
 ├── lib/
-│   └── DriveResolver.ps1    ← shared: config setup + drive-registry API client
+│   ├── DriveResolver.ps1    ← shared: config setup + drive-registry API client
+│   ├── Platform.ps1         ← shared: OS detection and per-platform paths
+│   └── Detach.ps1           ← shared: launch a detached background worker
 ├── dlanime/
 │   ├── Add-Anime.ps1        ← the actual logic
 │   └── README.md
@@ -375,7 +393,11 @@ dl-scripts/
 │   ├── Add-Movie.ps1
 │   └── README.md
 ├── dltv/
-│   ├── Add-TV.ps1
+│   ├── Add-TV.ps1           ← orchestrator: TPB search, KissKH fallback, worker entry (-JobFile)
+│   ├── KissKH.ps1           ← KissKH API, request signing, subtitle decryption, matching
+│   ├── Download.ps1         ← curl and HLS downloads, the worker's episode loop
+│   ├── Jobs.ps1             ← job state, --status and --jobs
+│   ├── tests/               ← Pester suites and fixtures
 │   └── README.md
 └── dlrom/
     ├── Constants.ps1        ← shared values (job names, extensions, regions, Vita markers)
@@ -397,8 +419,8 @@ dl-scripts/
     └── README.md
 ```
 
-`dlrom` is split into modules that `Add-ROM.ps1` loads. The other four tools are
-each a single file.
+`dlrom` and `dltv` are split into modules that their main script loads. The other
+three tools are each a single file.
 
 ## How the CMD wrappers behave
 
@@ -421,7 +443,9 @@ loop. Add a flag in one place and add it in both, or they drift.
 
 - `dlanime.cmd`: `"Query" [series|movie] [destination]`. The type is optional, so a
   second bare word that is not `series` or `movie` is read as the destination.
-- `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd`: `"Query" [destination]`.
+- `dlgame.cmd`, `dlmovie.cmd`, `dltv.cmd`: `"Query" [destination]`. `dltv.cmd` also
+  accepts `--jobs` and `--status ID` with no query; `_dl-args.cmd` flags those runs
+  with `DL_JOB_MODE`.
 - `dlrom.cmd`: `"Query"` plus the options listed in
   [`dlrom/README.md`](dlrom/#flags). It also takes the subcommands `--status`,
   `--jobs`/`--list` and `--clean`. Those are matched before `%1` is treated as a game

@@ -33,6 +33,12 @@ order, and PS Vita build markers.
 If you are about to write a second copy of a table or a regex, put it there
 instead. Every table in that file began as two or three copies that drifted apart.
 
+`dltv` follows the same shape: `Add-TV.ps1` orchestrates and loads `KissKH.ps1` (the
+KissKH client and every site constant), `Download.ps1` (curl, HLS, the worker loop) and
+`Jobs.ps1`. A tool that hands work to a background worker launches it through
+`lib/Detach.ps1`, not a copy of the spawn code (`dlrom` still carries its own; moving it
+over is issue #3).
+
 ## Conventions
 
 - **No hardcoded personal paths.** Anything machine-specific goes in one of three
@@ -54,14 +60,20 @@ instead. Every table in that file began as two or three copies that drifted apar
 
 ## Testing changes
 
-`dlrom` has a [Pester](https://pester.dev) suite; the other tools do not yet. Before opening a PR:
+`dlrom` and `dltv` have [Pester](https://pester.dev) suites; the other tools do not yet. Before opening a PR:
 
-1. Run the `dlrom` tests (needs Pester 5+:
+1. Run the tests for the tool you touched, and both when you touch `lib/` (needs Pester 5+:
    `Install-Module Pester -MinimumVersion 5.0 -Scope CurrentUser -Force -SkipPublisherCheck`):
    ```powershell
    .\dlrom\tests\Invoke-Tests.ps1          # offline, ~2s - run this every time
    .\dlrom\tests\Invoke-Tests.ps1 -Live    # also hits retrogametalk.com, ~90s
+   .\dltv\tests\Invoke-Tests.ps1           # offline, ~2s
+   .\dltv\tests\Invoke-Tests.ps1 -Live     # also hits kisskh.co, ~5s
    ```
+   The `dltv` offline suite pins the KissKH request signing and subtitle decryption with
+   known answers, and runs matching and episode selection against `dltv/tests/fixtures/`.
+   Run its `Live` suite whenever KissKH downloads start failing.
+
    The offline suite mocks exactly one thing: `Invoke-WebRequest`. Everything else
    is the real code, run against trimmed captures of real pages in
    `dlrom/tests/fixtures/`. Add cases there when you touch URL building, parsing
@@ -72,9 +84,9 @@ instead. Every table in that file began as two or three copies that drifted apar
    shipping anything that touches `RetroGameTalk.ps1`, and whenever `dlrom` starts
    finding nothing.
 
-2. Parse-check every script you touched (the tests only cover `dlrom`):
+2. Parse-check every script you touched (the tests only cover `dlrom` and `dltv`):
    ```powershell
-   Get-ChildItem .\dlrom\*.ps1 | ForEach-Object {
+   Get-ChildItem .\dlrom\*.ps1, .\dltv\*.ps1, .\lib\*.ps1 | ForEach-Object {
        $e = $null
        [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$e) | Out-Null
        if ($e) { "$($_.Name):"; $e }
@@ -82,6 +94,7 @@ instead. Every table in that file began as two or three copies that drifted apar
    ```
 3. Run the tool end-to-end against a real query, and once with `--verbose` to confirm the detailed path.
 4. For `dlrom`, `--links-only` is a quick way to exercise search + link reveal without downloading.
+   For `dltv`'s KissKH path, `--asian --episodes N` downloads a single episode end to end.
 
 ## Scope and legality
 
