@@ -63,6 +63,7 @@ function Invoke-KissKHGet {
     $tmp  = Join-Path (Get-DlTempDir) ("dltv-get-" + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
         & $curl -s -S -L --fail --retry 2 --retry-delay 2 --max-time $TimeoutSec `
+            --connect-timeout 20 --speed-limit 1024 --speed-time 60 `
             -A $script:KISSKH_USER_AGENT -e "$base/" -o $tmp $Url 2>$null
         if ($LASTEXITCODE -ne 0) { throw "curl exit $LASTEXITCODE for $Url" }
         if (-not (Test-Path -LiteralPath $tmp)) { throw "no response body for $Url" }

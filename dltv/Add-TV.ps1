@@ -62,6 +62,7 @@ $cfg = Initialize-DlConfig -Section "tv" -Defaults ([PSCustomObject]@{
     kisskhBaseUrl    = "https://kisskh.co"
     kisskhSubLangs   = @("en")
     jobKeepDays      = 7
+    kisskhMaxEpisodeGB = 8
 })
 
 # Apply config defaults if not specified
@@ -194,7 +195,7 @@ function Get-DltvKissKHCandidate {
 # Resolve the episode list and either print the plan (-DryRun) or create a job and spawn the
 # detached worker. Returns the result JSON, or $null when there is nothing to download.
 function Start-DltvKissKHDownload {
-    param($Candidate, [string]$Destination, [string]$Range, [string]$BaseUrl, [string[]]$SubLangs, [switch]$DryRun)
+    param($Candidate, [string]$Destination, [string]$Range, [string]$BaseUrl, [string[]]$SubLangs, [double]$MaxEpisodeGB = 8, [switch]$DryRun)
 
     $drama = Get-KissKHDrama -Id ([long]$Candidate.id) -BaseUrl $BaseUrl
     $title = [string]$drama.title
@@ -223,7 +224,7 @@ function Start-DltvKissKHDownload {
         $jobId = $null
     } else {
         $job = New-DltvJob -Title $title -DramaId ([long]$drama.id) -BaseUrl $BaseUrl `
-                           -Destination $folder -Episodes $eps -SubLangs $SubLangs
+                           -Destination $folder -Episodes $eps -SubLangs $SubLangs -MaxEpisodeGB $MaxEpisodeGB
         $scriptPath = Join-Path $PSScriptRoot 'Add-TV.ps1'
         [void](Start-DltvJob -Job $job -ScriptPath $scriptPath)
         Write-Log "Background job started: $title ($($eps.Count) episodes)" "SUCCESS"
@@ -423,7 +424,7 @@ if ($Asian) {
         }
         Remove-OldDltvJobs -KeepDays ([int]$cfg.jobKeepDays)
         $kkJson = Start-DltvKissKHDownload -Candidate $candidate -Destination $Destination -Range $Episodes `
-                                           -BaseUrl $kkBase -SubLangs $kkLangs -DryRun:$DryRun
+                                           -BaseUrl $kkBase -SubLangs $kkLangs -MaxEpisodeGB ([double]$cfg.kisskhMaxEpisodeGB) -DryRun:$DryRun
     } catch {
         Write-Log "KissKH failed: $($_.Exception.Message)" "ERROR"
         Write-Log "Stack trace: $($_.ScriptStackTrace)" "DEBUG"
@@ -453,7 +454,7 @@ try {
             Write-Log "$fallbackReason; using KissKH: $($candidate.title) ($($candidate.episodesCount) episodes)" "WARN"
             Remove-OldDltvJobs -KeepDays ([int]$cfg.jobKeepDays)
             $kkJson = Start-DltvKissKHDownload -Candidate $candidate -Destination $Destination -Range $Episodes `
-                                               -BaseUrl $kkBase -SubLangs $kkLangs -DryRun:$DryRun
+                                               -BaseUrl $kkBase -SubLangs $kkLangs -MaxEpisodeGB ([double]$cfg.kisskhMaxEpisodeGB) -DryRun:$DryRun
             if (-not $kkJson) { exit 1 }
             return $kkJson
         }

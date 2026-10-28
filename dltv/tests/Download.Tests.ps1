@@ -107,6 +107,121 @@ b.m4s
     }
 }
 
+Describe 'HLS byte ranges' {
+    BeforeAll {
+        $script:U = 'https://cdn.example/4659/Ep1_index0.ts'
+        $script:RangePl = @"
+#EXTM3U
+#EXT-X-VERSION:4
+#EXT-X-MEDIA-SEQUENCE:0
+#EXTINF:6.5,
+#EXT-X-BYTERANGE:531288@0
+$script:U
+#EXTINF:6.0,
+#EXT-X-BYTERANGE:1451360@531288
+$script:U
+#EXTINF:5.7,
+#EXT-X-BYTERANGE:1540472@1982648
+$script:U
+"@
+    }
+
+    It 'parses explicit offsets' {
+        $pl = Read-DltvHlsMediaPlaylist -Text $script:RangePl -BaseUri 'https://cdn.example/x.m3u8'
+        $pl.Segments.Count | Should -Be 3
+        $pl.Segments[1].Range.Start  | Should -Be 531288
+        $pl.Segments[1].Range.Length | Should -Be 1451360
+        $pl.Segments[1].Range.End    | Should -Be (531288 + 1451360 - 1)
+        (Get-DltvCurlRange $pl.Segments[2].Range) | Should -Be '1982648-3523119'
+    }
+
+    It 'continues an implicit offset from the previous range of the same URI' {
+        $pl = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text @'
+#EXTM3U
+#EXT-X-BYTERANGE:100@50
+a.ts
+#EXT-X-BYTERANGE:200
+a.ts
+#EXT-X-BYTERANGE:10
+b.ts
+#EXT-X-BYTERANGE:30
+a.ts
+'@
+        $pl.Segments[0].Range.Start | Should -Be 50
+        $pl.Segments[1].Range.Start | Should -Be 150
+        $pl.Segments[1].Range.End   | Should -Be 349
+        $pl.Segments[2].Range.Start | Should -Be 0
+        $pl.Segments[3].Range.Start | Should -Be 350
+    }
+
+    It 'leaves segments without BYTERANGE as whole files' {
+        $pl = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXTINF:4,`na.ts`n#EXT-X-BYTERANGE:5@0`nb.ts`n#EXTINF:4,`nc.ts`n"
+        $pl.Segments[0].Range | Should -BeNullOrEmpty
+        $pl.Segments[1].Range.Length | Should -Be 5
+        $pl.Segments[2].Range | Should -BeNullOrEmpty
+    }
+
+    It 'detects one contiguous file and reports its length' {
+        $pl = Read-DltvHlsMediaPlaylist -Text $script:RangePl -BaseUri 'https://cdn.example/x.m3u8'
+        $single = Get-DltvHlsSingleFile $pl
+        $single.Uri | Should -Be $script:U
+        $single.Length | Should -Be 3523120
+    }
+
+    It 'is not a single file when URIs are mixed' {
+        $pl = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-BYTERANGE:10@0`na.ts`n#EXT-X-BYTERANGE:10@10`nb.ts`n"
+        Get-DltvHlsSingleFile $pl | Should -BeNullOrEmpty
+    }
+
+    It 'is not a single file when ranges leave a gap or do not start at 0' {
+        $gap = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-BYTERANGE:10@0`na.ts`n#EXT-X-BYTERANGE:10@20`na.ts`n"
+        Get-DltvHlsSingleFile $gap | Should -BeNullOrEmpty
+        $late = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-BYTERANGE:10@5`na.ts`n"
+        Get-DltvHlsSingleFile $late | Should -BeNullOrEmpty
+    }
+
+    It 'is not a single file when encrypted, mapped, or any segment lacks a range' {
+        $enc = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-KEY:METHOD=AES-128,URI=`"k`"`n#EXT-X-BYTERANGE:10@0`na.ts`n"
+        Get-DltvHlsSingleFile $enc | Should -BeNullOrEmpty
+        $map = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-MAP:URI=`"i.mp4`"`n#EXT-X-BYTERANGE:10@0`na.ts`n"
+        Get-DltvHlsSingleFile $map | Should -BeNullOrEmpty
+        $plain = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-BYTERANGE:10@0`na.ts`na.ts`n"
+        Get-DltvHlsSingleFile $plain | Should -BeNullOrEmpty
+    }
+}
+
+Describe 'curl plumbing' {
+    It 'quotes arguments for CommandLineToArgvW' {
+        ConvertTo-DltvArgument 'plain' | Should -Be 'plain'
+        ConvertTo-DltvArgument 'https://h/a.mp4?x=1&y=2' | Should -Be 'https://h/a.mp4?x=1&y=2'
+        ConvertTo-DltvArgument 'C:\a b\c.part' | Should -Be '"C:\a b\c.part"'
+        ConvertTo-DltvArgument 'say "hi"' | Should -Be '"say \"hi\""'
+        ConvertTo-DltvArgument 'C:\a b\' | Should -Be '"C:\a b\\"'
+        ConvertTo-DltvArgument '' | Should -Be '""'
+    }
+
+    It 'carries the stall protection flags' {
+        $f = $script:DLTV_CURL_COMMON -join ' '
+        $f | Should -Match '--connect-timeout 20'
+        $f | Should -Match '--speed-limit 1024 --speed-time 60'
+    }
+
+    It 'reads the live length of a file another handle is still writing' {
+        $p = Join-Path ([System.IO.Path]::GetTempPath()) "dltv-live-$([guid]::NewGuid().ToString('N')).bin"
+        $w = New-Object System.IO.FileStream($p, 'Create', 'Write', 'ReadWrite')
+        try {
+            $w.Write((New-Object byte[] 1000), 0, 1000); $w.Flush()
+            Get-DltvFileLength $p | Should -Be 1000
+            $w.Write((New-Object byte[] 5000), 0, 5000); $w.Flush()
+            Get-DltvFileLength $p | Should -Be 6000
+        } finally { $w.Dispose(); Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue }
+    }
+
+    It 'returns 0 for a missing file' {
+        Get-DltvFileLength (Join-Path ([System.IO.Path]::GetTempPath()) 'dltv-nope-file.bin') | Should -Be 0
+    }
+}
+
 Describe 'job store' {
     BeforeAll {
         $script:TestRoot = Join-Path ([System.IO.Path]::GetTempPath()) "dltv-tests-$([guid]::NewGuid().ToString('N').Substring(0,8))"

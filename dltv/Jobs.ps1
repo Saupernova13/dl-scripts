@@ -59,7 +59,8 @@ function New-DltvJob {
         [string]$BaseUrl,
         [string]$Destination,       # series folder the episodes land in
         [object[]]$Episodes,        # @{ Id; Number } records
-        [string[]]$SubLangs
+        [string[]]$SubLangs,
+        [double]$MaxEpisodeGB = 8   # abort an episode whose output passes this
     )
     $id = [guid]::NewGuid().ToString('N').Substring(0, 12)
     return [PSCustomObject]@{
@@ -71,6 +72,7 @@ function New-DltvJob {
         baseUrl     = $BaseUrl
         destination = $Destination
         subLangs    = @($SubLangs)
+        maxEpisodeGB = $MaxEpisodeGB
         episodes    = @($Episodes | ForEach-Object { [PSCustomObject]@{ id = [long]$_.Id; number = [int]$_.Number } })
         total       = @($Episodes).Count
         done        = 0
