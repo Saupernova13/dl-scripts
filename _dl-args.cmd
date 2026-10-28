@@ -18,6 +18,8 @@ REM     DL_FLAGS                  translated flags, ready to append to the Power
 REM                               command line (each already space-prefixed)
 REM     DL_ARGS_ERROR             set when an option was rejected; the caller must stop
 REM     DL_ARGS_HELP              set when help was asked for
+REM     DL_JOB_MODE               set by --jobs or --status: a call that inspects background
+REM                               jobs and needs no query (dltv)
 REM
 REM Reads, before being called:
 REM     DL_LIST_PARAM             PowerShell switch that --list maps to. Defaults to
@@ -37,6 +39,7 @@ set "DL_POS3="
 set "DL_FLAGS="
 set "DL_ARGS_ERROR="
 set "DL_ARGS_HELP="
+set "DL_JOB_MODE="
 if not defined DL_LIST_PARAM set "DL_LIST_PARAM=DryRun"
 
 REM One shift happens at the top of every iteration. Only the value-taking flags shift
@@ -57,6 +60,8 @@ if /i "%DL_ARG%"=="--qbit-host"     goto :dl_val_qbit
 if /i "%DL_ARG%"=="--max-results"   goto :dl_val_max
 if /i "%DL_ARG%"=="--filter"        goto :dl_val_filter
 if /i "%DL_ARG%"=="--quality"       goto :dl_val_quality
+if /i "%DL_ARG%"=="--status"        goto :dl_val_status
+if /i "%DL_ARG%"=="--episodes"      goto :dl_val_episodes
 
 REM --- kebab switches ---
 if /i "%DL_ARG%"=="--dry-run"       goto :dl_sw_dryrun
@@ -65,6 +70,8 @@ if /i "%DL_ARG%"=="--links-only"    goto :dl_sw_dryrun
 if /i "%DL_ARG%"=="--list"          goto :dl_sw_list
 if /i "%DL_ARG%"=="--interactive"   goto :dl_sw_interactive
 if /i "%DL_ARG%"=="--trusted-only"  goto :dl_sw_trusted
+if /i "%DL_ARG%"=="--asian"         goto :dl_sw_asian
+if /i "%DL_ARG%"=="--jobs"          goto :dl_sw_jobs
 
 REM An unrecognised kebab flag is a typo, not something to hand to PowerShell: forwarded,
 REM it surfaces as "a parameter cannot be found that matches parameter name '-dry-runn'",
@@ -100,6 +107,15 @@ goto :dl_args_loop
 set "DL_FLAGS=%DL_FLAGS% -TrustedOnly"
 goto :dl_args_loop
 
+:dl_sw_asian
+set "DL_FLAGS=%DL_FLAGS% -Asian"
+goto :dl_args_loop
+
+:dl_sw_jobs
+set "DL_FLAGS=%DL_FLAGS% -Jobs"
+set "DL_JOB_MODE=1"
+goto :dl_args_loop
+
 :dl_val_dest
 set "DL_FLAGS=%DL_FLAGS% -Destination "%~1""
 shift
@@ -125,6 +141,17 @@ set "DL_FLAGS=%DL_FLAGS% -Quality "%~1""
 shift
 goto :dl_args_loop
 
+:dl_val_status
+set "DL_FLAGS=%DL_FLAGS% -Status "%~1""
+set "DL_JOB_MODE=1"
+shift
+goto :dl_args_loop
+
+:dl_val_episodes
+set "DL_FLAGS=%DL_FLAGS% -Episodes "%~1""
+shift
+goto :dl_args_loop
+
 REM A native flag that takes a value must swallow the word after it, or that word would be
 REM mistaken for a positional - which is how "dlmovie Name -MaxResults 5" used to end up
 REM treating 5 as the destination.
@@ -136,6 +163,10 @@ if /i "%DL_ARG%"=="-QbitHost"    set "DL_TAKES_VALUE=1"
 if /i "%DL_ARG%"=="-MaxResults"  set "DL_TAKES_VALUE=1"
 if /i "%DL_ARG%"=="-Filter"      set "DL_TAKES_VALUE=1"
 if /i "%DL_ARG%"=="-Quality"     set "DL_TAKES_VALUE=1"
+if /i "%DL_ARG%"=="-Status"      set "DL_TAKES_VALUE=1"
+if /i "%DL_ARG%"=="-Episodes"    set "DL_TAKES_VALUE=1"
+if /i "%DL_ARG%"=="-Status"      set "DL_JOB_MODE=1"
+if /i "%DL_ARG%"=="-Jobs"        set "DL_JOB_MODE=1"
 if not defined DL_TAKES_VALUE goto :dl_args_loop
 set "DL_FLAGS=%DL_FLAGS% "%~1""
 shift
@@ -156,7 +187,8 @@ goto :dl_args_loop
 :dl_unknown_flag
 echo [ERROR] Unknown option: %DL_ARG% >&2
 echo Valid options: --dry-run --list --interactive --trusted-only --dest PATH >&2
-echo                --max-results N --filter TEXT --quality Q --qbit-host URL --help >&2
+echo                --max-results N --filter TEXT --quality Q --qbit-host URL >&2
+echo                --asian --episodes RANGE --status ID --jobs --help >&2
 set "DL_ARGS_ERROR=1"
 goto :eof
 

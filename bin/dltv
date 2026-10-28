@@ -18,18 +18,25 @@ DL_BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$DL_SELF")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$DL_BIN_DIR/.." && pwd)
 PS_SCRIPT="$REPO_ROOT/dltv/Add-TV.ps1"
 DL_POSITIONALS="Query Destination"
-DL_FLAG_SWITCHES="--dry-run:DryRun --dryrun:DryRun --links-only:DryRun --list:DryRun --interactive:Interactive"
-DL_FLAG_VALUES="--dest:Destination --destination:Destination --qbit-host:QbitHost --max-results:MaxResults"
+DL_FLAG_SWITCHES="--dry-run:DryRun --dryrun:DryRun --links-only:DryRun --list:DryRun --interactive:Interactive --asian:Asian --jobs:Jobs"
+DL_FLAG_VALUES="--dest:Destination --destination:Destination --qbit-host:QbitHost --max-results:MaxResults --status:Status --episodes:Episodes"
 
 dl_usage() {
     cat <<'USAGE'
 Usage: dltv "Show Name" [destination] [flags]
+       dltv --jobs | dltv --status ID
 
   --dry-run        show the matches and the torrent it would add, download nothing
   --list           same as --dry-run
   --interactive    pick from the results instead of auto-selecting
   --max-results N  cap how many results are considered
   --dest PATH      override the destination
+  --asian          skip torrents, download from KissKH in a background job
+  --episodes RANGE KissKH only: 3, 1-4 or 5- (default: all released episodes)
+  --jobs           list KissKH download jobs
+  --status ID      show one KissKH download job
+
+A weak torrent (few seeders) falls back to KissKH on an exact title match.
 USAGE
 }
 
