@@ -50,9 +50,31 @@ function Start-DlDetachedScript {
         foreach ($a in $ScriptArgs) { $argText += ' "{0}"' -f $a }
         $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}"{2} > "{3}" 2>&1' -f `
                     $psExe, $ScriptPath, $argText, $LogFile
+        $cmdLine = "/c `"$inner`""
+
+        # Preferred: Win32_Process.Create via CIM. A child made with ProcessStartInfo inherits
+        # EVERY inheritable handle of this process, including the caller's original stdout, so
+        # a caller reading our output through a pipe (`dltv ... | tee`, an agent capturing it)
+        # blocks until the worker exits even though we returned. A process WMI creates inherits
+        # nothing. ShowWindow 0 keeps it hidden. Falls back to the ProcessStartInfo route below
+        # where CIM is unavailable or refused.
+        try {
+            $startup = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{ ShowWindow = [uint16]0 }
+            $created = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -ErrorAction Stop -Arguments @{
+                CommandLine               = "cmd.exe $cmdLine"
+                ProcessStartupInformation = $startup
+            }
+            if ($created.ReturnValue -eq 0 -and $created.ProcessId) { return [int]$created.ProcessId }
+        } catch { }
+
         $psi.FileName              = 'cmd.exe'
-        $psi.Arguments             = "/c `"$inner`""
+        $psi.Arguments             = $cmdLine
         $psi.RedirectStandardInput = $true
+        # Fallback path: keep cmd.exe off the caller's stdout/stderr. This narrows, but does not
+        # close, the handle-inheritance hole described above. cmd itself writes nothing - the
+        # inner redirect sends the worker's output to the log.
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError  = $true
     } else {
         # Prefer a transient user-manager unit; fall back to setsid where systemd-run or a
         # user bus is missing. A runtime probe, not an OS guess - either can be absent
@@ -88,6 +110,8 @@ function Start-DlDetachedScript {
 
     if (Test-DlWindows) {
         $proc.StandardInput.Close()
+        $proc.StandardOutput.Close()
+        $proc.StandardError.Close()
     } else {
         $workerPid = ($proc.StandardOutput.ReadLine() -as [int])
         $proc.WaitForExit()
