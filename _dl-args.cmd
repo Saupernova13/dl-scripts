@@ -72,6 +72,7 @@ if /i "%DL_ARG%"=="--interactive"   goto :dl_sw_interactive
 if /i "%DL_ARG%"=="--trusted-only"  goto :dl_sw_trusted
 if /i "%DL_ARG%"=="--asian"         goto :dl_sw_asian
 if /i "%DL_ARG%"=="--jobs"          goto :dl_sw_jobs
+if /i "%DL_ARG%"=="--json"          goto :dl_sw_json
 
 REM An unrecognised kebab flag is a typo, not something to hand to PowerShell: forwarded,
 REM it surfaces as "a parameter cannot be found that matches parameter name '-dry-runn'",
@@ -114,6 +115,10 @@ goto :dl_args_loop
 :dl_sw_jobs
 set "DL_FLAGS=%DL_FLAGS% -Jobs"
 set "DL_JOB_MODE=1"
+goto :dl_args_loop
+
+:dl_sw_json
+set "DL_FLAGS=%DL_FLAGS% -Json"
 goto :dl_args_loop
 
 :dl_val_dest
@@ -188,7 +193,7 @@ goto :dl_args_loop
 echo [ERROR] Unknown option: %DL_ARG% >&2
 echo Valid options: --dry-run --list --interactive --trusted-only --dest PATH >&2
 echo                --max-results N --filter TEXT --quality Q --qbit-host URL >&2
-echo                --asian --episodes RANGE --status ID --jobs --help >&2
+echo                --asian --episodes RANGE --status ID --jobs --json --help >&2
 set "DL_ARGS_ERROR=1"
 goto :eof
 
