@@ -42,7 +42,7 @@ The second positional argument is an optional destination override. Omit it to u
 
 | Flag | What it does |
 |------|--------------|
-| `--dry-run` | Search, print what it would download, then stop. Nothing is queued or spawned. |
+| `--dry-run` | Search, print what it would download, then stop. Nothing is queued or spawned. On the KissKH path it makes one stream lookup to estimate the size. |
 | `--list` | Same as `--dry-run`. |
 | `--interactive` | Pick from the results yourself. Needs a person at the keyboard. Disables the automatic fallback. |
 | `--max-results N` | Cap how many torrent results are considered. |
@@ -51,7 +51,8 @@ The second positional argument is an optional destination override. Omit it to u
 | `--asian` | Use KissKH only. Exits 1 if KissKH has no match. |
 | `--episodes RANGE` | KissKH only: `3`, `1-4`, or `5-` (5 to the end). Default: every released episode. |
 | `--jobs` | List KissKH download jobs. |
-| `--status ID` | Show one job: status, current episode, progress, and the log tail. |
+| `--status ID` | Show one job: progress, GB done of total, speed, ETA, current episode, drive, and the log tail. |
+| `--json` | With `--status` or `--jobs`: print only JSON, for scripts and agents. |
 | `--help` | Print usage and exit. |
 
 The same spellings work on every `dl*` command. An unknown `--flag` is rejected rather than ignored, so a typo cannot turn a preview into a download.
@@ -77,6 +78,7 @@ The CMD wrapper passes these through. You can also call the script directly:
 | `-Asian` | `$false` | KissKH only |
 | `-Episodes` | all | KissKH episode range |
 | `-Jobs` / `-Status` | - | Inspect background jobs |
+| `-Json` | `$false` | Machine-readable output for `-Jobs` / `-Status` |
 | `-JobFile` | - | Internal: the background worker's entry point |
 
 ## Configuration
@@ -94,6 +96,7 @@ Settings live in the `tv` section of `%LOCALAPPDATA%\dlScripts\config.json` (`~/
     "kisskhFallback": true,
     "kisskhBaseUrl": "https://kisskh.co",
     "kisskhSubLangs": ["en"],
+    "kisskhMaxEpisodeGB": 8,
     "jobKeepDays": 7
   }
 }
@@ -105,6 +108,7 @@ Settings live in the `tv` section of `%LOCALAPPDATA%\dlScripts\config.json` (`~/
 | `kisskhFallback` | `false` turns the automatic fallback off (`--asian` still works) |
 | `kisskhBaseUrl` | KissKH mirror to use. Change it if the domain moves |
 | `kisskhSubLangs` | Subtitle languages to save, by KissKH's language code (`en`, `ar`, `km`, ...) |
+| `kisskhMaxEpisodeGB` | Safety cap: an episode whose download passes this is aborted and its partial file deleted |
 | `jobKeepDays` | Finished job records older than this are pruned |
 
 ## How It Works
@@ -122,13 +126,32 @@ Settings live in the `tv` section of `%LOCALAPPDATA%\dlScripts\config.json` (`~/
 1. Searches KissKH and picks the best title match. The fallback only accepts an exact
    match; `--asian` also accepts "title starts with the query" and "all words present".
 2. Lists the drama's episodes. Recaps and specials (fractional numbers such as 16.1) are skipped.
-3. Writes a job file and starts a detached worker, then returns with the Job ID.
-4. The worker downloads each episode in order:
+3. Estimates the size from the first episode, then prints a summary and returns with the Job ID:
+
+   ```
+   [SUCCESS] Background job started: Crazy Love (2022) (16 episodes)
+     Title:    Crazy Love (2022)
+     Country:  South Korea
+     Status:   Completed
+     Episodes: 16 (E01-E16)
+     Size:     ~10.41 GB (est. from E02: 710 MB)
+     Folder:   D:\TV\Crazy Love (2022)
+     Drive:    D: (asmedia-4tb-hdd), 1342.4 GB free
+     Source:   KissKH direct download (no seeders)
+     Job ID:   ed70bdb6a463
+   ```
+
+4. The detached worker first scans every episode for its size, so the total becomes
+   exact and unreleased episodes are known up front. Then it downloads each episode in order:
    - asks KissKH for a signed stream URL (generated just in time, because it is tied to your IP)
    - downloads the `.mp4` with curl, resuming a partial `.part` file. An HLS (`.m3u8`)
-     stream is fetched segment by segment and remuxed to `.mp4` by ffmpeg when it is
-     installed, otherwise kept as `.ts`
+     stream is fetched and remuxed to `.mp4` by ffmpeg when it is installed, otherwise kept
+     as `.ts`. KissKH usually serves HLS as byte ranges of one or two whole files; those
+     files are downloaded once each, resumably, not range by range
    - saves and decrypts the subtitles as `.srt`
+
+   Every transfer gives up and retries after 60 s under 1 KB/s, so a dead connection
+   cannot hang the job, and `kisskhMaxEpisodeGB` stops a runaway episode.
 
 Files land as:
 
@@ -150,6 +173,41 @@ One failed episode does not stop the rest. A job ends `failed` only if no episod
 | `completed` | At least one episode downloaded; the message lists any failures |
 | `failed` | Nothing downloaded; the message says why |
 | `orphaned` | The worker died (reboot, killed). Run the same command again to resume |
+
+`dltv --status <id>` while a job runs:
+
+```
+Job c22cba354f6a
+  Status:     running
+  Title:      Crazy Love (2022) (South Korea)
+  Progress:   20.0%  178 MB of 851 MB
+  Episodes:   0/1 (current E01 at 20%)
+  Speed:      3.3 MB/s
+  ETA:        3m
+  Folder:     D:\TV\Crazy Love (2022)
+  Drive:      D: (asmedia-4tb-hdd), 1342.4 GB free
+  Source:     KissKH direct download (no seeders)
+  ...
+```
+
+`dltv --status <id> --json` (and `dltv --jobs --json`, always an array) prints the same as
+JSON. The field names follow qBittorrent's `torrents/info` where one exists:
+
+| Field | Meaning |
+|-------|---------|
+| `name`, `country`, `showStatus` | The show |
+| `status` | `pending`, `running`, `completed`, `failed`, `orphaned` |
+| `progress` | 0 to 1 |
+| `doneBytes`, `totalBytes`, `doneGB`, `totalGB` | Transferred so far, and the total (`sizeExact` false while part of it is an estimate) |
+| `dlspeed`, `speedMBps` | Current speed, a 10 s moving average (bytes/s, MB/s) |
+| `eta` | Seconds left, or null |
+| `episodesDone`, `episodesTotal`, `currentEpisode`, `currentEpisodeProgress` | Episode view |
+| `savePath`, `drive`, `driveName`, `freeGB` | Where it lands |
+| `failed`, `notReleased`, `message` | Outcome detail |
+
+Read progress from `--status`, not from the folder. Windows reports a stale size for a file
+that another process still has open, so Explorer or `Get-ChildItem` can show a download as
+stuck while it is still growing.
 
 Job files and logs live in `%LOCALAPPDATA%\dlScripts\dltv\jobs\` (`~/.local/share/dlScripts/dltv/jobs/` on Linux).
 
