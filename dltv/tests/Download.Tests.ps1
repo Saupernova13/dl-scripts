@@ -190,6 +190,37 @@ a.ts
     }
 }
 
+Describe 'HLS whole-file groups' {
+    It 'finds two files, each a contiguous run from 0 (how KissKH serves a long episode)' {
+        $pl = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text @'
+#EXT-X-BYTERANGE:100@0
+https://h/Ep1_index0.ts
+#EXT-X-BYTERANGE:200@100
+https://h/Ep1_index0.ts
+#EXT-X-BYTERANGE:50@0
+https://h/Ep1_index1.ts
+#EXT-X-BYTERANGE:70
+https://h/Ep1_index1.ts
+'@
+        $files = @(Get-DltvHlsWholeFiles $pl)
+        $files.Count | Should -Be 2
+        $files[0].Uri | Should -Be 'https://h/Ep1_index0.ts'
+        $files[0].Length | Should -Be 300
+        $files[1].Length | Should -Be 120
+        Get-DltvHlsSingleFile $pl | Should -BeNullOrEmpty
+    }
+
+    It 'rejects a URI that comes back after another one' {
+        $pl = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-BYTERANGE:10@0`na.ts`n#EXT-X-BYTERANGE:10@0`nb.ts`n#EXT-X-BYTERANGE:10@10`na.ts`n"
+        Get-DltvHlsWholeFiles $pl | Should -BeNullOrEmpty
+    }
+
+    It 'rejects a second file that does not start at 0' {
+        $pl = Read-DltvHlsMediaPlaylist -BaseUri 'https://cdn.example/x.m3u8' -Text "#EXT-X-BYTERANGE:10@0`na.ts`n#EXT-X-BYTERANGE:10@5`nb.ts`n"
+        Get-DltvHlsWholeFiles $pl | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'curl plumbing' {
     It 'quotes arguments for CommandLineToArgvW' {
         ConvertTo-DltvArgument 'plain' | Should -Be 'plain'
