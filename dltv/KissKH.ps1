@@ -139,13 +139,24 @@ function New-KissKHSubKkey   { param([long]$EpisodeId) return (New-KissKHKkey -E
 
 # --- API ----------------------------------------------------------------------
 
+# JSON array text -> array of its elements. `@($text | ConvertFrom-Json)` is NOT enough on
+# PS 5.1: ConvertFrom-Json emits the array as ONE pipeline object, so @() nests it and a
+# 50-element result reads as Count 1. foreach enumerates the elements properly, and gives an
+# empty array for `[]`.
+function ConvertFrom-DltvJsonList {
+    param([string]$Text)
+    $items = @()
+    if (-not $Text -or -not $Text.Trim()) { return $items }
+    foreach ($x in ($Text | ConvertFrom-Json)) { $items += $x }
+    return $items
+}
+
 function Search-KissKHDrama {
     param([Parameter(Mandatory)][string]$Query, [string]$BaseUrl)
     $base = Get-KissKHBaseUrl $BaseUrl
     $enc  = [System.Uri]::EscapeDataString($Query)
     $text = Invoke-KissKHGet -Url "$base/api/DramaList/Search?q=$enc&type=0" -BaseUrl $base
-    if (-not $text -or -not $text.Trim()) { return @() }
-    return @($text | ConvertFrom-Json)
+    return (ConvertFrom-DltvJsonList $text)
 }
 
 function Get-KissKHDrama {
@@ -180,8 +191,7 @@ function Get-KissKHSubtitleTracks {
     $base = Get-KissKHBaseUrl $BaseUrl
     $kkey = New-KissKHSubKkey $EpisodeId
     $text = Invoke-KissKHGet -Url "$base/api/Sub/${EpisodeId}?kkey=$kkey" -BaseUrl $base
-    if (-not $text -or -not $text.Trim()) { return @() }
-    return @($text | ConvertFrom-Json)
+    return (ConvertFrom-DltvJsonList $text)
 }
 
 # --- Subtitles ----------------------------------------------------------------
@@ -342,4 +352,20 @@ function Select-KissKHEpisodes {
         Episodes = @($keep | Sort-Object Number)
         Skipped  = $skipped
     }
+}
+
+# --- Source selection ---------------------------------------------------------
+
+# Should dltv try KissKH instead of the torrent it found? Returns the reason as a string, or
+# $null to stay with TPB. -Torrents is the scored list, best first: the auto-selected pick is
+# the first entry. The caller gates this on kisskhFallback and -Interactive.
+function Test-DltvKissKHFallback {
+    param([object[]]$Torrents, [int]$MinSeeders = 5)
+    $list = @($Torrents)
+    if ($list.Count -eq 0) { return 'TPB has no usable torrents' }
+    $top = $list[0]
+    if ([int]$top.Seeders -lt $MinSeeders) {
+        return "TPB best has $($top.Seeders) seeds (< $MinSeeders)"
+    }
+    return $null
 }
