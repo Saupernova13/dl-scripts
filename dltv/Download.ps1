@@ -96,12 +96,13 @@ function Invoke-DltvCurl {
         }
     }
     $proc.WaitForExit()
-    [void]$outTask.Wait(2000)
+    $outText = ''
+    if ($outTask.Wait(2000)) { $outText = $outTask.Result }
     $errText = ''
     if ($errTask.Wait(2000)) { $errText = $errTask.Result }
     $code = $proc.ExitCode
     $proc.Dispose()
-    return [PSCustomObject]@{ ExitCode = $code; Error = $errText.Trim(); Capped = $capped }
+    return [PSCustomObject]@{ ExitCode = $code; Output = $outText; Error = $errText.Trim(); Capped = $capped }
 }
 
 # Download one URL to a file. -Resume continues a partial file (-C -), which is what makes a
@@ -136,11 +137,55 @@ function Invoke-DltvCurlDownload {
     return $true
 }
 
-function Format-DltvSize {
-    param([long]$Bytes)
-    if ($Bytes -ge 1GB) { return ('{0:N2} GB' -f ($Bytes / 1GB)) }
-    if ($Bytes -ge 1MB) { return ('{0:N0} MB' -f ($Bytes / 1MB)) }
-    return "$Bytes B"
+# --- Size probing -------------------------------------------------------------
+
+# Length of the final response of a URL, from a HEAD that follows redirects. Some CDNs refuse
+# HEAD, so a 0-0 range request (Content-Range: bytes 0-0/TOTAL) is the second try. $null when
+# neither says.
+function Get-DltvRemoteLength {
+    param([string]$Url, [string]$BaseUrl)
+    $base = Get-KissKHBaseUrl $BaseUrl
+    $common = @('-s', '-L', '--connect-timeout', '20', '--max-time', '30', '-A', $script:KISSKH_USER_AGENT, '-e', "$base/")
+
+    $r = Invoke-DltvCurl -CurlArgs (@('-I') + $common + @($Url))
+    if ($r.ExitCode -eq 0) {
+        # One header block per hop; only the last one describes the file.
+        $blocks = @($r.Output -split "(?:\r?\n){2,}" | Where-Object { $_ -match '^HTTP/' })
+        if ($blocks.Count -gt 0 -and $blocks[-1] -match '(?im)^content-length:\s*(\d+)') {
+            $n = [long]$Matches[1]
+            if ($n -gt 0) { return $n }
+        }
+    }
+
+    $nullDev = if (Test-DlWindows) { 'NUL' } else { '/dev/null' }
+    $r = Invoke-DltvCurl -CurlArgs (@('-r', '0-0', '-D', '-', '-o', $nullDev) + $common + @($Url))
+    if ($r.ExitCode -eq 0) {
+        $blocks = @($r.Output -split "(?:\r?\n){2,}" | Where-Object { $_ -match '^HTTP/' })
+        if ($blocks.Count -gt 0 -and $blocks[-1] -match '(?im)^content-range:\s*bytes\s+\d+-\d+/(\d+)') {
+            return [long]$Matches[1]
+        }
+    }
+    return $null
+}
+
+# Size of the file a stream URL leads to, without downloading video: a direct file by HEAD, a
+# byte-range HLS playlist by its last range. $null when it cannot be known (segmented HLS, or
+# any failure - sizes are only an estimate).
+function Get-DltvStreamSize {
+    param([string]$Url, [string]$BaseUrl)
+    try {
+        if ($Url -match '\.m3u8(\?|#|$)') {
+            $media = Get-DltvHlsMedia -Url $Url -BaseUrl $BaseUrl
+            $files = Get-DltvHlsWholeFiles $media.Playlist
+            if (-not $files) { return $null }
+            $sum = [long]0
+            foreach ($f in $files) { $sum += [long]$f.Length }
+            return $sum
+        }
+        return (Get-DltvRemoteLength -Url $Url -BaseUrl $BaseUrl)
+    } catch {
+        return $null
+    }
 }
 
 # --- HLS ----------------------------------------------------------------------
@@ -264,21 +309,41 @@ function Read-DltvHlsMediaPlaylist {
     return [PSCustomObject]@{ Map = $map; Segments = @($segments) }
 }
 
-# When every segment is a byte range of ONE URI, contiguous from 0, unencrypted and with no init
-# segment, the playlist is just one file cut into pieces: return that URI (download it whole,
-# resumably) and the file's length from the last range. Otherwise $null.
-function Get-DltvHlsSingleFile {
+# When the playlist is nothing but byte ranges cut from a few whole files - each URI one run of
+# ranges, contiguous from 0, unencrypted, no init segment - return those files in order as
+# @{ Uri; Length } (Length from the last range). Each can then be downloaded whole, resumably,
+# instead of range by range. Otherwise $null. KissKH serves a 70 minute episode as two such
+# files; a plain single-file playlist is the one-entry case.
+function Get-DltvHlsWholeFiles {
     param($Playlist)
     $segs = @($Playlist.Segments)
     if ($segs.Count -eq 0 -or $Playlist.Map) { return $null }
-    $uri = $segs[0].Uri
+    $files = @()
+    $seen = @{}
+    $cur = $null
     $expect = 0L
     foreach ($s in $segs) {
-        if ($s.Uri -ne $uri -or $s.Key -or -not $s.Range) { return $null }
+        if ($s.Key -or -not $s.Range) { return $null }
+        if (-not $cur -or $s.Uri -ne $cur.Uri) {
+            if ($seen.ContainsKey($s.Uri)) { return $null }     # a URI revisited: not a plain run
+            $seen[$s.Uri] = $true
+            $cur = [PSCustomObject]@{ Uri = $s.Uri; Length = 0L }
+            $files += $cur
+            $expect = 0L
+        }
         if ($s.Range.Start -ne $expect) { return $null }
         $expect = $s.Range.End + 1
+        $cur.Length = $expect
     }
-    return [PSCustomObject]@{ Uri = $uri; Length = $expect }
+    return $files
+}
+
+# The one-file case of the above, or $null.
+function Get-DltvHlsSingleFile {
+    param($Playlist)
+    $files = @(Get-DltvHlsWholeFiles $Playlist)
+    if ($files.Count -eq 1) { return $files[0] }
+    return $null
 }
 
 function ConvertFrom-DltvHlsSegment {
@@ -386,12 +451,34 @@ function Save-DltvHlsStream {
     if ($segs.Count -eq 0) { throw "HLS playlist has no segments" }
 
     $tsPart = "$Stem.ts.part"
-    $single = Get-DltvHlsSingleFile $playlist
-    if ($single) {
-        Write-Log "HLS playlist is one file in $($segs.Count) byte ranges; downloading it once" 'DEBUG'
-        if (-not (Invoke-DltvCurlDownload -Url $single.Uri -OutFile $tsPart -BaseUrl $BaseUrl -Resume -MaxBytes $MaxBytes -OnTick $OnTick)) {
-            throw "video download failed"
+    $files = Get-DltvHlsWholeFiles $playlist
+    if ($files) {
+        Write-Log "HLS playlist is $($segs.Count) byte ranges of $(@($files).Count) file(s); downloading each once" 'DEBUG'
+        $parts = @()
+        $doneBytes = 0L
+        $i = 0
+        foreach ($f in $files) {
+            $part = "$Stem.ts.part$i"
+            $parts += $part
+            $left = $(if ($MaxBytes -gt 0) { [Math]::Max(1L, $MaxBytes - $doneBytes) } else { 0L })
+            # Ticks report the whole episode: bytes of finished files plus this one so far.
+            $tick = $null
+            if ($OnTick) { $base = $doneBytes; $tick = { param($n) & $OnTick ($base + $n) }.GetNewClosure() }
+            if (-not (Invoke-DltvCurlDownload -Url $f.Uri -OutFile $part -BaseUrl $BaseUrl -Resume -MaxBytes $left -OnTick $tick)) {
+                throw "video download failed"
+            }
+            $doneBytes += (Get-DltvFileLength $part)
+            $i++
         }
+        # Join the files in playlist order, streaming, then drop the pieces.
+        $out = [System.IO.File]::Create($tsPart)
+        try {
+            foreach ($part in $parts) {
+                $in = [System.IO.File]::OpenRead($part)
+                try { $in.CopyTo($out) } finally { $in.Dispose() }
+            }
+        } finally { $out.Dispose() }
+        foreach ($part in $parts) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
     } else {
         $keyCache = @{}
         $fs = [System.IO.File]::Create($tsPart)
@@ -460,6 +547,81 @@ function Save-DltvSubtitles {
 
 # --- Worker -------------------------------------------------------------------
 
+# Live progress shared by the worker and the tick callbacks: bytes of finished episodes, the
+# running speed estimate and when the job file was last flushed.
+$script:DltvStat = $null
+
+function Start-DltvStat {
+    $script:DltvStat = @{
+        BaseDone = 0L; LastBytes = 0L; LastT = [DateTime]::UtcNow; LastSave = [DateTime]::MinValue
+        Speed = 0.0; CurTotal = 0L; CurBytes = 0L; Started = [DateTime]::UtcNow
+    }
+}
+
+# Fold the current episode's byte count into the job: doneBytes, a ~10 s moving-average speed,
+# ETA and the current episode's progress. The job file is rewritten at most every 2 s unless
+# -Force.
+function Set-DltvEpisodeBytes {
+    param([PSCustomObject]$Job, [long]$Bytes, [switch]$Force)
+    $st = $script:DltvStat
+    if (-not $st) { return }
+    $now = [DateTime]::UtcNow
+    $done = $st.BaseDone + $Bytes
+    $dt = ($now - $st.LastT).TotalSeconds
+    if ($dt -ge 0.5) {
+        $inst = [Math]::Max(0.0, ($done - $st.LastBytes) / $dt)
+        $st.Speed = Get-DltvEmaSpeed -Previous $st.Speed -Instant $inst -Dt $dt -Window 10
+        $st.LastT = $now
+        $st.LastBytes = $done
+    }
+    $st.CurBytes = $Bytes
+    $Job.doneBytes = $done
+    $Job.speedBps = [long]$st.Speed
+    $Job.currentProgress = $(if ($st.CurTotal -gt 0) { [Math]::Min(1.0, [double]$Bytes / [double]$st.CurTotal) } else { 0.0 })
+    $total = [long]$Job.totalBytes
+    $Job.etaSec = $(if ($total -gt $done) { Get-DltvEta -RemainingBytes ($total - $done) -SpeedBps $st.Speed } else { $null })
+    if ($Force -or ($now - $st.LastSave).TotalSeconds -ge 2) {
+        $st.LastSave = $now
+        $Job.lastUpdate = (Get-DltvUtcStamp)
+        Save-DltvJob -Job $Job
+    }
+}
+
+# Before downloading anything: look up every selected episode's stream and size, flag the
+# unreleased ones, and total the bytes. Unknown sizes are filled with the average of the known
+# ones, and sizeExact says whether any were guessed. Returns the unreleased episode numbers.
+function Invoke-DltvPreScan {
+    param([PSCustomObject]$Job, [string]$Folder)
+    $known = @()
+    $unknown = 0
+    $unreleased = @()
+    foreach ($ep in @($Job.episodes | Sort-Object number)) {
+        $stem = Join-Path $Folder (Get-DltvEpisodeStem -Title $Job.title -Number $ep.number)
+        $existing = $null
+        foreach ($ext in @('mp4', 'ts')) {
+            if (Test-Path -LiteralPath "$stem.$ext") { $existing = "$stem.$ext"; break }
+        }
+        if ($existing) { $known += (Get-DltvFileLength $existing); continue }
+
+        $size = $null
+        try {
+            $url = Get-KissKHStreamUrl -EpisodeId $ep.id -BaseUrl $Job.baseUrl
+            if (-not $url) { $unreleased += [int]$ep.number; continue }
+            $size = Get-DltvStreamSize -Url $url -BaseUrl $Job.baseUrl
+        } catch {
+            Write-Log ("E{0:D2} pre-scan failed: {1}" -f $ep.number, $_.Exception.Message) 'DEBUG'
+        }
+        if ($size) { $known += [long]$size } else { $unknown++ }
+    }
+    $sum = [long]0
+    foreach ($k in $known) { $sum += [long]$k }
+    $avg = $(if ($known.Count -gt 0) { [long]($sum / $known.Count) } else { 0L })
+    $Job.totalBytes = $sum + ($avg * $unknown)
+    $Job.sizeExact = ($unknown -eq 0 -and $known.Count -gt 0)
+    $Job.notReleased = @($unreleased | ForEach-Object { 'E{0:D2}' -f $_ })
+    return $unreleased
+}
+
 # Download one episode into $Folder. Returns 'ok', 'unreleased'; throws on failure.
 function Save-DltvEpisode {
     param([PSCustomObject]$Job, $Episode, [string]$Folder)
@@ -469,16 +631,31 @@ function Save-DltvEpisode {
     if (-not $url) { return 'unreleased' }
     $maxBytes = [long]([double]$Job.maxEpisodeGB * 1GB)
 
+    # This episode's own size, for its progress figure; unknown streams report 0.
+    $script:DltvStat.CurTotal = [long](Get-DltvStreamSize -Url $url -BaseUrl $Job.baseUrl)
+    $script:DltvStat.LastT = [DateTime]::UtcNow
+    $script:DltvStat.LastBytes = $script:DltvStat.BaseDone
+    $onTick = { param($size) Set-DltvEpisodeBytes -Job $Job -Bytes $size }.GetNewClosure()
+
     if ($url -match '\.m3u8(\?|#|$)') {
-        $final = Save-DltvHlsStream -Url $url -Stem $stem -BaseUrl $Job.baseUrl -MaxBytes $maxBytes
+        $final = Save-DltvHlsStream -Url $url -Stem $stem -BaseUrl $Job.baseUrl -MaxBytes $maxBytes -OnTick $onTick
     } else {
         $final = "$stem.mp4"
-        if (-not (Invoke-DltvCurlDownload -Url $url -OutFile "$final.part" -BaseUrl $Job.baseUrl -Resume -MaxBytes $maxBytes)) {
+        if (-not (Invoke-DltvCurlDownload -Url $url -OutFile "$final.part" -BaseUrl $Job.baseUrl -Resume -MaxBytes $maxBytes -OnTick $onTick)) {
             throw "video download failed"
         }
         Move-Item -LiteralPath "$final.part" -Destination $final -Force
     }
-    Write-Log "  saved $(Split-Path -Leaf $final) ($(Format-DltvSize (Get-Item -LiteralPath $final).Length))" 'SUCCESS'
+    $size = (Get-Item -LiteralPath $final).Length
+    Write-Log "  saved $(Split-Path -Leaf $final) ($(Format-DltvSize $size))" 'SUCCESS'
+    # Count what was transferred, not the final file: an HLS remux to .mp4 shrinks the .ts, and the
+    # pre-scan total is in transferred bytes.
+    $transferred = [Math]::Max([long]$script:DltvStat.CurTotal, [long]$script:DltvStat.CurBytes)
+    if ($transferred -le 0) { $transferred = $size }
+    $script:DltvStat.BaseDone += $transferred
+    $script:DltvStat.CurTotal = 0
+    $script:DltvStat.CurBytes = 0
+    Set-DltvEpisodeBytes -Job $Job -Bytes 0 -Force
 
     try { [void](Save-DltvSubtitles -EpisodeId $Episode.id -Stem $stem -Langs @($Job.subLangs) -BaseUrl $Job.baseUrl) }
     catch { Write-Log "  subtitles failed: $($_.Exception.Message)" 'WARN' }
@@ -492,7 +669,7 @@ function Invoke-DltvKissKHWorker {
 
     $Job.pid = $PID
     $Job.startedAt = (Get-DltvUtcStamp)
-    Update-DltvJob -Job $Job -Status $script:DLTV_JOB_RUNNING -Message 'downloading'
+    Update-DltvJob -Job $Job -Status $script:DLTV_JOB_RUNNING -Message 'scanning episodes'
 
     $folder = [string]$Job.destination
     try { New-Item -ItemType Directory -Path $folder -Force -ErrorAction Stop | Out-Null }
@@ -502,18 +679,37 @@ function Invoke-DltvKissKHWorker {
         return
     }
 
+    Start-DltvStat
     $failed = @()
     $unreleased = @()
     $episodes = @($Job.episodes | Sort-Object number)
     Write-Log "Downloading $($episodes.Count) episodes of $($Job.title) to $folder" 'INFO'
 
+    $skipNumbers = @(Invoke-DltvPreScan -Job $Job -Folder $folder)
+    foreach ($n in $skipNumbers) { Write-Log ("E{0:D2} is not released yet" -f $n) 'WARN' }
+    $tilde = $(if ($Job.sizeExact) { '' } else { '~' })
+    Write-Log "Total: $tilde$(Format-DltvSize ([long]$Job.totalBytes))" 'INFO'
+    Update-DltvJob -Job $Job -Message 'downloading'
+
+    $preexisting = [long]0
     foreach ($ep in $episodes) {
         $tag = 'E{0:D2}' -f $ep.number
         $stem = Join-Path $folder (Get-DltvEpisodeStem -Title $Job.title -Number $ep.number)
-        if ((Test-Path -LiteralPath "$stem.mp4") -or (Test-Path -LiteralPath "$stem.ts")) {
+        $existing = $null
+        foreach ($ext in @('mp4', 'ts')) {
+            if (Test-Path -LiteralPath "$stem.$ext") { $existing = "$stem.$ext"; break }
+        }
+        if ($existing) {
             Write-Log "$tag already downloaded, skipping" 'INFO'
+            $len = Get-DltvFileLength $existing
+            $preexisting += $len
+            $script:DltvStat.BaseDone += $len
             $Job.done++
-            Update-DltvJob -Job $Job -Current ''
+            Set-DltvEpisodeBytes -Job $Job -Bytes 0 -Force
+            continue
+        }
+        if ($skipNumbers -contains [int]$ep.number) {
+            $unreleased += $tag
             continue
         }
 
@@ -524,6 +720,7 @@ function Invoke-DltvKissKHWorker {
             if ($result -eq 'unreleased') {
                 Write-Log "$tag is not released yet, skipping" 'WARN'
                 $unreleased += $tag
+                $Job.notReleased = @($unreleased)
             } else {
                 $Job.done++
             }
@@ -532,12 +729,22 @@ function Invoke-DltvKissKHWorker {
             $failed += $tag
             $Job.failed = @($failed)
         }
+        $script:DltvStat.CurTotal = 0
+        Set-DltvEpisodeBytes -Job $Job -Bytes 0 -Force
         Update-DltvJob -Job $Job -Current ''
     }
 
+    $elapsed = ([DateTime]::UtcNow - $script:DltvStat.Started).TotalSeconds
+    $session = [Math]::Max(0, [long]$Job.doneBytes - $preexisting)
     $msg = "$($Job.done)/$($episodes.Count) episodes"
+    if ([long]$Job.doneBytes -gt 0) { $msg += ", $(Format-DltvSize ([long]$Job.doneBytes))" }
+    if ($session -gt 0 -and $elapsed -ge 1) {
+        $msg += " in $(Format-DltvDuration $elapsed) ($(Format-DltvSpeed ($session / $elapsed)) avg)"
+    }
     if ($failed.Count)     { $msg += "; failed: $($failed -join ', ')" }
     if ($unreleased.Count) { $msg += "; not released: $($unreleased -join ', ')" }
+    $Job.speedBps = 0
+    $Job.etaSec = $null
     Complete-DltvJob -Job $Job -Message $msg
     $lvl = if ($Job.status -eq $script:DLTV_JOB_COMPLETED) { 'SUCCESS' } else { 'ERROR' }
     Write-Log "Job $($Job.status): $msg" $lvl

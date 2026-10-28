@@ -40,6 +40,10 @@ param(
     [Parameter(Mandatory=$false)]
     [switch]$Jobs = $false,
 
+    # With -Status / -Jobs: print only JSON.
+    [Parameter(Mandatory=$false)]
+    [switch]$Json = $false,
+
     # Internal: the worker spawned by a KissKH download.
     [Parameter(Mandatory=$false)]
     [string]$JobFile = ""
@@ -49,6 +53,7 @@ param(
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/DriveResolver.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/Detach.ps1")
 . (Join-Path $PSScriptRoot "KissKH.ps1")
+. (Join-Path $PSScriptRoot "Stats.ps1")
 . (Join-Path $PSScriptRoot "Jobs.ps1")
 . (Join-Path $PSScriptRoot "Download.ps1")
 
@@ -94,6 +99,7 @@ if ($JobFile) {
     try { Invoke-DltvKissKHWorker -Job $workerJob }
     catch {
         Write-Log "Worker crashed: $($_.Exception.Message)" 'ERROR'
+        Write-Log "Stack trace: $($_.ScriptStackTrace)" 'DEBUG'
         Complete-DltvJob -Job $workerJob -Message "worker crashed: $($_.Exception.Message)"
         exit 1
     }
@@ -102,13 +108,17 @@ if ($JobFile) {
 
 if ($Jobs) {
     Remove-OldDltvJobs -KeepDays ([int]$cfg.jobKeepDays)
-    Show-DltvJobList
+    Show-DltvJobList -Json:$Json
     exit 0
 }
 
 if ($Status) {
     Remove-OldDltvJobs -KeepDays ([int]$cfg.jobKeepDays)
-    if (Show-DltvJobStatus -JobId $Status) { exit 0 }
+    # The function emits the JSON (with -Json) and then a success flag; an `if` on the call
+    # would swallow the JSON, so collect it, print everything but the flag, and test the flag.
+    $statusOut = @(Show-DltvJobStatus -JobId $Status -Json:$Json)
+    $statusOut | Where-Object { $_ -isnot [bool] }
+    if ($statusOut.Count -gt 0 -and $statusOut[-1] -eq $true) { exit 0 }
     exit 1
 }
 
@@ -192,8 +202,30 @@ function Get-DltvKissKHCandidate {
     return $cands[0]
 }
 
+# Estimate a drama's total size from one episode: that episode's size x the episode count.
+# One stream lookup and one HEAD (or playlist fetch) - this is also what --dry-run does, and
+# nothing is downloaded. Returns @{ Bytes; EpisodeBytes; From } or $null when unknown.
+function Get-DltvSizeEstimate {
+    param($Episode, [int]$Count, [string]$BaseUrl)
+    try {
+        $url = Get-KissKHStreamUrl -EpisodeId ([long]$Episode.Id) -BaseUrl $BaseUrl
+        if (-not $url) { return $null }
+        $size = Get-DltvStreamSize -Url $url -BaseUrl $BaseUrl
+        if (-not $size) { return $null }
+        return [PSCustomObject]@{
+            Bytes        = [long]$size * $Count
+            EpisodeBytes = [long]$size
+            From         = ('E{0:D2}' -f $Episode.Number)
+        }
+    } catch {
+        return $null
+    }
+}
+
 # Resolve the episode list and either print the plan (-DryRun) or create a job and spawn the
-# detached worker. Returns the result JSON, or $null when there is nothing to download.
+# detached worker. Both print the same summary, which costs one stream lookup and HEAD to
+# estimate the size; a --dry-run still downloads nothing, creates no folder and spawns no worker.
+# Returns the result JSON, or $null when there is nothing to download.
 function Start-DltvKissKHDownload {
     param($Candidate, [string]$Destination, [string]$Range, [string]$BaseUrl, [string[]]$SubLangs, [double]$MaxEpisodeGB = 8, [switch]$DryRun)
 
@@ -210,21 +242,45 @@ function Start-DltvKissKHDownload {
         return $null
     }
     $folder = Join-DlPath $Destination (Get-DltvSafeName $title)
+    $rangeText = ('E{0:D2}-E{1:D2}' -f $eps[0].Number, $eps[-1].Number)
+    if ($eps.Count -eq 1) { $rangeText = ('E{0:D2}' -f $eps[0].Number) }
+
+    $est = Get-DltvSizeEstimate -Episode $eps[0] -Count $eps.Count -BaseUrl $BaseUrl
+    $drive = Get-DltvDriveInfo -Path $folder
+
+    $sizeText = 'unknown'
+    $estimatedBytes = $null
+    $estimatedGB = $null
+    if ($est) {
+        $estimatedBytes = $est.Bytes
+        $estimatedGB = [Math]::Round($est.Bytes / 1GB, 2)
+        $sizeText = "~$(Format-DltvSize $est.Bytes) (est. from $($est.From): $(Format-DltvSize $est.EpisodeBytes))"
+    }
+    $driveText = $drive.drive
+    if ($drive.driveName) { $driveText += " ($($drive.driveName))" }
+    if ($null -ne $drive.freeGB) { $driveText += ", $($drive.freeGB) GB free" }
+
+    Write-Host ""
+    Write-Host "  Title:    $title" -ForegroundColor White
+    Write-Host "  Country:  $($drama.country)" -ForegroundColor Cyan
+    Write-Host "  Status:   $($drama.status)" -ForegroundColor Cyan
+    Write-Host "  Episodes: $($eps.Count) ($rangeText)" -ForegroundColor Cyan
+    Write-Host "  Size:     $sizeText" -ForegroundColor Cyan
+    Write-Host "  Folder:   $folder" -ForegroundColor Cyan
+    if ($driveText) { Write-Host "  Drive:    $driveText" -ForegroundColor Cyan }
+    Write-Host "  Source:   KissKH direct download (no seeders)" -ForegroundColor Cyan
+    Write-Host ""
 
     if ($DryRun) {
-        Write-Host ""
-        Write-Host "  Title:    $title" -ForegroundColor White
-        Write-Host "  Id:       $($drama.id)" -ForegroundColor Cyan
-        Write-Host "  Country:  $($drama.country)" -ForegroundColor Cyan
-        Write-Host "  Status:   $($drama.status)" -ForegroundColor Cyan
-        Write-Host "  Episodes: $($eps.Count) (E$('{0:D2}' -f $eps[0].Number)-E$('{0:D2}' -f $eps[-1].Number))" -ForegroundColor Cyan
-        Write-Host "  Folder:   $folder" -ForegroundColor Cyan
-        Write-Host ""
         Write-Log "[DRY RUN] would start a background job to download $($eps.Count) episodes" "INFO"
         $jobId = $null
     } else {
+        $info = [PSCustomObject]@{
+            country = [string]$drama.country; showStatus = [string]$drama.status; episodeRange = $rangeText
+            estimatedBytes = $estimatedBytes; drive = $drive.drive; driveName = $drive.driveName; freeGB = $drive.freeGB
+        }
         $job = New-DltvJob -Title $title -DramaId ([long]$drama.id) -BaseUrl $BaseUrl `
-                           -Destination $folder -Episodes $eps -SubLangs $SubLangs -MaxEpisodeGB $MaxEpisodeGB
+                           -Destination $folder -Episodes $eps -SubLangs $SubLangs -MaxEpisodeGB $MaxEpisodeGB -Info $info
         $scriptPath = Join-Path $PSScriptRoot 'Add-TV.ps1'
         [void](Start-DltvJob -Job $job -ScriptPath $scriptPath)
         Write-Log "Background job started: $title ($($eps.Count) episodes)" "SUCCESS"
@@ -235,12 +291,20 @@ function Start-DltvKissKHDownload {
     }
 
     return ([PSCustomObject]@{
-        source      = 'kisskh'
-        title       = $title
-        dramaId     = [long]$drama.id
-        episodes    = $eps.Count
-        destination = $folder
-        jobId       = $jobId
+        source         = 'kisskh'
+        title          = $title
+        dramaId        = [long]$drama.id
+        episodes       = $eps.Count
+        destination    = $folder
+        jobId          = $jobId
+        country        = [string]$drama.country
+        showStatus     = [string]$drama.status
+        episodeRange   = $rangeText
+        estimatedBytes = $estimatedBytes
+        estimatedGB    = $estimatedGB
+        drive          = $drive.drive
+        driveName      = $drive.driveName
+        freeGB         = $drive.freeGB
     } | ConvertTo-Json)
 }
 
