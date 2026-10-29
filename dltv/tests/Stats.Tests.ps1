@@ -168,3 +168,17 @@ Describe 'job views' {
         $text.TrimStart().StartsWith('[') | Should -BeTrue
     }
 }
+
+Describe 'worker summary' {
+    It 'finishes a job past 2 GB (Int32) without crashing' {
+        Mock Update-DltvJob {}
+        Mock Invoke-DltvPreScan { @() }
+        Mock Complete-DltvJob {}
+        $j = New-DltvJob -Title 'Crazy Love' -DramaId 4659 -BaseUrl 'https://kisskh.co' -Destination (Join-Path $TestDrive 'out') `
+                -Episodes @([PSCustomObject]@{ Id = 1; Number = 1 }) -SubLangs @('en')
+        $j.episodes = @()
+        $j.doneBytes = 10874218356L
+        { Invoke-DltvKissKHWorker -Job $j } | Should -Not -Throw
+        Should -Invoke Complete-DltvJob -Times 1 -Exactly -ParameterFilter { $Message -match '10[.,]13 GB' }
+    }
+}
