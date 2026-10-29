@@ -251,6 +251,31 @@ Describe 'curl plumbing' {
     It 'returns 0 for a missing file' {
         Get-DltvFileLength (Join-Path ([System.IO.Path]::GetTempPath()) 'dltv-nope-file.bin') | Should -Be 0
     }
+
+    It 'retries a download after a DNS failure' {
+        Mock Start-Sleep {}
+        $script:calls = 0
+        Mock Invoke-DltvCurl {
+            $script:calls++
+            [PSCustomObject]@{ ExitCode = $(if ($script:calls -eq 1) { 6 } else { 0 }); Output = ''; Error = ''; Capped = $false }
+        }
+        Invoke-DltvCurlDownload -Url 'https://h/a.ts' -OutFile 'x.part' | Should -BeTrue
+        Should -Invoke Invoke-DltvCurl -Times 2 -Exactly
+    }
+
+    It 'gives up on a network error after the last attempt' {
+        Mock Start-Sleep {}
+        Mock Invoke-DltvCurl { [PSCustomObject]@{ ExitCode = 7; Output = ''; Error = ''; Capped = $false } }
+        Invoke-DltvCurlDownload -Url 'https://h/a.ts' -OutFile 'x.part' | Should -BeFalse
+        Should -Invoke Invoke-DltvCurl -Times $script:DLTV_CURL_NET_ATTEMPTS -Exactly
+    }
+
+    It 'does not retry an HTTP error' {
+        Mock Start-Sleep {}
+        Mock Invoke-DltvCurl { [PSCustomObject]@{ ExitCode = 22; Output = ''; Error = ''; Capped = $false } }
+        Invoke-DltvCurlDownload -Url 'https://h/a.ts' -OutFile 'x.part' | Should -BeFalse
+        Should -Invoke Invoke-DltvCurl -Times 1 -Exactly
+    }
 }
 
 Describe 'job store' {
