@@ -155,6 +155,7 @@ Kebab-case is the documented style across every command:
 | `--asian` | `dltv` only: download from KissKH, skip torrents |
 | `--episodes RANGE` | `dltv` with KissKH only: `3`, `1-4`, `5-` |
 | `--status ID`, `--jobs` | Inspect background jobs (`dltv`, `dlrom`) |
+| `--json` | `dltv` only, with `--status`/`--jobs`: progress, GB done/total, speed and ETA as JSON |
 | `--help` | Usage for that command |
 
 `dltv` also falls back to KissKH on its own when the best torrent has fewer than
@@ -361,7 +362,7 @@ low-seeder fallback, but only on an exact title match.
 | Status | What to tell the user |
 |---|---|
 | `pending` | It is starting. |
-| `running` | `dlrom`: give the percent and the `step`. `dltv`: give `done/total` episodes and the current one. |
+| `running` | `dlrom`: give the percent and the `step`. `dltv`: run `dltv --status <id> --json` and give `progress`, `doneGB`/`totalGB`, `speedMBps`, `eta` and the current episode. |
 | `completed` | It finished. |
 | `failed` | Read the `message` field and say why. |
 | `orphaned` | The worker died. Nothing is running. Offer to run it again. |

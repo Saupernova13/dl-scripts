@@ -59,7 +59,9 @@ function New-DltvJob {
         [string]$BaseUrl,
         [string]$Destination,       # series folder the episodes land in
         [object[]]$Episodes,        # @{ Id; Number } records
-        [string[]]$SubLangs
+        [string[]]$SubLangs,
+        [double]$MaxEpisodeGB = 8,  # abort an episode whose output passes this
+        $Info                       # @{ country; showStatus; episodeRange; estimatedBytes; drive; driveName; freeGB }
     )
     $id = [guid]::NewGuid().ToString('N').Substring(0, 12)
     return [PSCustomObject]@{
@@ -71,6 +73,21 @@ function New-DltvJob {
         baseUrl     = $BaseUrl
         destination = $Destination
         subLangs    = @($SubLangs)
+        maxEpisodeGB = $MaxEpisodeGB
+        country     = $(if ($Info) { [string]$Info.country } else { '' })
+        showStatus  = $(if ($Info) { [string]$Info.showStatus } else { '' })
+        episodeRange = $(if ($Info) { [string]$Info.episodeRange } else { '' })
+        estimatedBytes = $(if ($Info) { $Info.estimatedBytes } else { $null })
+        drive       = $(if ($Info) { [string]$Info.drive } else { '' })
+        driveName   = $(if ($Info) { [string]$Info.driveName } else { '' })
+        freeGB      = $(if ($Info) { $Info.freeGB } else { $null })
+        totalBytes  = 0
+        sizeExact   = $false
+        doneBytes   = 0
+        speedBps    = 0
+        etaSec      = $null
+        currentProgress = 0.0
+        notReleased = @()
         episodes    = @($Episodes | ForEach-Object { [PSCustomObject]@{ id = [long]$_.Id; number = [int]$_.Number } })
         total       = @($Episodes).Count
         done        = 0
@@ -130,28 +147,62 @@ function Resolve-DltvJobStatus {
     return $script:DLTV_JOB_ORPHANED
 }
 
+# -Json prints ONLY the status record (see ConvertTo-DltvStatusObject), no colour and no log
+# tail, so an agent can parse stdout directly. Returns $false for an unknown job.
 function Show-DltvJobStatus {
-    param([string]$JobId)
+    param([string]$JobId, [switch]$Json)
     $job = Read-DltvJob $JobId
     if (-not $job) {
-        Write-Log "Unknown job: $JobId" 'ERROR'
-        Write-Log "Jobs live in $(Get-DltvJobsDir)" 'INFO'
+        if ($Json) {
+            [PSCustomObject]@{ error = "Unknown job: $JobId"; id = $JobId } | ConvertTo-Json
+        } else {
+            Write-Log "Unknown job: $JobId" 'ERROR'
+            Write-Log "Jobs live in $(Get-DltvJobsDir)" 'INFO'
+        }
         return $false
     }
-    $job.status = Resolve-DltvJobStatus $job
+    $status = Resolve-DltvJobStatus $job
+    $o = ConvertTo-DltvStatusObject -Job $job -Status $status
+
+    if ($Json) {
+        $o | ConvertTo-Json -Depth 5
+        return $true
+    }
+
+    $title = $o.name
+    if ($o.country) { $title += " ($($o.country))" }
+    $size = ''
+    if ($o.totalBytes -gt 0) {
+        $tilde = $(if ($o.sizeExact) { '' } else { '~' })
+        $size = "  $(Format-DltvSize $o.doneBytes) of $tilde$(Format-DltvSize $o.totalBytes)"
+    }
 
     Write-Host ""
-    Write-Host "Job $($job.id)" -ForegroundColor Yellow
-    Write-Host "  Status:     $($job.status)" -ForegroundColor Cyan
-    if ($job.current) { Write-Host "  Current:    E$('{0:D2}' -f [int]$job.current)" -ForegroundColor Cyan }
-    Write-Host "  Progress:   $($job.done)/$($job.total) episodes" -ForegroundColor Cyan
-    Write-Host "  Title:      $($job.title)"
-    Write-Host "  Folder:     $($job.destination)"
-    Write-Host "  Created:    $($job.createdAt)"
-    if ($job.startedAt)   { Write-Host "  Started:    $($job.startedAt)" }
-    if ($job.lastUpdate)  { Write-Host "  Last upd:   $($job.lastUpdate)" }
-    if ($job.completedAt) { Write-Host "  Completed:  $($job.completedAt)" }
-    if ($job.message)     { Write-Host "  Message:    $($job.message)" }
+    Write-Host "Job $($o.id)" -ForegroundColor Yellow
+    Write-Host "  Status:     $($o.status)" -ForegroundColor Cyan
+    Write-Host "  Title:      $title"
+    Write-Host ("  Progress:   {0:N1}%{1}" -f ($o.progress * 100), $size) -ForegroundColor Cyan
+    $eps = "$($o.episodesDone)/$($o.episodesTotal)"
+    if ($null -ne $o.currentEpisode) {
+        $eps += ("  (current E{0:D2} at {1:N0}%)" -f $o.currentEpisode, ($o.currentEpisodeProgress * 100))
+    }
+    Write-Host "  Episodes:   $eps" -ForegroundColor Cyan
+    if ($o.status -eq $script:DLTV_JOB_RUNNING) {
+        Write-Host "  Speed:      $(Format-DltvSpeed $o.dlspeed)"
+        $etaText = $(if ($null -ne $o.eta) { Format-DltvDuration $o.eta } else { 'unknown' })
+        Write-Host "  ETA:        $etaText"
+    }
+    Write-Host "  Folder:     $($o.savePath)"
+    $drv = $o.drive
+    if ($o.driveName) { $drv += " ($($o.driveName))" }
+    if ($null -ne $o.freeGB) { $drv += ", $($o.freeGB) GB free" }
+    if ($drv) { Write-Host "  Drive:      $drv" }
+    Write-Host "  Source:     KissKH direct download (no seeders)"
+    Write-Host "  Created:    $($o.createdAt)"
+    if ($o.startedAt)   { Write-Host "  Started:    $($o.startedAt)" }
+    if ($o.lastUpdate)  { Write-Host "  Last upd:   $($o.lastUpdate)" }
+    if ($o.completedAt) { Write-Host "  Completed:  $($o.completedAt)" }
+    if ($o.message)     { Write-Host "  Message:    $($o.message)" }
     Write-Host ""
 
     if ($job.logFile -and (Test-Path -LiteralPath $job.logFile)) {
@@ -163,13 +214,20 @@ function Show-DltvJobStatus {
 }
 
 function Show-DltvJobList {
+    param([switch]$Json)
     $jobs = @()
     Get-ChildItem -LiteralPath (Get-DltvJobsDir) -Filter '*.json' -ErrorAction SilentlyContinue |
         Sort-Object LastWriteTime -Descending |
         ForEach-Object {
             $j = Read-DltvJobFile $_.FullName
-            if ($j) { $j.status = Resolve-DltvJobStatus $j; $jobs += $j }
+            if ($j) { $jobs += (ConvertTo-DltvStatusObject -Job $j -Status (Resolve-DltvJobStatus $j)) }
         }
+
+    if ($Json) {
+        # -InputObject keeps a one-job or empty list an array.
+        ConvertTo-Json -InputObject @($jobs) -Depth 5
+        return
+    }
 
     if ($jobs.Count -eq 0) {
         Write-Log "No dltv jobs yet." 'INFO'
@@ -177,8 +235,8 @@ function Show-DltvJobList {
     }
 
     Write-Host ""
-    Write-Host ("{0,-14}  {1,-10}  {2,-9}  {3}" -f 'JOB ID', 'STATUS', 'EPISODES', 'TITLE') -ForegroundColor Cyan
-    Write-Host ("-" * 72) -ForegroundColor DarkGray
+    Write-Host ("{0,-14}  {1,-10}  {2,-9}  {3,-6}  {4}" -f 'JOB ID', 'STATUS', 'EPISODES', 'DONE', 'TITLE') -ForegroundColor Cyan
+    Write-Host ("-" * 78) -ForegroundColor DarkGray
     foreach ($j in $jobs) {
         $color = switch ($j.status) {
             $script:DLTV_JOB_COMPLETED { 'Green'  }
@@ -187,9 +245,10 @@ function Show-DltvJobList {
             $script:DLTV_JOB_RUNNING   { 'Yellow' }
             default                    { 'Gray'   }
         }
-        $title = [string]$j.title
-        if ($title.Length -gt 36) { $title = $title.Substring(0, 33) + '...' }
-        Write-Host ("{0,-14}  {1,-10}  {2,-9}  {3}" -f $j.id, $j.status, "$($j.done)/$($j.total)", $title) -ForegroundColor $color
+        $title = [string]$j.name
+        if ($title.Length -gt 34) { $title = $title.Substring(0, 31) + '...' }
+        Write-Host ("{0,-14}  {1,-10}  {2,-9}  {3,-6}  {4}" -f $j.id, $j.status,
+            "$($j.episodesDone)/$($j.episodesTotal)", ('{0:N0}%' -f ($j.progress * 100)), $title) -ForegroundColor $color
     }
     Write-Host ""
     Write-Host "Detail: dltv --status <jobId>" -ForegroundColor DarkGray
