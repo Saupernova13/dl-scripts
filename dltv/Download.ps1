@@ -125,7 +125,14 @@ function Invoke-DltvCurlDownload {
     if ($Range)  { $curlArgs += @('-r', $Range) }
     $curlArgs += @('-A', $script:KISSKH_USER_AGENT, '-e', "$base/", '-o', $OutFile, $Url)
 
-    $r = Invoke-DltvCurl -CurlArgs $curlArgs -OutFile $OutFile -MaxBytes $MaxBytes -OnTick $OnTick
+    # A retry reruns the same command: -C - continues the partial file, otherwise -o starts over.
+    for ($attempt = 1; ; $attempt++) {
+        $r = Invoke-DltvCurl -CurlArgs $curlArgs -OutFile $OutFile -MaxBytes $MaxBytes -OnTick $OnTick
+        if ($r.Capped -or $r.ExitCode -eq 0 -or $r.ExitCode -notin $script:DLTV_CURL_NET_ERRORS -or
+            $attempt -ge $script:DLTV_CURL_NET_ATTEMPTS) { break }
+        Write-Log "curl exit $($r.ExitCode) downloading $OutFile, retrying" 'DEBUG'
+        Start-Sleep -Seconds $script:DLTV_CURL_NET_DELAY
+    }
     if ($r.Capped) {
         Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
         throw "download passed the $(Format-DltvSize $MaxBytes) per-episode cap (kisskhMaxEpisodeGB); aborted"

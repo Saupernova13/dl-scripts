@@ -31,6 +31,12 @@ $script:KISSKH_SUB_KEYS = @{
 
 # --- HTTP ---------------------------------------------------------------------
 
+# curl exit codes for a network blip that --retry does not cover: DNS (6), connect (7), TLS
+# handshake (35), empty reply (52), send/receive failure (55, 56). These get retried by us.
+$script:DLTV_CURL_NET_ERRORS   = @(6, 7, 35, 52, 55, 56)
+$script:DLTV_CURL_NET_ATTEMPTS = 3
+$script:DLTV_CURL_NET_DELAY    = 5
+
 # 'curl.exe' does not exist on Linux, where the binary is plain 'curl' - dltv is one of the
 # commands reachable on the Deck, so the name has to be resolved rather than assumed.
 function Get-DlCurlPath {
@@ -62,10 +68,16 @@ function Invoke-KissKHGet {
     $curl = Get-DlCurlPath
     $tmp  = Join-Path (Get-DlTempDir) ("dltv-get-" + [guid]::NewGuid().ToString('N') + '.tmp')
     try {
-        & $curl -s -S -L --fail --retry 2 --retry-delay 2 --max-time $TimeoutSec `
-            --connect-timeout 20 --speed-limit 1024 --speed-time 60 `
-            -A $script:KISSKH_USER_AGENT -e "$base/" -o $tmp $Url 2>$null
-        if ($LASTEXITCODE -ne 0) { throw "curl exit $LASTEXITCODE for $Url" }
+        for ($attempt = 1; ; $attempt++) {
+            & $curl -s -S -L --fail --retry 2 --retry-delay 2 --max-time $TimeoutSec `
+                --connect-timeout 20 --speed-limit 1024 --speed-time 60 `
+                -A $script:KISSKH_USER_AGENT -e "$base/" -o $tmp $Url 2>$null
+            $code = $LASTEXITCODE
+            if ($code -eq 0 -or $code -notin $script:DLTV_CURL_NET_ERRORS -or
+                $attempt -ge $script:DLTV_CURL_NET_ATTEMPTS) { break }
+            Start-Sleep -Seconds $script:DLTV_CURL_NET_DELAY
+        }
+        if ($code -ne 0) { throw "curl exit $code for $Url" }
         if (-not (Test-Path -LiteralPath $tmp)) { throw "no response body for $Url" }
         return [System.IO.File]::ReadAllText($tmp, [System.Text.Encoding]::UTF8)
     } finally {
