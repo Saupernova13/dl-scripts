@@ -742,7 +742,8 @@ function Invoke-DltvKissKHWorker {
     }
 
     $elapsed = ([DateTime]::UtcNow - $script:DltvStat.Started).TotalSeconds
-    $session = [Math]::Max(0, [long]$Job.doneBytes - $preexisting)
+    # 0L, not 0: with an Int32 literal PowerShell binds Max(Int32, Int32) and throws past 2 GB.
+    $session = [Math]::Max(0L, [long]$Job.doneBytes - $preexisting)
     $msg = "$($Job.done)/$($episodes.Count) episodes"
     if ([long]$Job.doneBytes -gt 0) { $msg += ", $(Format-DltvSize ([long]$Job.doneBytes))" }
     if ($session -gt 0 -and $elapsed -ge 1) {
