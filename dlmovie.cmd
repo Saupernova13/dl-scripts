@@ -1,7 +1,7 @@
 @echo off
 REM Quick movie downloader from YTS.bz
 REM Usage: dlmovie "Movie Name" [destination] [--quality Q] [--dry-run] [--interactive] [--max-results N]
-REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.ps1)
+REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.json)
 
 setlocal EnableDelayedExpansion
 
@@ -40,5 +40,5 @@ echo   --max-results N  cap how many results are considered
 echo   --quality Q      preferred resolution: 720p, 1080p (default), 2160p/4k, 3D
 echo   --dest PATH      override the destination
 echo.
-echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.ps1
+echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.json
 goto :eof
