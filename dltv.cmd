@@ -3,7 +3,7 @@ REM Quick TV show downloader from The Pirate Bay
 REM Usage: dltv "Show Name" [destination] [--dry-run] [--interactive] [--max-results N]
 REM        dltv "Show Name" --asian [--episodes RANGE]      (KissKH, background job)
 REM        dltv --jobs [--json] | dltv --status ID [--json]
-REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.ps1)
+REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.json)
 
 setlocal EnableDelayedExpansion
 
@@ -54,5 +54,5 @@ echo   --json           with --status or --jobs: print only JSON
 echo.
 echo A weak torrent (few seeders) falls back to KissKH on an exact title match.
 echo.
-echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.ps1
+echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.json
 goto :eof

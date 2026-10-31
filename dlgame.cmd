@@ -1,7 +1,7 @@
 @echo off
 REM Quick game downloader for appnetica.com
 REM Usage: dlgame "Game Name" [destination] [--dry-run] [--interactive] [--max-results N]
-REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.ps1)
+REM Default destination: from config (%LOCALAPPDATA%\dlScripts\config.json)
 
 setlocal EnableDelayedExpansion
 
@@ -38,5 +38,5 @@ echo   --interactive    pick from the results instead of auto-selecting
 echo   --max-results N  cap how many results are considered
 echo   --dest PATH      override the destination
 echo.
-echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.ps1
+echo Default destination: resolved from %LOCALAPPDATA%\dlScripts\config.json
 goto :eof
