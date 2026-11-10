@@ -18,8 +18,8 @@ DL_BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$DL_SELF")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$DL_BIN_DIR/.." && pwd)
 PS_SCRIPT="$REPO_ROOT/dlrom/Add-ROM.ps1"
 DL_POSITIONALS="Query"
-DL_FLAG_VALUES="--platform:Platform --region:Region --sort:Sort --dest:Destination --destination:Destination --vita:VitaBuild --status:Status --torrent-pick:TorrentPick --max-results:MaxResults --job-file:JobFile"
-DL_FLAG_SWITCHES="--wait:Wait --interactive:Interactive --no-extract:NoExtract --no-steam:NoSteam --no-torrent:NoTorrent --no-game-mode:NoGameMode --json:Json --verbose:Verbose --quiet:Quiet --clean:Clean --clear:Clean --all:All --jobs:ListJobs --sync-steam:SyncSteam --steam-queue:SteamQueue"
+DL_FLAG_VALUES="--platform:Platform --region:Region --sort:Sort --dest:Destination --destination:Destination --vita:VitaBuild --status:Status --torrent-pick:TorrentPick --max-results:MaxResults --job-file:JobFile --phone:Phone --code:Code --password:Password"
+DL_FLAG_SWITCHES="--wait:Wait --interactive:Interactive --no-extract:NoExtract --no-steam:NoSteam --no-torrent:NoTorrent --no-game-mode:NoGameMode --json:Json --verbose:Verbose --quiet:Quiet --clean:Clean --clear:Clean --all:All --jobs:ListJobs --sync-steam:SyncSteam --steam-queue:SteamQueue --telegram-login:TelegramLogin --telegram-status:TelegramStatus --telegram-logout:TelegramLogout"
 
 # --dry-run means "look everything up, change nothing" either way, but which parameter that is
 # depends on the mode: a search resolves links, --clean lists what would go. Same for --list,
@@ -28,7 +28,7 @@ case ${1:-} in
     --clean|--clear)
         DL_FLAG_SWITCHES="$DL_FLAG_SWITCHES --dry-run:DryRun --dryrun:DryRun --list:ListJobs"
         ;;
-    --list|--jobs|--status|--sync-steam|--steam-queue)
+    --list|--jobs|--status|--sync-steam|--steam-queue|--telegram-login|--telegram-status|--telegram-logout)
         DL_FLAG_SWITCHES="$DL_FLAG_SWITCHES --dry-run:DryRun --dryrun:DryRun --list:ListJobs"
         ;;
     *)
@@ -46,6 +46,11 @@ Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|con
        dlrom --clean [--all] [--dry-run] [--json]
        dlrom --sync-steam [--json]     run any Steam syncs deferred by Game Mode
        dlrom --steam-queue [--json]    show what is waiting, without running it
+       dlrom --telegram-login --phone +27821234567       send a Telegram login code
+       dlrom --telegram-login --code 12345 [--password P] finish the login (2FA password or TG_2FA_PASSWORD)
+       dlrom --telegram-login          interactive login (prompts for phone, code, password)
+       dlrom --telegram-status [--json]    show the logged-in Telegram user
+       dlrom --telegram-logout         log out and delete the Telegram session
 
   --dry-run  resolve and print the download links, then stop without downloading.
              --list and --links-only do the same thing.

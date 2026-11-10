@@ -53,6 +53,9 @@ if /i "%~1"=="--steam-queue" goto :steam_queue
 if /i "%~1"=="--clean"  goto :do_clean
 if /i "%~1"=="-clean"   goto :do_clean
 if /i "%~1"=="--clear"  goto :do_clean
+if /i "%~1"=="--telegram-login"  goto :telegram
+if /i "%~1"=="--telegram-status" goto :telegram
+if /i "%~1"=="--telegram-logout" goto :telegram
 
 if "%~1"=="" (
     echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
@@ -61,6 +64,11 @@ if "%~1"=="" (
     echo        dlrom --clean [--all] [--dry-run] [--json]
     echo        dlrom --sync-steam [--json]   run Steam syncs deferred by Steam Deck Game Mode
     echo        dlrom --steam-queue [--json]  show deferred Steam syncs without running them
+    echo        dlrom --telegram-login --phone +27821234567       send a Telegram login code
+    echo        dlrom --telegram-login --code 12345 [--password P]  finish it ^(or set TG_2FA_PASSWORD^)
+    echo        dlrom --telegram-login        interactive Telegram login
+    echo        dlrom --telegram-status [--json]   show the logged-in Telegram user
+    echo        dlrom --telegram-logout       log out and delete the Telegram session
     echo.
     echo Downloads run in the BACKGROUND by default and return a job id immediately.
     echo.
@@ -248,5 +256,51 @@ if /i "%~1"=="--json"    ( set "PS_ARGS=%PS_ARGS% -Json"   & goto :clean_args )
 if /i "%~1"=="--verbose" ( set "PS_ARGS=%PS_ARGS% -Verbose" & goto :clean_args )
 goto :clean_args
 :clean_run
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+REM --- Telegram account: --telegram-login|status|logout plus --phone/--code/--password/--json.
+REM     A password containing & ^ or %% breaks in batch; set TG_2FA_PASSWORD instead.
+:telegram
+set "PS_ARGS="
+if /i "%~1"=="--telegram-login"  set "PS_ARGS=-TelegramLogin"
+if /i "%~1"=="--telegram-status" set "PS_ARGS=-TelegramStatus"
+if /i "%~1"=="--telegram-logout" set "PS_ARGS=-TelegramLogout"
+:tg_args
+shift
+if "%~1"=="" goto :tg_run
+if /i "%~1"=="--phone"    goto :tg_phone
+if /i "%~1"=="--code"     goto :tg_code
+if /i "%~1"=="--password" goto :tg_password
+if /i "%~1"=="--json"     goto :tg_json
+if /i "%~1"=="--verbose"  goto :tg_verbose
+set "DL_ARG=%~1"
+if "%DL_ARG:~0,1%"=="-" goto :bad_flag
+goto :tg_args
+
+:tg_phone
+shift
+set "PS_ARGS=%PS_ARGS% -Phone "%~1""
+goto :tg_args
+
+:tg_code
+shift
+set "PS_ARGS=%PS_ARGS% -Code "%~1""
+goto :tg_args
+
+:tg_password
+shift
+set "PS_ARGS=%PS_ARGS% -Password "%~1""
+goto :tg_args
+
+:tg_json
+set "PS_ARGS=%PS_ARGS% -Json"
+goto :tg_args
+
+:tg_verbose
+set "PS_ARGS=%PS_ARGS% -Verbose"
+goto :tg_args
+
+:tg_run
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
 exit /b %ERRORLEVEL%

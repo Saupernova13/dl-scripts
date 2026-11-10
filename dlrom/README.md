@@ -466,6 +466,30 @@ Download Manager and aria2c fetch them directly.
 There is no Docker, no FlareSolverr and no `curl_cffi`. Unlike cdromance,
 retrogametalk.com serves plain HTTP clients, so `Invoke-WebRequest` is enough.
 
+## Telegram account (native MTProto client)
+
+`lib/Telegram/` is a Telegram user-account client written in PowerShell on the .NET BCL alone
+(no TDLib, Telethon or packages). It is groundwork for chatting with Telegram bots; the flags
+below only manage the login.
+
+1. Create an app at https://my.telegram.org and put the values in `config.json` under `[rom]`
+   (`telegramApiId`, `telegramApiHash`), or set `TG_API_ID` / `TG_API_HASH` (these win).
+2. Log in in two steps, so an agent without a terminal can do it:
+
+```
+dlrom --telegram-login --phone +27821234567     # sends the code, prints "code sent"
+dlrom --telegram-login --code 12345             # signs in
+dlrom --telegram-login --password <2FA>         # only if 2FA is on (or set TG_2FA_PASSWORD)
+dlrom --telegram-login                          # interactive host: prompts for each
+dlrom --telegram-status [--json]                # who is logged in
+dlrom --telegram-logout                         # auth.logOut and delete the session
+```
+
+Exit codes: 0 ok, 1 error, 2 not logged in (status), 3 more input needed (code sent / password
+needed). The session (auth keys, user id) lives in `<data dir>/telegram/session.json`, readable
+by the current user only; it is the account, so never share it. The bundled TL schema
+(`lib/Telegram/schema/`) is layer 233; see its README for the pinned commit.
+
 ## Steam ROM Manager
 
 After a ROM is installed, dlrom adds it to Steam through Steam ROM Manager (SRM).
