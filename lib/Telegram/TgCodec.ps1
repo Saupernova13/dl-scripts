@@ -43,13 +43,15 @@ function ConvertTo-TlInt64 {
 
 function Get-TlFieldValue {
     param($Object, [string]$Name)
+    $v = $null
     if ($Object -is [System.Collections.IDictionary]) {
-        if ($Object.Contains($Name)) { return $Object[$Name] }
-        return $null
+        if ($Object.Contains($Name)) { $v = $Object[$Name] }
+    } else {
+        $p = $Object.PSObject.Properties[$Name]
+        if ($p) { $v = $p.Value }
     }
-    $p = $Object.PSObject.Properties[$Name]
-    if ($p) { return $p.Value }
-    return $null
+    if ($null -eq $v) { return $null }
+    return ,$v      # keep a byte[] / array a single value instead of letting the pipeline unroll it
 }
 
 # --- writer -------------------------------------------------------------------

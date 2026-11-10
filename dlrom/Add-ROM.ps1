@@ -46,7 +46,16 @@ param(
     # Housekeeping surface
     [switch]$Clean,
     [switch]$All,
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    # Telegram account surface (see TelegramCli.ps1). Login is two-step: --phone sends a code,
+    # --code (plus --password when 2FA is on) finishes it.
+    [switch]$TelegramLogin,
+    [switch]$TelegramStatus,
+    [switch]$TelegramLogout,
+    [string]$Phone = "",
+    [string]$Code = "",
+    [string]$Password = ""
 )
 
 # Load order matters only for the files defining script-scope VALUES: Constants first
@@ -70,6 +79,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Ps2Serial.ps1')         # PS2 serial resolve + result/handoff to dlps2tex
 . (Join-Path $PSScriptRoot 'RomPipeline.ps1')       # download -> extract -> file -> Steam (shared by worker and --wait)
 . (Join-Path $PSScriptRoot 'Clean.ps1')             # --clean: temp files, partials, caches, job history
+# (lib/Telegram/Telegram.ps1, the native MTProto client, loads on demand: compiling its helpers costs ~0.2s)
+. (Join-Path $PSScriptRoot 'TelegramCli.ps1')       # --telegram-login / --telegram-status / --telegram-logout
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
@@ -121,11 +132,23 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     qbitPass             = ""
     ps2GameIndexPath     = ""     # blank = autodetect PCSX2 GameIndex.yaml (serial resolution for the dlps2tex handoff)
     jobKeepDays          = 7      # prune finished job files + logs after this many days
+    # Telegram user-account client. Create an app at https://my.telegram.org to get both values;
+    # TG_API_ID / TG_API_HASH in the environment override them.
+    telegramApiId        = ""
+    telegramApiHash      = ""
 })
 
 # Publish the section so every module's Get-CfgValue (Common.ps1) reads the same config
 # without it being threaded through signatures that do not otherwise need it.
 Set-DlromConfig $cfg
+
+# Telegram account flags. They need only the config (api_id / api_hash) and the network, so
+# they answer before any search or housekeeping logic.
+if ($TelegramLogin -or $TelegramStatus -or $TelegramLogout) {
+    . (Join-Path $repoRoot 'lib/Telegram/Telegram.ps1')
+    exit (Invoke-DlromTelegram -Login:$TelegramLogin -Status:$TelegramStatus -Logout:$TelegramLogout `
+            -Phone $Phone -Code $Code -Password $Password -AsJson:$Json)
+}
 
 # Drain the deferred Steam queue. Needs $cfg (srmExe, srmRestartSteam), hence its position
 # here rather than with the other query switches above.

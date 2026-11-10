@@ -25,7 +25,7 @@ $script:TG_BUILTIN_TL = @(
     '_mt_message#5bb8e511 msg_id:long seqno:int bytes:int body:Object = MtMessage;'
     'msg_container#73f1f8dc messages:vector<_mt_message> = MessageContainer;'
     'msg_copy#e06046b2 orig_message:_mt_message = MessageCopy;'
-    'gzip_packed#3072cfa1 packed_data:string = Object;'
+    'gzip_packed#3072cfa1 packed_data:bytes = Object;'
 )
 
 $script:TG_CRC_TABLE = $null
@@ -106,7 +106,7 @@ function Register-TlLine {
 
 # Parse one .tl file's text into $Schema; returns the LAYER number if the file states one.
 function Import-TlText {
-    param($Schema, [string]$Text)
+    param($Schema, [string]$Text, [switch]$BinaryStrings)
     $isFunction = $false
     $layer = 0
     foreach ($line in $Text.Split("`n")) {
@@ -114,6 +114,10 @@ function Import-TlText {
         if ($l -eq '---functions---') { $isFunction = $true;  continue }
         if ($l -eq '---types---')     { $isFunction = $false; continue }
         if ($l.StartsWith('// LAYER ')) { $layer = [int]$l.Substring(9).Trim(); continue }
+        # mtproto.tl types its binary blobs (pq, g_a, encrypted_answer...) `string`, but they are
+        # not text. The wire format is identical, so read them as bytes - except rpc_error,
+        # whose message is.
+        if ($BinaryStrings -and -not $l.StartsWith('rpc_error')) { $l = $l.Replace(':string', ':bytes') }
         [void](Register-TlLine -Schema $Schema -Line $l -IsFunction $isFunction)
     }
     return $layer
@@ -135,7 +139,7 @@ function Initialize-TgSchema {
         $path = Join-Path $SchemaDir $file
         if (-not (Test-Path -LiteralPath $path)) { throw "Telegram schema file missing: $path" }
         $text  = [System.IO.File]::ReadAllText($path)
-        $layer = Import-TlText -Schema $schema -Text $text
+        $layer = Import-TlText -Schema $schema -Text $text -BinaryStrings:($file -eq 'mtproto.tl')
         if ($layer -gt 0) { $schema.Layer = $layer }
     }
     foreach ($def in $script:TG_BUILTIN_TL) {
@@ -185,7 +189,7 @@ function Get-TlTypeInfo {
             $info = @{ Kind = 'boxed'; Name = 'Object' }
         } else {
             $last = $Type.Substring($Type.LastIndexOf('.') + 1)
-            if ($last.Length -gt 0 -and [char]::IsLower($last[0])) {
+            if ($last.Length -gt 0 -and -not [char]::IsUpper($last[0])) {
                 $info = @{ Kind = 'bare'; Name = $Type; ByCtor = $true }
             } else {
                 $info = @{ Kind = 'boxed'; Name = $Type }
