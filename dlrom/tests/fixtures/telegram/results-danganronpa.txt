@@ -1,0 +1,24 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+✅Found torrents: 5✅
+
+Danganronpa - Trigger Happy Havoc [2.63 GB]
+/download471 /cover471
+
+Danganronpa 2 - Goodbye Despair [3.04 GB]
+/download335 /cover335
+
+Danganronpa Another Episode - Ultra Despair Girls [4.05 GB]
+/download378 /cover378
+
+Danganronpa V3 - Killing Harmony Demo Ver. [661.3 MB]
+/download138 /cover138
+
+Danganronpa V3 - Killing Harmony [8.82 GB]
+/download455 /cover455
+
+Dont know what to play? Use the features of our recommendation neural network on the /recommended page.
+
+You can find our bots for all existing gaming platforms and PCs, as well as our other projects, by clicking /allbots or visiting our official website.
+Thank you for being with us!

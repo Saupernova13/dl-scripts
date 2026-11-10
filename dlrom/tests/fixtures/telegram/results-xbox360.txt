@@ -1,0 +1,12 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+✅Found torrents: 1✅
+
+Halo -Reach [7.3 GB]
+/download279 /cover279
+
+Dont know what to play? Use the features of our recommendation neural network on the /recommended page.
+
+You can find our bots for all existing gaming platforms and PCs, as well as our other projects, by clicking /allbots or visiting our official website.
+Thank you for being with us!

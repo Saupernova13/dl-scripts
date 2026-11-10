@@ -1,0 +1,38 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+✅Found torrents: 10✅
+
+God of War - Ascension [36.6 GB]
+/download687 /cover687
+
+God of War - Ascension [721 MB]
+/download19 /cover19
+
+God of War - Ascension [36.58 GB]
+/download38 /cover38
+
+God of War - Collection HD Remastered Volume 1 [21.9 GB]
+/download780 /cover780
+
+God of War HD Collection Volume I [22.08 GB]
+/download313 /cover313
+
+God of War HD Collection Volume II [16.44 GB]
+/download314 /cover314
+
+God of War HD [5.91 GB]
+/download1410 /cover1410
+
+God of War II HD [6.27 GB]
+/download1217 /cover1217
+
+God of War III [29.07 GB]
+/download267 /cover267
+
+God of War III [40.15 GB]
+/download1228 /cover1228
+
+Dont know what to play? Use the features of our recommendation neural network on the /recommended page.
+
+Bots may disappear, but NSWTL Client will find the network again. All NSWTL bots, Telegram synchronization, and access during restrictions — send /gui to download the Windows client.

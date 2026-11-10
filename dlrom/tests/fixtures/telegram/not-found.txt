@@ -1,0 +1,9 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+❌Found torrents: 0❌
+
+No torrents found for your query - please refine your search and try again.
+
+You can find our bots for all existing gaming platforms and PCs, as well as our other projects, by clicking /allbots or visiting our official website.
+Thank you for being with us!
