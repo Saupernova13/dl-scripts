@@ -5,6 +5,10 @@ Downloads one console game and installs it for you.
 It searches [The Repo](https://retrogametalk.com/repo/) on RetroGameTalk, downloads
 the ROM, unpacks it, puts it in the right emulator folder, and adds it to Steam.
 
+For consoles The Repo does not carry (Switch, 3DS, PS3, PS4, PS5, Xbox 360, Xbox, Wii U),
+and for games The Repo fails on, it asks the NSWTL Telegram library bots instead. That is
+a second source with its own rules: see [Telegram bots as a source](#telegram-bots-as-a-source).
+
 > The old cdromance.org catalogue now lives at `retrogametalk.com/repo/`. dlrom
 > uses that address. cdromance is gone, and so is the Cloudflare bypass it needed.
 
@@ -15,6 +19,7 @@ gives you a job id. It returns in seconds. You never wait for the download.
 
 ```
 dlrom "Game Name" [options]
+dlrom "Game Name" --platform switch          # Telegram-only console
 dlrom --status <jobId> [--json]
 dlrom --jobs [--json]
 dlrom --clean [--all] [--dry-run] [--json]
@@ -31,7 +36,20 @@ Add the repo root to `PATH` to run it from anywhere. Put the game name in quotes
 `windows`, `scummvm`, `neogeocd`, `ngp`, `ngpc`, `pc88`, `pc98`, `pcfx`,
 `tg16`, `pcengine`, `tgcd`, `wonderswan`, `ws`
 
-There is no 3DS. The Repo does not carry 3DS games.
+Served only by the Telegram bots (see [Telegram bots as a source](#telegram-bots-as-a-source)):
+
+| Platform | Aliases | Folder under `romsBase` |
+|---|---|---|
+| `switch` | `nsw`, `ns` | `switch` |
+| `3ds` | `n3ds` | `n3ds` |
+| `ps3` | | `ps3` |
+| `ps4` | | `ps4` |
+| `ps5` | | `ps5` |
+| `xbox360` | `x360` | `xbox360` |
+| `xbox` | | `xbox` |
+| `wiiu` | | `wiiu` |
+
+The Repo does not carry these, so `--source auto` sends them straight to Telegram.
 
 ### Regions
 
@@ -45,6 +63,8 @@ dlrom "Final Fantasy VII" --platform ps1
 dlrom "Metal Slug" --platform ps2 --region usa
 dlrom "Danganronpa V3" --platform vita        # Vita3K build, kept zipped
 dlrom "Persona 4 Golden" --vita console       # NoNpDrm build, for a real Vita
+dlrom "Mario Kart 8" --platform switch       # Telegram bot (no Repo for Switch)
+dlrom "Danganronpa" --platform vita --source telegram --dry-run   # ask the bot, print the pick
 
 dlrom --status a3f9c21b8e04                   # how is it going?
 dlrom --jobs                                  # all recent jobs
@@ -63,6 +83,7 @@ dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
 | `--platform NAME` | Search one console only, and pick the folder to install into. Without it, dlrom guesses the console from the search result. |
 | `--region NAME` | Prefer a region: `usa`, `europe`, `japan`, `world`. |
 | `--vita emu\|console\|any` | PS Vita only. Which build to take. See [PS Vita](#ps-vita-two-versions-of-every-game). |
+| `--source auto\|rgt\|telegram` | Where to look. `auto` (default): The Repo first, the console's Telegram bot as the fallback, and Telegram straight away for Telegram-only consoles. `rgt` (aliases `retrogametalk`, `repo`): The Repo only. `telegram` (alias `tg`): the bot only; needs `--platform`. See [Telegram bots as a source](#telegram-bots-as-a-source). |
 | `--sort ORDER` | Sort the search results. |
 | `--dest PATH` | Install into this folder instead of the usual one. |
 | `--wait` | Download in this window instead of the background. For humans watching a progress bar. |
@@ -70,9 +91,9 @@ dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
 | `--jobs` | List recent jobs, newest first. `--list` with no game name does the same. |
 | `--clean` | Delete temp files, part-files and caches. See [Housekeeping](#housekeeping). |
 | `--all` | With `--clean`: also delete finished job records. |
-| `--dry-run` | Resolve everything and stop: with a game name, print the download links and download nothing; with `--clean`, show what would go and delete nothing. `--list` and `--links-only` are synonyms of the first sense. |
-| `--json` | Machine-readable output. |
-| `--interactive` | Pick from the results list yourself. Needs a person at the keyboard. |
+| `--dry-run` | Resolve everything and stop: with a game name, print the download links and download nothing (Telegram: send the search, print the results and the pick, never request the torrent); with `--clean`, show what would go and delete nothing. `--list` and `--links-only` are synonyms of the first sense. |
+| `--json` | Machine-readable output. A Telegram run prints one object: `ok`, `jobId`, `title`, `hash`, `bot`, `platform`, `savePath`. |
+| `--interactive` | Pick from the results list yourself, on any source. Needs a person at the keyboard. |
 | `--no-extract` | Keep the downloaded archive. Do not unpack or install it. |
 | `--no-steam` | Skip the Steam step this run. On a Steam Deck this also means it never leaves Game Mode. |
 | `--sync-steam` | Add ROMs to Steam now. Runs a full Steam ROM Manager pass when nothing is queued. |
@@ -133,12 +154,13 @@ While `running`, the `step` field is one of: `downloading`, `extracting`,
 | Field | Meaning |
 |---|---|
 | `id` | Job id. |
-| `kind` | `retrogametalk` or `torrent` (the PS2 fallback). |
+| `kind` | `retrogametalk`, `torrent` (the PS2 fallback) or `telegram` (a bot torrent). |
 | `status` | See the table above. |
 | `step` | Current phase. |
 | `progress` | 0 to 100. |
 | `installedPaths` | Every file this job installed. |
 | `vitaBuild` | `emu` or `console` for a PS Vita download. Empty otherwise. |
+| `torrent` | Telegram jobs only: `hash`, `bot`, `command`, `savePath`, `platformFolder`, `file`, `tag`, `alreadyPresent`. |
 | `noExtract` | True if the download was kept as an archive. |
 | `handoff` | The `[HANDOFF]` line for PS2. Feed its serial to `dlps2tex`. |
 | `logFile` | Full worker log. |
@@ -466,10 +488,89 @@ Download Manager and aria2c fetch them directly.
 There is no Docker, no FlareSolverr and no `curl_cffi`. Unlike cdromance,
 retrogametalk.com serves plain HTTP clients, so `Invoke-WebRequest` is enough.
 
+## Telegram bots as a source
+
+NSWTL runs one Telegram bot per console (`@PSVita_library_bot`, `@Switch_library_bot`, ...).
+You message it a game name, it lists matches, and `/download<id>` returns a `.torrent`. dlrom
+does that conversation for you through the [native Telegram client](#telegram-account-native-mtproto-client)
+and hands the torrent to qBittorrent.
+
+```
+dlrom "Danganronpa" --platform vita --source telegram
+dlrom "Mario Kart 8" --platform switch            # auto: Telegram-only console, straight to the bot
+dlrom "Rayman 2" --platform ps2                   # auto: The Repo first, the PS2 bot if that fails
+```
+
+### How a run goes
+
+1. Checks (before any message is sent): the Telegram session is logged in (`dlrom --telegram-login`,
+   once) and qBittorrent's WebUI answers. dlrom does not start qBittorrent.
+2. Sends the game name to the console's bot and waits for its result list. Only a message that
+   looks like a result list, "nothing found", a subscription gate or a rate-limit notice counts
+   as the answer; broadcasts and other chatter are ignored.
+3. The bot pages long lists (12 entries per page, inline buttons). dlrom reads further pages only
+   while no entry holds every word of your query, up to `telegramMaxPages`. `--interactive`
+   reads all of them (up to the cap) so you can choose from the lot.
+4. Picks one entry with the same scorer as The Repo: a base game over an edition or demo, then the
+   fewest extra words. Updates and DLC are left out unless the query names them.
+5. Sends `/download<id>`, saves the `.torrent` under `<data dir>/telegram/torrents/`, and adds it
+   to qBittorrent with save path `<romsBase>\.dlrom-torrent\<folder>` and tags `dlrom` plus
+   `dlrom-<jobId>`. qBittorrent starts it. A torrent qBittorrent already holds is left exactly as
+   it is.
+6. Records a job (`kind` `telegram`, `status` `running`, `step` `downloading`) with the torrent hash,
+   bot, command, save path, console folder and final destination, and prints the usual spawn
+   summary (or one JSON object with `--json`).
+
+**dlrom stops at "downloading".** Waiting for the torrent to finish, extracting it and filing the
+result is not built yet; the job record carries what that step needs. Until then the data stays in
+the staging folder, and `dlrom --clean` leaves the staging folder of a running Telegram job alone.
+
+### What the bots say
+
+| Reply | Handled as |
+|---|---|
+| `Found torrents: N` (also `Found torrents for you: N`, `Found games: N`) | a result list; `N` counts all pages |
+| `Found torrents: 0` / "No torrents found for your query" | nothing found: exit 1, no fallback left |
+| inline buttons `-1- 2 3 ...` | pages of 12; the bot edits the same message when one is pressed |
+| a message with a `.torrent` document | the answer to `/download<id>` |
+| "subscribe to our channel", "too many requests" | reported with the bot's own words (the exact texts have not been seen yet, so these are matched loosely) |
+
+The bots do not share one layout. Three have been seen (`Title [size]`, a multi-line
+`Title / Size: / Download:` block on Switch, and a size-less `/rate` form on 3DS) and the parser
+reads all of them. Search is fuzzy: "Halo 3" on Xbox 360 returns "Halo -Reach". A title the bot
+cuts with `...` is flagged and the pick is made on the visible part. Several entries can share a
+title with different sizes (a full dump and a PSN pack); the first one wins a tie.
+
+### Notes
+
+- **PS Vita**: the bot's torrents are NoNpDrm (console) builds. `--vita emu` still proceeds, with a
+  warning; the job records `vitaBuild: console`.
+- **PS2 with `auto`**: the Redump torrent fallback runs first. In the default background mode it
+  takes over the request, so the Telegram bot is only tried after it with `--wait`.
+- Messages are sent at a human pace (`telegramMinSendGapSec`) and never repeated.
+- Errors that name a login problem point at `dlrom --telegram-login`.
+
+### Telegram source config keys
+
+| Key | Meaning |
+|---|---|
+| `telegramBots` | Object mapping a platform (any alias: `vita`, `ps4`, `switch`, `ps1`) to a bot username, `@` optional. Overrides the built-in table, which NSWTL may outgrow; a missing key falls back to the built-in bot. |
+| `telegramReplyTimeoutSec` | How long to wait for a bot's answer. Default `30`. |
+| `telegramFallback` | In `auto`, retry a failed RetroGameTalk search on Telegram. Default `true`. |
+| `telegramMinSendGapSec` | Minimum gap between messages (and button presses) sent to a bot. Default `3`. |
+| `telegramMaxPages` | Result pages read per search. Default `4`. |
+| `qbitHost` / `qbitUser` / `qbitPass` | The qBittorrent WebUI, as for the PS2 fallback. |
+
+Built-in bots: `switch` Switch_library_bot, `3ds` N3DS_library_bot, `nds` NDS_library_bot, `psx`
+PSX_library_bot, `ps2` PS2_libr_bot, `ps3` PS3_libr_bot, `ps4` PS4_libr_bot, `ps5` PS5_libr_bot,
+`psp` PSP_libr_bot, `vita` PSVita_library_bot, `wii` and `wiiu` Wii_library_bot, `gamecube`
+Gamecube_library_bot, `dreamcast` Dreamcast_library_bot, `xbox360` Xbox360_library_bot, `xbox`
+Xbox_library_bot. All resolve on Telegram; searches have been sent to the Vita, Switch, PS3, PS4,
+3DS and Xbox 360 bots.
 ## Telegram account (native MTProto client)
 
 `lib/Telegram/` is a Telegram user-account client written in PowerShell on the .NET BCL alone
-(no TDLib, Telethon or packages). It is groundwork for chatting with Telegram bots; the flags
+(no TDLib, Telethon or packages). It is what the Telegram bot source talks through; the flags
 below only manage the login.
 
 1. Create an app at https://my.telegram.org and put the values in `config.json` under `[rom]`
