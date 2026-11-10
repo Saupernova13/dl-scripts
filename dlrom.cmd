@@ -1,6 +1,6 @@
 @echo off
-REM dlrom - Download ROMs from RetroGameTalk's Repo and install them to your emulator folders
-REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
+REM dlrom - Download ROMs from RetroGameTalk's Repo or the NSWTL Telegram bots and install them to your emulator folders
+REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--source auto|rgt|telegram] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
 REM        dlrom --status <jobId> [--json]
 REM        dlrom --jobs [--json]
 REM        dlrom --clean [--all] [--dry-run] [--json]
@@ -13,13 +13,16 @@ REM Downloads run in the BACKGROUND by default: dlrom searches, resolves the lin
 REM a worker and returns a job id straight away. Follow it with --status; use --wait only
 REM when you actually want to sit and watch the transfer.
 REM
-REM Source: https://retrogametalk.com/repo/ (the former cdromance catalogue). No account
-REM is required - The Repo serves anonymous clients in full.
+REM Sources: https://retrogametalk.com/repo/ (the former cdromance catalogue; no account needed) and the NSWTL Telegram library bots (log in once with dlrom --telegram-login).
+REM --source auto (default) tries The Repo first and falls back to the bot for that console;
+REM Switch, 3DS, PS3, PS4, PS5, Xbox 360, Xbox and Wii U exist only on Telegram. A Telegram
+REM download is a .torrent handed to qBittorrent (see dlrom\README.md).
 REM
 REM Platforms: ps2, ps1/psx, psp, eboot, vita, n64, gamecube, wii, nds, gba, snes, nes, fds,
 REM            gbc, gb, dreamcast, saturn, segacd, genesis, 32x, sms, gamegear, pico, 3do,
 REM            amiga, arcade, msx, dos, windows, scummvm, neogeocd, ngp, pc88, pc98, pcfx,
 REM            tg16, tgcd, wonderswan
+REM Telegram-only: switch, 3ds, ps3, ps4, ps5, xbox360, xbox, wiiu
 REM Regions:   usa, europe, japan, world
 REM
 REM PS Vita games are published twice - [NoNpDrm] for a modded console and [Vita3K] for the
@@ -31,6 +34,8 @@ REM   dlrom "Rayman 2"
 REM   dlrom "Final Fantasy VII" --platform ps1
 REM   dlrom "Danganronpa V3" --platform vita             (Vita3K build)
 REM   dlrom "Danganronpa V3" --platform vita --vita console
+REM   dlrom "Mario Kart 8" --platform switch            (Telegram only)
+REM   dlrom "Danganronpa" --platform vita --source telegram --dry-run
 REM   dlrom --status a3f9c21b8e04
 REM   dlrom --list
 
@@ -58,7 +63,7 @@ if /i "%~1"=="--telegram-status" goto :telegram
 if /i "%~1"=="--telegram-logout" goto :telegram
 
 if "%~1"=="" (
-    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
+    echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--source auto^|rgt^|telegram] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
     echo        dlrom --status ^<jobId^> [--json]
     echo        dlrom --jobs [--json]
     echo        dlrom --clean [--all] [--dry-run] [--json]
@@ -76,6 +81,7 @@ if "%~1"=="" (
     echo            fds, gbc, gb, dreamcast, saturn, segacd, genesis, 32x, sms, gamegear, pico,
     echo            3do, amiga, arcade, msx, dos, windows, scummvm, neogeocd, ngp, pc88, pc98,
     echo            pcfx, tg16, tgcd, wonderswan
+    echo Telegram-only: switch, 3ds, ps3, ps4, ps5, xbox360, xbox, wiiu
     echo Regions:   usa, europe, japan, world
     echo.
     echo PS Vita games ship as two builds: [Vita3K] for the emulator and [NoNpDrm] for a
@@ -84,8 +90,13 @@ if "%~1"=="" (
     echo   --vita emu     PS Vita: take the Vita3K build - the default, kept as a .zip
     echo   --vita console PS Vita: take the NoNpDrm build for real hardware
     echo   --vita any     PS Vita: no preference, take whatever is listed first
+    echo                  ^(the Telegram bot only has NoNpDrm builds^)
+    echo   --source S     auto ^(default^): RetroGameTalk first, the Telegram bot for that console
+    echo                  as the fallback ^(and straight to Telegram for Switch, 3DS, PS3, ...^)
+    echo                  rgt ^(alias repo^): RetroGameTalk only    telegram ^(alias tg^): bot only
     echo   --dry-run      resolve and print the download links, then stop without
-    echo                  downloading. --list and --links-only do the same thing.
+    echo                  downloading ^(Telegram: search and show the pick, never request the
+    echo                  torrent^). --list and --links-only do the same thing.
     echo   --wait         stay in the foreground until the ROM is installed
     echo   --status ID    show progress for a job
     echo   --jobs         list recent jobs ^(--list with no game name does the same^)
@@ -106,6 +117,8 @@ if "%~1"=="" (
     echo   dlrom "Metal Slug" --platform ps2 --region usa
     echo   dlrom "Danganronpa V3" --platform vita
     echo   dlrom "Danganronpa V3" --platform vita --vita console
+    echo   dlrom "Mario Kart 8" --platform switch
+    echo   dlrom "Danganronpa" --platform vita --source telegram --dry-run
     echo   dlrom --status a3f9c21b8e04
     exit /b 1
 )
@@ -114,6 +127,7 @@ set "QUERY=%~1"
 set "PLATFORM="
 set "REGION="
 set "VITA="
+set "SOURCE="
 set "SORT="
 set "DEST="
 set "INTERACTIVE="
@@ -133,6 +147,7 @@ if "%~1"=="" goto :build_cmd
 if /i "%~1"=="--platform"     goto :set_platform
 if /i "%~1"=="--region"       goto :set_region
 if /i "%~1"=="--vita"         goto :set_vita
+if /i "%~1"=="--source"       goto :set_source
 if /i "%~1"=="--sort"         goto :set_sort
 if /i "%~1"=="--dest"         goto :set_dest
 if /i "%~1"=="--torrent-pick" goto :set_torrent_pick
@@ -177,6 +192,11 @@ shift
 set "VITA=%~1"
 goto :shift_args
 
+:set_source
+shift
+set "SOURCE=%~1"
+goto :shift_args
+
 :set_sort
 shift
 set "SORT=%~1"
@@ -197,6 +217,7 @@ set "PS_ARGS=-Query "%QUERY%""
 if defined PLATFORM    set "PS_ARGS=%PS_ARGS% -Platform "%PLATFORM%""
 if defined REGION      set "PS_ARGS=%PS_ARGS% -Region "%REGION%""
 if defined VITA        set "PS_ARGS=%PS_ARGS% -VitaBuild "%VITA%""
+if defined SOURCE      set "PS_ARGS=%PS_ARGS% -Source "%SOURCE%""
 if defined SORT        set "PS_ARGS=%PS_ARGS% -Sort "%SORT%""
 if defined DEST        set "PS_ARGS=%PS_ARGS% -Destination "%DEST%""
 if defined INTERACTIVE set "PS_ARGS=%PS_ARGS% -Interactive"

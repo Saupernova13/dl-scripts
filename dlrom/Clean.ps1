@@ -39,6 +39,8 @@ function Get-DlromProtectedNames {
         # A running job now owns a whole temp subdirectory named for its id, so the id has
         # to be protected too - otherwise --clean deletes the folder mid-download.
         if ($job.id) { $names[[string]$job.id] = $true }
+        # A Telegram job's torrent downloads into <staging>\<console folder> until it is installed.
+        if ($job.torrent -and $job.torrent.platformFolder) { $names[[string]$job.torrent.platformFolder] = $true }
         foreach ($link in @($job.links)) {
             if (-not $link.Label) { continue }
             $names[$link.Label] = $true

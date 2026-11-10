@@ -77,7 +77,8 @@ function New-DlromJob {
         [string]$VitaBuild = '', # 'emu' | 'console' for a Vita download; '' everywhere else
         [int]   $TorrentPick = -1,
         [bool]  $NoExtract = $false,
-        [bool]  $NoSteam = $false
+        [bool]  $NoSteam = $false,
+        [hashtable]$Torrent = $null   # telegram jobs: hash, bot, savePath, ... for the worker that finishes the install
     )
     $id = New-ShortId
     return [PSCustomObject]@{
@@ -95,6 +96,7 @@ function New-DlromJob {
         romDest        = $RomDest
         links          = @($Links)
         sourceUrl      = $SourceUrl
+        torrent        = $Torrent
         reason         = $Reason
         vitaBuild      = $VitaBuild
         torrentPick    = $TorrentPick
@@ -202,6 +204,25 @@ function Start-DlromJob {
     return $proc.Id
 }
 
+# Announce a spawned job in the shape agents and humans both read: the id first, then
+# how to follow it. Mirrors ps2tex's spawn output.
+function Write-DlromJobSpawned {
+    param([PSCustomObject]$Job, [switch]$AsJson)
+    Write-Host ""
+    Write-Host "Download job spawned.  It will continue in the background." -ForegroundColor Green
+    Write-Host "  Job ID:   $($Job.id)" -ForegroundColor Yellow
+    Write-Host "  Source:   $($Job.kind)"
+    if ($Job.title) { Write-Host "  Title:    $($Job.title)" }
+    if ($Job.torrent -and $Job.torrent.hash) { Write-Host "  Hash:     $($Job.torrent.hash)" }
+    Write-Host "  Dest:     $($Job.romDest)"
+    Write-Host "  Log:      $($Job.logFile)"
+    Write-Host "  Check:    dlrom --status $($Job.id)"
+    Write-Host ""
+    if ($AsJson) {
+        $Job | ConvertTo-Json -Depth 8
+    }
+}
+
 # Stamp the terminal outcome. Called from both the worker and a --wait run, so a job file
 # is a complete record either way.
 function Complete-DlromJob {
@@ -257,6 +278,8 @@ function Show-DlromJobStatus {
     Write-Host "  Query:      $($job.query)"
     if ($job.title)    { Write-Host "  Title:      $($job.title)" }
     if ($job.platform) { Write-Host "  Platform:   $($job.platform)" }
+    if ($job.torrent -and $job.torrent.hash) { Write-Host "  Hash:       $($job.torrent.hash)" }
+    if ($job.torrent -and $job.torrent.bot)  { Write-Host "  Bot:        @$($job.torrent.bot)" }
     if ($job.vitaBuild) {
         $buildLabel = if ($script:VITA_BUILD_LABELS.ContainsKey($job.vitaBuild)) {
             $script:VITA_BUILD_LABELS[$job.vitaBuild]

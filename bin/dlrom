@@ -18,7 +18,7 @@ DL_BIN_DIR=$(CDPATH= cd -- "$(dirname -- "$DL_SELF")" && pwd)
 REPO_ROOT=$(CDPATH= cd -- "$DL_BIN_DIR/.." && pwd)
 PS_SCRIPT="$REPO_ROOT/dlrom/Add-ROM.ps1"
 DL_POSITIONALS="Query"
-DL_FLAG_VALUES="--platform:Platform --region:Region --sort:Sort --dest:Destination --destination:Destination --vita:VitaBuild --status:Status --torrent-pick:TorrentPick --max-results:MaxResults --job-file:JobFile --phone:Phone --code:Code --password:Password"
+DL_FLAG_VALUES="--platform:Platform --source:Source --region:Region --sort:Sort --dest:Destination --destination:Destination --vita:VitaBuild --status:Status --torrent-pick:TorrentPick --max-results:MaxResults --job-file:JobFile --phone:Phone --code:Code --password:Password"
 DL_FLAG_SWITCHES="--wait:Wait --interactive:Interactive --no-extract:NoExtract --no-steam:NoSteam --no-torrent:NoTorrent --no-game-mode:NoGameMode --json:Json --verbose:Verbose --quiet:Quiet --clean:Clean --clear:Clean --all:All --jobs:ListJobs --sync-steam:SyncSteam --steam-queue:SteamQueue --telegram-login:TelegramLogin --telegram-status:TelegramStatus --telegram-logout:TelegramLogout"
 
 # --dry-run means "look everything up, change nothing" either way, but which parameter that is
@@ -39,6 +39,7 @@ esac
 dl_usage() {
     cat <<'USAGE'
 Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console]
+             [--source auto|rgt|telegram]
              [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive]
              [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
        dlrom --status <jobId> [--json]
