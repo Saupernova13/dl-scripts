@@ -156,6 +156,7 @@ Kebab-case is the documented style across every command:
 | `--asian` | `dltv` only: download from KissKH, skip torrents |
 | `--episodes RANGE` | `dltv` with KissKH only: `3`, `1-4`, `5-` |
 | `--status ID`, `--jobs` | Inspect background jobs (`dltv`, `dlrom`) |
+| `--resume ID\|all` | `dlrom` only: restart a Telegram job that stalled, timed out or lost its worker |
 | `--json` | `dltv` only, with `--status`/`--jobs`: progress, GB done/total, speed and ETA as JSON |
 | `--help` | Usage for that command |
 
@@ -413,7 +414,9 @@ dl-scripts/
     ├── Downloaders.ps1      ← download backends and dispatcher
     ├── RomFiles.ps1         ← unpacking and ROM install
     ├── SteamRomManager.ps1  ← Steam ROM Manager sync
-    ├── QbitTorrent.ps1      ← qBittorrent client (PS2 torrent fallback)
+    ├── QbitTorrent.ps1      ← qBittorrent client (PS2 torrent fallback, Telegram torrent wait)
+    ├── TorrentInstall.ps1   ← per-console rules for filing a finished Telegram torrent
+    ├── TelegramJob.ps1      ← Telegram worker (wait, install, Steam), --resume, auto-resume
     ├── Ps2TorrentIndex.ps1  ← PS2 torrent fallback
     ├── ps2_torrent.py       ← torrent index parser (Python helper)
     ├── Ps2Serial.ps1        ← PS2 serial lookup and the [HANDOFF] line
@@ -449,7 +452,7 @@ loop. Add a flag in one place and add it in both, or they drift.
   accepts `--jobs` and `--status ID` with no query; `_dl-args.cmd` flags those runs
   with `DL_JOB_MODE`.
 - `dlrom.cmd`: `"Query"` plus the options listed in
-  [`dlrom/README.md`](dlrom/#flags). It also takes the subcommands `--status`,
+  [`dlrom/README.md`](dlrom/#flags). It also takes the subcommands `--status`, `--resume`,
   `--jobs`/`--list` and `--clean`. Those are matched before `%1` is treated as a game
   name, because none of them carry one.
 - **Native PowerShell flags still pass through.** Anything starting with a single `-`
