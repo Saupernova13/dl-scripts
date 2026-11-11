@@ -11,7 +11,7 @@ Runs on **Windows and Linux**, including the **Steam Deck**.
 | [dlgame](dlgame/) | PC games | appnetica.com | qBittorrent |
 | [dlmovie](dlmovie/) | Movies | YTS | qBittorrent |
 | [dltv](dltv/) | TV shows, incl. Asian drama | The Pirate Bay, KissKH | qBittorrent, or curl in a background job |
-| [dlrom](dlrom/) | Console ROMs | retrogametalk.com/repo | Motrix, AB, aria2c, curl, BITS, or PowerShell |
+| [dlrom](dlrom/) | Console ROMs | retrogametalk.com/repo, NSWTL Telegram bots | Motrix, AB, aria2c, curl, BITS, or PowerShell; qBittorrent for Telegram torrents |
 
 `dlrom` does more than download. It unpacks the ROM, installs it into the right
 emulator folder, and adds it to Steam.
@@ -72,6 +72,7 @@ dlmovie "Inception"
 dltv "Breaking Bad"
 dlrom "Zelda" --platform n64
 dlrom "Danganronpa V3" --platform vita
+dlrom "Mario Kart 8" --platform switch      # Telegram bot only
 ```
 
 Config is created for you at `%LOCALAPPDATA%\dlScripts\config.json` on first run.

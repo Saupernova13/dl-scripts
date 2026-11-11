@@ -1,0 +1,18 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+✅Found torrents: 3✅
+
+Bloodborne - ПК порт [29.99 GB]
+/download4301 /cover4301
+
+Bloodborne Game of the Year Edition [29.37 GB]
+/download1813 /cover1813
+
+Bloodborne [30.04 GB]
+/download4323 /cover4323
+
+Dont know what to play? Use the features of our recommendation neural network on the /recommended page.
+
+You can find our bots for all existing gaming platforms and PCs, as well as our other projects, by clicking /allbots or visiting our official website.
+Thank you for being with us!

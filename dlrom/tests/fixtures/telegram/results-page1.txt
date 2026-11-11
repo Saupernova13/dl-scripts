@@ -1,0 +1,45 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+✅Found torrents: 72✅
+
+A Rose in the Twilight [911.1 MB]
+/download355 /cover355
+
+Adventure Time - The Secret of the Nameless Kingdom [372.7 MB]
+/download316 /cover316
+
+Atelier Ayesha Plus - The Alchemist of Dusk [6.63 GB]
+/download137 /cover137
+
+Atelier Escha and Logy Plus - Alchemists of the Dusk Sky [3.18 GB]
+/download148 /cover148
+
+Atelier Firis - The Alchemist and the Mysterious Journey [5.27 GB]
+/download174 /cover174
+
+Atelier Lydie and Suelle - The Alchemists and the Mysterious Paintings [6.38 GB]
+/download218 /cover218
+
+Atelier Meruru Plus - The Apprentice of Arland [3.02 GB]
+/download125 /cover125
+
+Atelier Rorona Plus - The Alchemist of Arland [2.96 GB]
+/download133 /cover133
+
+Atelier Shallie Plus - Alchemists of the Dusk Sea [4.8 GB]
+/download153 /cover153
+
+Atelier Sophie - The Alchemist of the Mysterious Book [4.16 GB]
+/download463 /cover463
+
+Atelier Totori Plus - The Adventurer of Arland [2.85 GB]
+/download122 /cover122
+
+Berserk and the Band of the Hawk [2.82 GB]
+/download404 /cover404
+
+Dont know what to play? Use the features of our recommendation neural network on the /recommended page.
+
+You can help this bot become even better.
+Press /donate

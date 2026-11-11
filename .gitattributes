@@ -21,3 +21,6 @@ bin/*  text eol=lf
 *.md   text
 *.py   text
 *.json text
+
+# Telegram fixtures are verbatim bot replies, which use LF.
+dlrom/tests/fixtures/telegram/*.txt text eol=lf

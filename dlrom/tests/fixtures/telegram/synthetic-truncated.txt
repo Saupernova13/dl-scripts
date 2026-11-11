@@ -1,0 +1,12 @@
+"download" - download the torrent
+"cover" - info about the torrent, translation languages and rate
+
+✅Found torrents: 2✅
+
+Atelier Lydie and Suelle - The Alchemists and the Mysterious Paint... [6.38 GB]
+/download218 /cover218
+
+Atelier Sophie [4.16 GB]
+/download463 /cover463
+
+Dont know what to play? Use the features of our recommendation neural network on the /recommended page.

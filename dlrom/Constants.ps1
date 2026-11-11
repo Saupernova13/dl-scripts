@@ -69,8 +69,9 @@ $script:JOB_STEP_FILING      = 'filing'
 $script:JOB_STEP_STEAM_SYNC  = 'steam-sync'
 $script:JOB_STEP_DONE        = 'done'
 
-$script:JOB_KIND_WEB     = $script:DLROM_SOURCE_NAME
-$script:JOB_KIND_TORRENT = 'torrent'
+$script:JOB_KIND_WEB      = $script:DLROM_SOURCE_NAME
+$script:JOB_KIND_TORRENT  = 'torrent'
+$script:JOB_KIND_TELEGRAM = 'telegram'   # a .torrent fetched from an NSWTL bot, downloaded by qBittorrent
 
 # --- Downloader vocabulary ----------------------------------------------------
 # Ids are what Find-Downloader returns and Invoke-FileDownload dispatches on. The labels are
@@ -217,6 +218,70 @@ $script:PS2_REGION_CODES = @{
     'korea'  = 'NTSC-K'
     'world'  = 'NTSC-U'
 }
+
+# --- Sources and the Telegram platform table ----------------------------------
+#
+# --source picks where a game is looked for. 'auto' is RetroGameTalk first, with the NSWTL
+# Telegram bots as the fallback - except for consoles only the bots carry, which go straight
+# to Telegram. Same shape as REGION_ALIASES: synonym regex -> canonical code.
+$script:SOURCE_AUTO     = 'auto'
+$script:SOURCE_RGT      = 'rgt'
+$script:SOURCE_TELEGRAM = 'telegram'
+
+$script:SOURCE_ALIASES = @(
+    @{ Code = 'auto';     Rx = '^(auto)$'                          }
+    @{ Code = 'rgt';      Rx = '^(rgt|retrogametalk|repo|web)$'    }
+    @{ Code = 'telegram'; Rx = '^(telegram|tg)$'                   }
+)
+
+# Platform alias -> canonical key, for every console some NSWTL bot serves. The key names the
+# bot (TGSRC_DEFAULT_BOTS) and the ROM folder (TGSRC_PLATFORM_FOLDERS). The trailing
+# '-iso' / '-roms' spellings are RetroGameTalk category slugs, so a fallback that only has the
+# resolved slug in hand still finds its bot.
+$script:TGSRC_PLATFORM_ALIASES = @{
+    'switch' = 'switch'; 'nsw' = 'switch'; 'ns' = 'switch'
+    '3ds' = '3ds'; 'n3ds' = '3ds'
+    'ps3' = 'ps3'; 'ps4' = 'ps4'; 'ps5' = 'ps5'
+    'xbox360' = 'xbox360'; 'x360' = 'xbox360'
+    'xbox' = 'xbox'
+    'wiiu' = 'wiiu'
+    'ps2' = 'ps2'; 'ps2-iso' = 'ps2'
+    'ps1' = 'psx'; 'psx' = 'psx'; 'psx-iso' = 'psx'
+    'psp' = 'psp'
+    'vita' = 'vita'
+    'nds' = 'nds'; 'ds' = 'nds'; 'nds-roms' = 'nds'
+    'wii' = 'wii'; 'wii-iso' = 'wii'
+    'gamecube' = 'gamecube'; 'gc' = 'gamecube'; 'gcn-iso' = 'gamecube'
+    'dreamcast' = 'dreamcast'; 'dc' = 'dreamcast'; 'dc-iso' = 'dreamcast'
+}
+
+# Canonical key -> on-disk console folder (EmuDeck's roms layout, same names as PLATFORM_FOLDERS).
+$script:TGSRC_PLATFORM_FOLDERS = @{
+    'switch' = 'switch'; '3ds' = 'n3ds'; 'ps3' = 'ps3'; 'ps4' = 'ps4'; 'ps5' = 'ps5'
+    'xbox360' = 'xbox360'; 'xbox' = 'xbox'; 'wiiu' = 'wiiu'
+    'ps2' = 'ps2'; 'psx' = 'psx'; 'psp' = 'psp'; 'vita' = 'psvita'; 'nds' = 'nds'
+    'wii' = 'wii'; 'gamecube' = 'gc'; 'dreamcast' = 'dreamcast'
+}
+
+# Consoles RetroGameTalk does not carry: 'auto' sends these straight to Telegram.
+$script:TGSRC_ONLY_PLATFORMS = @('switch', '3ds', 'ps3', 'ps4', 'ps5', 'xbox360', 'xbox', 'wiiu')
+
+# Canonical key -> bot username. NSWTL rotates these, so [rom].telegramBots overrides any entry
+# and a missing key falls back to this table. Only PSVita_library_bot has been exercised end to
+# end; the rest resolved on Telegram but were not all sent a search.
+$script:TGSRC_DEFAULT_BOTS = @{
+    'switch' = 'Switch_library_bot'; '3ds' = 'N3DS_library_bot'; 'nds' = 'NDS_library_bot'
+    'psx' = 'PSX_library_bot'; 'ps2' = 'PS2_libr_bot'; 'ps3' = 'PS3_libr_bot'
+    'ps4' = 'PS4_libr_bot'; 'ps5' = 'PS5_libr_bot'; 'psp' = 'PSP_libr_bot'
+    'vita' = 'PSVita_library_bot'; 'wii' = 'Wii_library_bot'; 'wiiu' = 'Wii_library_bot'
+    'gamecube' = 'Gamecube_library_bot'; 'dreamcast' = 'Dreamcast_library_bot'
+    'xbox360' = 'Xbox360_library_bot'; 'xbox' = 'Xbox_library_bot'
+}
+
+# Torrent downloads land in <romsBase>\<this>\<console folder>, on the ROM drive so the later
+# move into place is a rename. The PS2 Redump fallback stages in the same root.
+$script:TGSRC_STAGING_DIR = '.dlrom-torrent'
+$script:TGSRC_QBIT_TAG    = 'dlrom'
 
 # --- Rendering ----------------------------------------------------------------
 

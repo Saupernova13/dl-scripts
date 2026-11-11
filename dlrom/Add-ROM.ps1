@@ -1,6 +1,7 @@
 # Search RetroGameTalk's ROM repository (https://retrogametalk.com/repo/) for a game,
 # download it, extract and file the ROM into the right console folder, then optionally add
-# it to Steam via Steam ROM Manager.
+# it to Steam via Steam ROM Manager. Consoles RetroGameTalk lacks (Switch, 3DS, PS3, ...), and
+# games it fails on, come from the NSWTL Telegram bots instead (--source, TelegramSource.ps1).
 #
 # This is the orchestrator; the real work lives in the sibling modules it dot-sources.
 # Settings come from %LOCALAPPDATA%\dlScripts\config.json. The Repo needs no account.
@@ -22,6 +23,9 @@ param(
     # PS Vita only: which of the two builds to take - 'emu' (Vita3K) or 'console'
     # (NoNpDrm). Blank uses the [rom].vitaBuild config default, which is 'emu'.
     [string]$VitaBuild = "",
+    # Where to look: auto (RetroGameTalk, Telegram for its own consoles and as the fallback),
+    # rgt, or telegram. See Resolve-DlromSourcePlan.
+    [string]$Source = "",
     [int]$MaxResults = 0,
     [switch]$Interactive,
     [switch]$NoExtract,
@@ -81,6 +85,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'Clean.ps1')             # --clean: temp files, partials, caches, job history
 # (lib/Telegram/Telegram.ps1, the native MTProto client, loads on demand: compiling its helpers costs ~0.2s)
 . (Join-Path $PSScriptRoot 'TelegramCli.ps1')       # --telegram-login / --telegram-status / --telegram-logout
+. (Join-Path $PSScriptRoot 'NswtlBot.ps1')           # NSWTL bot replies: parser, reply kinds, page buttons
+. (Join-Path $PSScriptRoot 'TelegramSource.ps1')     # --source routing, bot conversation, torrent handoff
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
@@ -136,6 +142,13 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     # TG_API_ID / TG_API_HASH in the environment override them.
     telegramApiId        = ""
     telegramApiHash      = ""
+    # Telegram as a ROM source (NSWTL bots). telegramBots maps a platform (any alias: vita, ps4,
+    # switch, ...) to a bot username and overrides the built-in table, since NSWTL rotates bots.
+    telegramBots         = [PSCustomObject]@{}
+    telegramReplyTimeoutSec = 30    # how long to wait for a bot's answer
+    telegramFallback     = $true    # auto: retry on Telegram when RetroGameTalk finds nothing
+    telegramMinSendGapSec = 3       # minimum gap between messages sent to a bot
+    telegramMaxPages     = 4        # result pages read per search (a page is 12 entries)
 })
 
 # Publish the section so every module's Get-CfgValue (Common.ps1) reads the same config
@@ -214,6 +227,10 @@ if ($JobFile) {
             $ok = Invoke-Ps2TorrentFallback -Query $job.query -Region $job.region `
                     -Destination $job.romsBase -Cfg $cfg -NoExtract:$job.noExtract `
                     -NoSteam:$job.noSteam -PickIndex $job.torrentPick -Reason $job.reason -Job $job
+        } elseif ($job.kind -eq $script:JOB_KIND_TELEGRAM) {
+            # The torrent is already in qBittorrent; the worker that waits for it and installs the
+            # result does not exist yet.
+            throw 'Telegram jobs are downloaded by qBittorrent; the installer for them is not available yet.'
         } else {
             $ok = Invoke-RomPipeline -Job $job -Cfg $cfg -TempDir $tempDir
         }
@@ -268,9 +285,23 @@ if ($VitaBuild -and -not $Platform) {
     Write-Log "--vita given without --platform: searching the Vita catalogue." 'INFO'
 }
 
+# Where does this request go? Decided before the RetroGameTalk slug lookup: a console only the
+# Telegram bots carry (switch, 3ds, ps4, ...) is not an RGT platform and must not trip its
+# 'unknown platform' path.
+$plan = Resolve-DlromSourcePlan -Source $Source -Platform $Platform `
+        -Overrides (Get-CfgValue 'telegramBots' $null) -FallbackEnabled ([bool](Get-CfgValue 'telegramFallback' $true))
+if ($plan.Error) { Write-Log $plan.Error 'ERROR'; exit 1 }
+if ($plan.Primary -eq $script:SOURCE_TELEGRAM -or $plan.Fallback) {
+    # Loaded on demand: compiling the client's native helpers costs ~0.2s. Dot-sourced here, at
+    # script scope, so the functions outlive this block.
+    . (Join-Path $repoRoot 'lib/Telegram/Telegram.ps1')
+}
+
 # Resolve platform slug
 $resolvedSlug = ""
-if ($Platform) {
+if ($plan.Primary -eq $script:SOURCE_TELEGRAM) {
+    $resolvedSlug = ""
+} elseif ($Platform) {
     $key = $Platform.ToLower()
     if ($PLATFORM_SLUGS.ContainsKey($key)) {
         $resolvedSlug = $PLATFORM_SLUGS[$key]
@@ -286,22 +317,57 @@ if ($Platform) {
 $script:PS2_FALLBACK = ([bool](Get-CfgValue 'ps2TorrentEnabled' $true) -and -not $NoTorrent -and -not $LinksOnly -and
     (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')))
 
-# Announce a spawned job in the shape agents and humans both read: the id first, then
-# how to follow it. Mirrors ps2tex's spawn output.
-function Write-DlromJobSpawned {
-    param([PSCustomObject]$Job)
-    Write-Host ""
-    Write-Host "Download job spawned.  It will continue in the background." -ForegroundColor Green
-    Write-Host "  Job ID:   $($Job.id)" -ForegroundColor Yellow
-    Write-Host "  Source:   $($Job.kind)"
-    if ($Job.title) { Write-Host "  Title:    $($Job.title)" }
-    Write-Host "  Dest:     $($Job.romDest)"
-    Write-Host "  Log:      $($Job.logFile)"
-    Write-Host "  Check:    dlrom --status $($Job.id)"
-    Write-Host ""
-    if ($Json) {
-        $Job | ConvertTo-Json -Depth 8
+# Resolve the ROMs base directory in priority order:
+#   1. -Destination          explicit per-run override (always wins)
+#   2. cfg.romsBase          the configured base (romsBase) when it exists
+#   3. drive-meta picker      a connected drive advertising a rom_path
+#   4. manual prompt          last resort, and only with a human watching
+function Resolve-DlromRomsBase {
+    if ($Destination) {
+        $romsBase = $Destination
+    } elseif ((Get-CfgValue 'romsBase' '') -and (Test-Path (Get-CfgValue 'romsBase' ''))) {
+        $romsBase = Get-CfgValue 'romsBase' ''
+        Write-Log "ROMs base: $romsBase" 'DEBUG'
+    } else {
+        $configuredBase = Get-CfgValue 'romsBase' ''
+        if ($configuredBase) {
+            Write-Log "Configured ROMs base not available: $configuredBase - falling back to drive picker." 'WARN'
+        }
+        try {
+            $romsBase = Resolve-MediaPath -MediaType 'rom' -Strict
+            Write-Log "Drive picker selected ROMs base: $romsBase" 'INFO'
+        } catch {
+            Write-Log "No connected drive advertises a ROM path ($($_.Exception.Message))." 'DEBUG'
+            # Prompting is only safe when a human asked to be asked. An agent or scheduled run
+            # has no console and would block forever on a prompt nobody can see.
+            if (-not $Interactive) {
+                Write-Log "Cannot resolve a ROMs base directory and there is no console to ask." 'ERROR'
+                Write-Log "Fix with one of:" 'ERROR'
+                Write-Log "  dlrom `"$Query`" --dest <path>" 'ERROR'
+                Write-Log "  set romsBase in $(Join-Path (Get-DlConfigRoot) 'config.json')" 'ERROR'
+                Write-Log "  connect a drive that advertises a rom_path, or re-run with --interactive" 'ERROR'
+                exit 1
+            }
+            Write-Host "Enter ROMs base path (or press Enter for $HOME\Emulation\roms): " -NoNewline
+            $alt = Read-Host
+            $romsBase = if ($alt) { $alt } else { Join-DlPath (Get-DlHomeDir) "Emulation" "roms" }
+        }
     }
+    return $romsBase
+}
+
+# Run the Telegram source for $plan: as the primary route, or as RetroGameTalk's fallback.
+# Returns the exit code.
+function Invoke-TelegramSource {
+    # A dry run never queues anything, so it needs no ROMs base.
+    $base = if ($LinksOnly) { '' } else { Resolve-DlromRomsBase }
+    # Only an explicit --vita counts as a request: the config default is not the user asking.
+    $vitaAsked = if ($VitaBuild) { [string](Resolve-VitaBuild $VitaBuild) } else { '' }
+    # Anything a callee writes to the pipeline would join the exit code; the last item is ours.
+    $rc = @(Invoke-TelegramRomRequest -Query $Query -Plan $plan -Region $Region -RomsBase $base `
+            -MaxResults $MaxResults -VitaBuild $vitaAsked -DryRun:$LinksOnly -Interactive:$Interactive `
+            -AsJson:$Json -NoExtract:$NoExtract -NoSteam:$NoSteam)
+    return [int]($rc | Select-Object -Last 1)
 }
 
 # Every Repo dead-end funnels through here: report the real reason, try the
@@ -319,7 +385,7 @@ function Invoke-RgtFallbackOrExit {
             # other; background it rather than pinning the caller for four hours.
             try {
                 Start-DlromJob -Job $job | Out-Null
-                Write-DlromJobSpawned -Job $job
+                Write-DlromJobSpawned -Job $job -AsJson:$Json
                 exit 0
             } catch {
                 Write-Log "Could not spawn torrent fallback worker: $($_.Exception.Message)" 'ERROR'
@@ -342,11 +408,22 @@ function Invoke-RgtFallbackOrExit {
     } elseif (($resolvedSlug -eq 'ps2-iso') -or ($Platform -and $Platform.ToLower() -eq 'ps2')) {
         if ($NoTorrent)             { Write-Log "PS2 torrent fallback skipped (--no-torrent)." 'INFO' }
         elseif (-not (Get-CfgValue 'ps2TorrentEnabled' $true)) { Write-Log "PS2 torrent fallback disabled in config." 'INFO' }
-    } else {
+    } elseif (-not $plan.Fallback) {
         Write-Log "Tip: pass --platform ps2 to enable the torrent fallback for PS2 games." 'INFO'
+    }
+
+    # Last resort: the Telegram bot for this console (auto mode, platform known).
+    if ($plan.Fallback) {
+        Write-Log "Trying the Telegram bot (@$($plan.Bot)) instead..." 'INFO'
+        if ((Invoke-TelegramSource) -eq 0) { exit 0 }
+    } elseif ($plan.FallbackSkip -eq 'no-platform') {
+        Write-Log "Tip: pass --platform to enable the Telegram bot fallback." 'INFO'
     }
     exit $ExitCode
 }
+
+# Telegram-first requests (consoles RetroGameTalk lacks, or --source telegram) skip The Repo.
+if ($plan.Primary -eq $script:SOURCE_TELEGRAM) { exit (Invoke-TelegramSource) }
 
 # Search
 Write-Log "Searching for: $Query" 'INFO'
@@ -462,42 +539,7 @@ $platformFolder = if ($effectiveSlug -and $PLATFORM_FOLDERS.ContainsKey($effecti
     "roms"
 }
 
-# Resolve the ROMs base directory in priority order:
-#   1. -Destination          explicit per-run override (always wins)
-#   2. cfg.romsBase          the configured base (romsBase) when it exists
-#   3. drive-meta picker      a connected drive advertising a rom_path
-#   4. manual prompt          last resort, and only with a human watching
-$romsBase = $null
-if ($Destination) {
-    $romsBase = $Destination
-} elseif ((Get-CfgValue 'romsBase' '') -and (Test-Path (Get-CfgValue 'romsBase' ''))) {
-    $romsBase = Get-CfgValue 'romsBase' ''
-    Write-Log "ROMs base: $romsBase" 'DEBUG'
-} else {
-    $configuredBase = Get-CfgValue 'romsBase' ''
-    if ($configuredBase) {
-        Write-Log "Configured ROMs base not available: $configuredBase - falling back to drive picker." 'WARN'
-    }
-    try {
-        $romsBase = Resolve-MediaPath -MediaType 'rom' -Strict
-        Write-Log "Drive picker selected ROMs base: $romsBase" 'INFO'
-    } catch {
-        Write-Log "No connected drive advertises a ROM path ($($_.Exception.Message))." 'DEBUG'
-        # Prompting is only safe when a human asked to be asked. An agent or scheduled run
-        # has no console and would block forever on a prompt nobody can see.
-        if (-not $Interactive) {
-            Write-Log "Cannot resolve a ROMs base directory and there is no console to ask." 'ERROR'
-            Write-Log "Fix with one of:" 'ERROR'
-            Write-Log "  dlrom `"$Query`" --dest <path>" 'ERROR'
-            Write-Log "  set romsBase in $(Join-Path (Get-DlConfigRoot) 'config.json')" 'ERROR'
-            Write-Log "  connect a drive that advertises a rom_path, or re-run with --interactive" 'ERROR'
-            exit 1
-        }
-        Write-Host "Enter ROMs base path (or press Enter for $HOME\Emulation\roms): " -NoNewline
-        $alt = Read-Host
-        $romsBase = if ($alt) { $alt } else { Join-DlPath (Get-DlHomeDir) "Emulation" "roms" }
-    }
-}
+$romsBase = Resolve-DlromRomsBase
 
 $romDest      = Join-Path $romsBase $platformFolder
 $resultRegion = if ($Region) { $Region } else { @(Get-RgtRegions $selected.Url $selected.Title)[0] }
@@ -517,7 +559,7 @@ if (-not $Wait) {
         Write-Log "Run with --wait to download in the foreground instead." 'WARN'
         exit 1
     }
-    Write-DlromJobSpawned -Job $job
+    Write-DlromJobSpawned -Job $job -AsJson:$Json
     exit 0
 }
 
