@@ -213,6 +213,107 @@ function Wait-QbitFile {
     throw "Timed out after ${TimeoutSec}s waiting for '$norm'."
 }
 
+# One torrent's info object, or $null when qBittorrent does not list it. Throws when the WebUI
+# cannot be reached. The pipe flattens the JSON array Windows PowerShell 5.1 hands back as one object.
+function Get-QbitTorrentInfo {
+    param([string]$Hash)
+    $raw   = ConvertFrom-QbitJson (Invoke-QbitApi -Path "/api/v2/torrents/info?hashes=$Hash")
+    $items = @($raw | ForEach-Object { $_ })
+    if ($items.Count -ge 1) { return $items[0] }
+    return $null
+}
+
+# "5 min" / "30 s" for the stall message.
+function Format-WaitSpan {
+    param([double]$Seconds)
+    if ($Seconds -ge 60) { return ('{0} min' -f [int][Math]::Round($Seconds / 60)) }
+    return ('{0} s' -f [int][Math]::Round($Seconds))
+}
+
+# Wait for a whole torrent (every file) to finish. Returns the torrent's info (content_path,
+# save_path, name). Throws on an error state, a vanished torrent, a stall (no new bytes for
+# StallTimeoutSec; the torrent is left in qBittorrent so the job can be resumed) or the overall
+# timeout. A paused/stopped torrent is started once, but only when this job owns it.
+function Wait-QbitTorrent {
+    param(
+        [Parameter(Mandatory)][string]$Hash,
+        [int]$TimeoutSec = 86400,
+        [double]$StallTimeoutSec = 3600,
+        [double]$PollSec = 3,
+        [switch]$OwnsTorrent
+    )
+
+    $started    = Get-Date
+    $lastGrowth = $started
+    $lastBytes  = -1.0
+    $lastProg   = -1.0
+    $tried      = $false
+    $downSince  = $null
+    $lastState  = ''
+
+    while ($true) {
+        $info = $null
+        $apiOk = $true
+        try { $info = Get-QbitTorrentInfo -Hash $Hash } catch { $apiOk = $false }
+        $now = Get-Date
+
+        if ($apiOk) {
+            $downSince = $null
+            if (-not $info) {
+                Stop-ProgressLine
+                throw "Torrent $Hash is no longer in qBittorrent (removed?); nothing to wait for."
+            }
+            $state = [string]$info.state
+            $prog  = [double]$info.progress
+            if ($state -eq 'error' -or $state -eq 'missingFiles') {
+                Stop-ProgressLine
+                throw "qBittorrent reported state '$state' for the torrent."
+            }
+            if ($prog -ge 1.0 -and ($script:QBIT_DONE_STATES -contains $state)) {
+                Stop-ProgressLine
+                return $info
+            }
+
+            if (-not $tried -and $OwnsTorrent -and ($script:QBIT_PAUSED_DL_STATES -contains $state)) {
+                Write-Log "Torrent is $state; starting it." 'INFO'
+                Start-QbitTorrent -Hash $Hash
+            }
+            $tried = $true
+            $lastState = $state
+
+            $bytes = [Math]::Max([double]$info.downloaded, [double]$info.completed)
+            if ($bytes -gt $lastBytes -or $prog -gt $lastProg) { $lastGrowth = $now }
+            # Queued or checking is qBittorrent's choice, not a dead swarm; only TimeoutSec applies.
+            if ($script:QBIT_WAITING_STATES -contains $state) { $lastGrowth = $now }
+            $lastBytes = [Math]::Max($lastBytes, $bytes)
+            $lastProg  = [Math]::Max($lastProg, $prog)
+
+            $pct   = [int][Math]::Floor($prog * 100)
+            $total = [long]$info.size
+            Write-ProgressLine -Percent $pct -Line (Format-TransferLine -Prefix '[qbit]' -Percent $pct `
+                -Done ([long]($prog * $total)) -Total $total -BytesPerSec ([long]$info.dlspeed) `
+                -Label ([string]$info.name))
+        } elseif (-not $downSince) {
+            $downSince = $now
+        }
+
+        if (($now - $started).TotalSeconds -ge $TimeoutSec) {
+            Stop-ProgressLine
+            throw "Timed out after ${TimeoutSec}s waiting for the torrent."
+        }
+        if (($now - $lastGrowth).TotalSeconds -ge $StallTimeoutSec) {
+            Stop-ProgressLine
+            $span = Format-WaitSpan $StallTimeoutSec
+            if ($downSince) { throw "qBittorrent is not reachable (no answer for $span)." }
+            if ($script:QBIT_PAUSED_DL_STATES -contains $lastState) {
+                throw "stalled: the torrent is paused in qBittorrent (no progress for $span); start it there"
+            }
+            throw "stalled: no progress for $span"
+        }
+        Start-Sleep -Milliseconds ([int]($PollSec * 1000))
+    }
+}
+
 # Remove a torrent entry, keeping downloaded files on disk (no seeding left behind).
 function Remove-QbitTorrent {
     param([string]$Hash)

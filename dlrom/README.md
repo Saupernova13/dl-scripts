@@ -22,6 +22,7 @@ dlrom "Game Name" [options]
 dlrom "Game Name" --platform switch          # Telegram-only console
 dlrom --status <jobId> [--json]
 dlrom --jobs [--json]
+dlrom --resume <jobId|all> [--wait] [--json]  # restart a stalled or orphaned Telegram job
 dlrom --clean [--all] [--dry-run] [--json]
 ```
 
@@ -86,13 +87,14 @@ dlrom "Gran Turismo 4" --platform ps2 --wait  # block until installed
 | `--source auto\|rgt\|telegram` | Where to look. `auto` (default): The Repo first, the console's Telegram bot as the fallback, and Telegram straight away for Telegram-only consoles. `rgt` (aliases `retrogametalk`, `repo`): The Repo only. `telegram` (alias `tg`): the bot only; needs `--platform`. See [Telegram bots as a source](#telegram-bots-as-a-source). |
 | `--sort ORDER` | Sort the search results. |
 | `--dest PATH` | Install into this folder instead of the usual one. |
-| `--wait` | Download in this window instead of the background. For humans watching a progress bar. |
-| `--status ID` | Show one job's progress, then exit. Instant, even mid-download. |
+| `--wait` | Download in this window instead of the background. For humans watching a progress bar. With `--resume`, runs the resumed worker here. |
+| `--status ID` | Show one job's progress, then exit. Instant, even mid-download. For a Telegram job it also shows the staging save path and any manual step. |
 | `--jobs` | List recent jobs, newest first. `--list` with no game name does the same. |
+| `--resume ID\|all` | Restart the worker of a Telegram job that is `orphaned`, or `failed` because it stalled, timed out or qBittorrent was down. Refuses completed jobs. `all` resumes every such job. See [Resuming a Telegram job](#resuming-a-telegram-job). |
 | `--clean` | Delete temp files, part-files and caches. See [Housekeeping](#housekeeping). |
 | `--all` | With `--clean`: also delete finished job records. |
 | `--dry-run` | Resolve everything and stop: with a game name, print the download links and download nothing (Telegram: send the search, print the results and the pick, never request the torrent); with `--clean`, show what would go and delete nothing. `--list` and `--links-only` are synonyms of the first sense. |
-| `--json` | Machine-readable output. A Telegram run prints one object: `ok`, `jobId`, `title`, `hash`, `bot`, `platform`, `savePath`. |
+| `--json` | Machine-readable output. A Telegram run prints one object: `ok`, `jobId`, `title`, `hash`, `bot`, `platform`, `savePath`, `status`, plus `message`, `installedPaths` and `manualNote` (filled in under `--wait`). |
 | `--interactive` | Pick from the results list yourself, on any source. Needs a person at the keyboard. |
 | `--no-extract` | Keep the downloaded archive. Do not unpack or install it. |
 | `--no-steam` | Skip the Steam step this run. On a Steam Deck this also means it never leaves Game Mode. |
@@ -144,7 +146,7 @@ later. Only the slow half runs in the background.
 | `running` | The worker owns it. Check `step` to see where it is. |
 | `completed` | The ROM is installed. |
 | `failed` | It stopped without installing anything. `message` says why. |
-| `orphaned` | The worker died and never recorded an outcome. Nothing is running. |
+| `orphaned` | The worker died and never recorded an outcome. Nothing is running. A Telegram job can be restarted with `--resume` (and is, automatically, see below). A Telegram job that has had no worker for two minutes also reads `orphaned`. |
 
 While `running`, the `step` field is one of: `downloading`, `extracting`,
 `filing`, `steam-sync`.
@@ -161,6 +163,7 @@ While `running`, the `step` field is one of: `downloading`, `extracting`,
 | `installedPaths` | Every file this job installed. |
 | `vitaBuild` | `emu` or `console` for a PS Vita download. Empty otherwise. |
 | `torrent` | Telegram jobs only: `hash`, `bot`, `command`, `savePath`, `platformFolder`, `file`, `tag`, `alreadyPresent`. |
+| `manualNote` | Telegram jobs: what is still left to do by hand (install a `.cia`, a `.pkg`, ...). Empty when nothing is. |
 | `noExtract` | True if the download was kept as an archive. |
 | `handoff` | The `[HANDOFF]` line for PS2. Feed its serial to `dlps2tex`. |
 | `logFile` | Full worker log. |
@@ -517,13 +520,83 @@ dlrom "Rayman 2" --platform ps2                   # auto: The Repo first, the PS
    to qBittorrent with save path `<romsBase>\.dlrom-torrent\<folder>` and tags `dlrom` plus
    `dlrom-<jobId>`. qBittorrent starts it. A torrent qBittorrent already holds is left exactly as
    it is.
-6. Records a job (`kind` `telegram`, `status` `running`, `step` `downloading`) with the torrent hash,
-   bot, command, save path, console folder and final destination, and prints the usual spawn
-   summary (or one JSON object with `--json`).
+6. Records a job (`kind` `telegram`, `step` `downloading`) with the torrent hash, bot, command, save
+   path, console folder and final destination, starts a detached worker for it and prints the usual
+   spawn summary (or one JSON object with `--json`). With `--wait` the same worker runs in your
+   terminal instead and the exit code is the outcome. `--dry-run` never gets this far.
 
-**dlrom stops at "downloading".** Waiting for the torrent to finish, extracting it and filing the
-result is not built yet; the job record carries what that step needs. Until then the data stays in
-the staging folder, and `dlrom --clean` leaves the staging folder of a running Telegram job alone.
+### What the worker does
+
+1. Connects to qBittorrent (it never launches it; if the WebUI is down the job fails with
+   `qBittorrent is not reachable` and `--resume` retries it).
+2. Waits for the whole torrent: progress and speed/ETA feed the job (`progress` 5 to 90, `step`
+   `downloading`). Done means 100% in a completed state (seeding, queued, paused after finish).
+   It fails on `error` or `missingFiles`, when the torrent is removed from qBittorrent, when no new
+   bytes arrive for `telegramStallTimeoutSec` (`stalled: no progress for N min`) or at
+   `telegramTorrentTimeoutSec` (`Timed out`). A stalled or timed-out torrent is left in qBittorrent.
+   A torrent that is stopped/paused and incomplete when the wait starts is started once, if the job added it.
+3. Files the content by console (table below), sets `extracting` / `filing`, adds the console folder to
+   Steam (unless `--no-steam`, `steamSync` is off, or the console has no Steam parser; a failure is
+   only a warning), and completes the job with `Installed`, or `Installed - manual step: <note>`.
+4. If nothing could be installed the job fails with the reason, and the downloaded data stays in the
+   staging folder (`.dlrom-torrent`); it is never deleted.
+
+### Where each console's torrent is filed
+
+Torrents come in every shape, so the layout is a rule per console folder (`TORRENT_INSTALL_RULES` in
+`Constants.ps1`, strategies in `TorrentInstall.ps1`). Anything not listed (`nds`, `psx`, `ps2`, `psp`,
+`gc`, `wii`, `dreamcast`, ...) uses the generic rule.
+
+| Folder | Strategy | Result | Steam |
+|---|---|---|---|
+| `switch` | folder | A folder (base game, updates, DLC) moves whole to `switch\<Title>\`. A lone `.nsp`/`.xci`/`.nsz`/`.xcz` is filed flat in `switch\`. | yes |
+| `n3ds` | files | `.3ds .cci .cxi .3dsx .app .cia`, flat in `n3ds\`. Archives inside are unpacked. A `.cia`-only torrent is filed with a note: install it in Azahar (File > Install CIA). | yes |
+| `ps3` | gamedir | The shallowest folder holding `PS3_GAME` becomes `ps3\<Title>.ps3\`. With none but a `.pkg`/`.iso`: kept in `ps3\<Title>\` as a manual step (RPCS3 installs the `.pkg`). | yes (extracted game only) |
+| `xbox360` | files | `.iso`/`.xex` flat in `xbox360\`. No such file but a folder (GOD/XBLA): `xbox360\xbla\<Title>\`. | yes |
+| `xbox` | files | `.iso`, flat in `xbox\`. | yes |
+| `wiiu` | files | `.wua .wux .wud .iso` flat in `wiiu\`. Otherwise the folder holding `code\*.rpx` goes to `wiiu\<Title>\`. | yes |
+| `psvita` | manual | Kept in `psvita\<Title>\`. Note: NoNpDrm dump, install it in Vita3K or copy `app\<TITLEID>` to `ux0:app` on a Vita. | no |
+| `ps4` | manual | Kept in `ps4\<Title>\`. Note: install the `.pkg` in shadPS4 and add a shortcut under `ps4\shortcuts`. | no |
+| `ps5` | manual | Kept in `ps5\<Title>\`. Note: no emulator, kept for reference. | no |
+| anything else | generic | One file or archive goes through the same filing as a web download (archives unpacked). A folder with one archive uses it; otherwise a `.cue` with its `.bin` files, or the largest ROM file. | yes |
+
+`<Title>` is the bot's title with characters that break Steam launch commands removed. A destination
+that already exists is never overwritten: the new one is named `<Title> (2)`, `(3)`, and so on. (The
+generic rule shares the web pipeline's filing, which replaces a ROM file of the same name.)
+
+Files left in the torrent that the rule does not take (notes, extra folders) stay in staging, which
+`dlrom --clean` sweeps. Empty staging folders are removed after an install.
+
+### Copy or move, and seeding
+
+- A torrent **dlrom added**: the worker removes it from qBittorrent (data kept) and then moves the
+  content into place (staging is on the ROM drive, so it is a rename). Nothing is left seeding.
+- A torrent **qBittorrent already had** (`alreadyPresent`): the content is copied, the entry and its
+  files are never touched, so it keeps seeding wherever you put it.
+
+### Resuming a Telegram job
+
+A worker that dies (reboot, killed), a torrent that stalls and a qBittorrent that is down all leave the
+torrent in qBittorrent with the job `orphaned` or `failed`. Resuming starts a new worker that goes
+back to waiting on the same torrent.
+
+```
+dlrom --resume a3f9c21b8e04        # one job (background)
+dlrom --resume all                 # every eligible Telegram job
+dlrom --resume a3f9c21b8e04 --wait # run it here
+```
+
+Eligible: `orphaned`, or `failed` with a stall, timeout or qBittorrent-down reason. Completed jobs and
+other failures (nothing installable, torrent removed, qBittorrent error state) are refused.
+
+**Auto-resume:** before any normal download (not `--status`, `--list`, `--clean`, `--resume`,
+`--telegram-*`, `--dry-run`, and never inside a worker) dlrom restarts `orphaned` Telegram jobs in the
+background and logs one line each. It reads job files only, so it costs nothing when there are none.
+Failed jobs are not auto-resumed. Turn it off with `telegramAutoResume: false`. Jobs written before
+workers existed (status `running` with no worker) read as `orphaned` and are picked up the same way.
+
+`dlrom --clean` keeps the staging folder of running, orphaned and resumable-failed Telegram jobs; a
+completed job's or a hopelessly failed job's leftovers are fair game.
 
 ### What the bots say
 
@@ -559,6 +632,9 @@ title with different sizes (a full dump and a PSN pack); the first one wins a ti
 | `telegramFallback` | In `auto`, retry a failed RetroGameTalk search on Telegram. Default `true`. |
 | `telegramMinSendGapSec` | Minimum gap between messages (and button presses) sent to a bot. Default `3`. |
 | `telegramMaxPages` | Result pages read per search. Default `4`. |
+| `telegramTorrentTimeoutSec` | Overall wait for a Telegram torrent to finish. Default `86400`. |
+| `telegramStallTimeoutSec` | Fail a torrent that gains no bytes for this long. Default `3600`. |
+| `telegramAutoResume` | Restart orphaned Telegram jobs before a normal download. Default `true`. |
 | `qbitHost` / `qbitUser` / `qbitPass` | The qBittorrent WebUI, as for the PS2 fallback. |
 
 Built-in bots: `switch` Switch_library_bot, `3ds` N3DS_library_bot, `nds` NDS_library_bot, `psx`
@@ -703,6 +779,7 @@ The CMD wrapper passes these through. You can also call the script directly:
     [-Verbose] [-Quiet]
 
 .\dlrom\Add-ROM.ps1 -Status <jobId> [-Json]
+.\dlrom\Add-ROM.ps1 -Resume <jobId|all> [-Wait] [-Json]
 .\dlrom\Add-ROM.ps1 -ListJobs [-Json]
 .\dlrom\Add-ROM.ps1 -Clean [-All] [-DryRun] [-Json]
 ```
@@ -759,7 +836,9 @@ nowhere else. That class of breakage is what ended the cdromance integration.
 | `Downloaders.ps1` | The Motrix, AB, aria2c, curl, BITS and WebClient backends, and the dispatcher. |
 | `RomFiles.ps1` | Archive detection and unpacking, finding the ROM, filename safety, and `Install-RomFromDownload`. That is the one download-to-installed-ROM path, shared by the web pipeline and the torrent fallback. |
 | `SteamRomManager.ps1` | Steam ROM Manager sync. |
-| `QbitTorrent.ps1` | qBittorrent WebUI client, used by the PS2 torrent fallback. |
+| `QbitTorrent.ps1` | qBittorrent WebUI client, used by the PS2 torrent fallback and, for whole torrents, by the Telegram worker. |
+| `TorrentInstall.ps1` | The per-console rules and strategies that file a finished Telegram torrent. Pure filesystem. |
+| `TelegramJob.ps1` | The Telegram worker (wait, install, Steam), `--resume` and auto-resume. |
 | `Ps2TorrentIndex.ps1` + `ps2_torrent.py` | PS2 torrent fallback: match, download one file, install. |
 | `Ps2Serial.ps1` | PS2 serial lookup and the result block with the `[HANDOFF]` line. |
 
@@ -771,7 +850,9 @@ nowhere else. That class of breakage is what ended the cdromance integration.
 | No download links found | dlrom saves the page to `%TEMP%\dlrom-debug.html`. A `403` from the reveal endpoint would mean the site started gating The Repo server-side. |
 | An AB download never finishes | Set `abDownloadDir` to AB's real folder. Raise `abTimeoutSec`. |
 | ROM lands in `\roms` instead of a console folder | Pass `--platform`. The console could not be guessed from the search result. |
-| A job says `orphaned` | Its worker died without recording an outcome. Nothing is running. Check the job's `logFile` to see how far it got, then run it again. |
+| A job says `orphaned` | Its worker died without recording an outcome. Nothing is running. Check the job's `logFile` to see how far it got, then run it again. A Telegram job: `dlrom --resume <id>` (the next download also does it for you). |
+| A Telegram job failed with `stalled` or `qBittorrent is not reachable` | The torrent is still in qBittorrent. Fix the swarm or start qBittorrent, then `dlrom --resume <id>`. |
+| A Telegram job failed with "No ... files found" | The rule for that console found nothing it can file. The data is still in `<romsBase>\.dlrom-torrent`; install it by hand. |
 | A job sits at the same percentage | The download backend is retrying. aria2 and Motrix retry an unreachable host for a long time before giving up. `dlrom --status <id>` shows the last log lines. |
 | `Cannot resolve a ROMs base directory` | dlrom refuses to prompt when nothing can answer. Pass `--dest`, set `romsBase` in the config, connect a drive with a `rom_path`, or re-run with `--interactive`. |
 | A Vita game will not load in Vita3K | Check the job's `vitaBuild`. If it says `console`, the game had no Vita3K build and you have a NoNpDrm dump to convert. |

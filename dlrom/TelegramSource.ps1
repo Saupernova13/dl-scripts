@@ -428,11 +428,11 @@ function New-TelegramRomJob {
                 file = $TorrentFile; savePath = $SavePath; platformFolder = $Folder
                 tag = $script:TGSRC_QBIT_TAG; alreadyPresent = $AlreadyPresent
             }
-    $job.status     = $script:JOB_STATUS_RUNNING
+    # Pending, like any job before its worker claims it: the worker stamps running, its pid and
+    # startedAt. lastUpdate dates the spawn grace (Resolve-DlromJobStatus).
     $job.step       = $script:JOB_STEP_DOWNLOADING
     $job.progress   = 5
-    $job.startedAt  = (Get-UtcStamp)
-    $job.lastUpdate = $job.startedAt
+    $job.lastUpdate = (Get-UtcStamp)
     return $job
 }
 
@@ -468,7 +468,8 @@ function Invoke-TelegramRomRequest {
         [int]$MaxResults = 10,
         [string]$VitaBuild = '',        # what --vita asked for, '' when it did not
         [switch]$DryRun, [switch]$Interactive, [switch]$AsJson,
-        [switch]$NoExtract, [switch]$NoSteam
+        [switch]$NoExtract, [switch]$NoSteam,
+        [switch]$Wait                   # run the worker here instead of detaching it
     )
 
     $fail = {
@@ -588,14 +589,27 @@ function Invoke-TelegramRomRequest {
     }
     try { Save-DlromJob -Job $job -Strict } catch { return (& $fail "Could not write the job file: $($_.Exception.Message)" 'job-error') }
 
-    if ($AsJson) {
+    $summary = {
         Write-TgJson @{
-            ok = $true; source = 'telegram'; jobId = $job.id; title = $job.title; hash = $added.Hash
-            bot = $bot; platform = $folder; savePath = $savePath; torrentFile = $got.Path
+            ok = ($job.status -ne $script:JOB_STATUS_FAILED); source = 'telegram'; jobId = $job.id; title = $job.title
+            hash = $added.Hash; bot = $bot; platform = $folder; savePath = $savePath; torrentFile = $got.Path
             alreadyPresent = $added.AlreadyPresent; status = $job.status; step = $job.step
+            message = [string]$job.message; installedPaths = @($job.installedPaths); manualNote = [string]$job.manualNote
         }
-    } else {
-        Write-DlromJobSpawned -Job $job
     }
+
+    if ($Wait) {
+        # Same worker, this process: progress shows here and the exit code is the outcome.
+        $done = [bool](@(Invoke-TelegramJob -Job $job -Cfg $script:DLROM_CFG) | Select-Object -Last 1)
+        if ($AsJson) { & $summary }
+        return $(if ($done) { 0 } else { 1 })
+    }
+
+    try {
+        [void](Start-DlromJob -Job $job)
+    } catch {
+        return (& $fail "Could not start the worker: $($_.Exception.Message). The torrent is already downloading; run: dlrom --resume $($job.id)" 'spawn-error')
+    }
+    if ($AsJson) { & $summary } else { Write-DlromJobSpawned -Job $job }
     return 0
 }
