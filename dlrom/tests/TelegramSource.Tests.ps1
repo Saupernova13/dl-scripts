@@ -21,6 +21,7 @@ BeforeAll {
     . (Join-Path $ModuleRoot 'QbitTorrent.ps1')
     . (Join-Path $ModuleRoot 'NswtlBot.ps1')
     . (Join-Path $ModuleRoot 'TelegramSource.ps1')
+    . (Join-Path $ModuleRoot 'TelegramJob.ps1')
 
     $script:LOG_QUIET   = $true
     $script:LOG_VERBOSE = $false
@@ -664,14 +665,15 @@ Describe 'The job record' {
             -SavePath 'G:\Emulation\roms\.dlrom-torrent\psvita' -Hash 'deadbeef'
     }
 
-    It 'is a running telegram job already at the downloading step' {
+    It 'is a pending telegram job at the downloading step, claimed later by its worker' {
         $script:Job.kind   | Should -Be 'telegram'
-        $script:Job.status | Should -Be 'running'
+        $script:Job.status | Should -Be 'pending'
         $script:Job.step   | Should -Be 'downloading'
         $script:Job.progress | Should -BeGreaterThan 0
-        $script:Job.startedAt | Should -Not -BeNullOrEmpty
-        $script:Job.pid | Should -Be 0          # nobody owns it yet: --status must not call it orphaned
-        (Resolve-DlromJobStatus $script:Job) | Should -Be 'running'
+        $script:Job.startedAt | Should -BeNullOrEmpty      # the worker stamps it
+        $script:Job.pid | Should -Be 0
+        # Within the spawn grace the worker is still starting: not orphaned yet.
+        (Resolve-DlromJobStatus $script:Job) | Should -Be 'pending'
     }
 
     It 'carries what the installing worker needs' {
@@ -736,6 +738,8 @@ Describe 'Invoke-TelegramRomRequest' {
         Mock Find-TgRomResults { return [PSCustomObject]@{ Kind = 'results'; Total = 5; Results = $script:Dan; Pages = 1; Text = ''; MessageId = 1 } }
         Mock Get-TgRomTorrent { return @{ Path = (Join-Path $script:Scratch 'x.torrent'); FileName = 'x.torrent'; MessageId = 5 } }
         Mock Add-TgTorrentToQbit { return @{ Hash = 'cafebabe'; AlreadyPresent = $false } }
+        Mock Start-DlromJob { return 4242 }
+        Mock Invoke-TelegramJob { return $true }
         $script:QBIT_BASE = 'http://127.0.0.1:8075'
     }
     AfterEach { Set-DlromConfig $null }
@@ -751,6 +755,16 @@ Describe 'Invoke-TelegramRomRequest' {
         Should -Invoke Get-TgRomTorrent -Times 0
         Should -Invoke Add-TgTorrentToQbit -Times 0
         Should -Invoke Initialize-DlromQbit -Times 0
+        Should -Invoke Start-DlromJob -Times 0
+        Should -Invoke Invoke-TelegramJob -Times 0
+    }
+
+    It 'dry run with --wait still sends and adds nothing' {
+        $null = Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase '' -DryRun -Wait 6>$null
+        Should -Invoke Get-TgRomTorrent -Times 0
+        Should -Invoke Add-TgTorrentToQbit -Times 0
+        Should -Invoke Start-DlromJob -Times 0
+        Should -Invoke Invoke-TelegramJob -Times 0
     }
 
     It 'dry run returns exit code 0' {
@@ -758,7 +772,7 @@ Describe 'Invoke-TelegramRomRequest' {
         $rc[-1] | Should -Be 0
     }
 
-    It 'full run: fetches the torrent, adds it, writes a running job and prints the id, title and hash' {
+    It 'full run: fetches the torrent, adds it, writes the job, starts its worker and prints the id, title and hash' {
         $out = Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase (Join-Path $script:Scratch 'roms') -AsJson 6>&1 | Out-String
         $json = ($out -replace '(?s)^.*?(\{.*\}).*$', '$1') | ConvertFrom-Json
         $json.ok | Should -BeTrue
@@ -768,12 +782,44 @@ Describe 'Invoke-TelegramRomRequest' {
         $json.savePath | Should -BeLike '*.dlrom-torrent*psvita'
         $job = Read-DlromJob $json.jobId
         $job.kind | Should -Be 'telegram'
-        $job.status | Should -Be 'running'
+        $job.status | Should -Be 'pending'      # the spawned worker claims it
         $job.step | Should -Be 'downloading'
         $job.vitaBuild | Should -Be 'console'
         $job.torrent.hash | Should -Be 'cafebabe'
         Should -Invoke Get-TgRomTorrent -Times 1 -ParameterFilter { $Result.DownloadCmd -eq '/download471' }
         Should -Invoke Add-TgTorrentToQbit -Times 1 -ParameterFilter { $SavePath -like '*.dlrom-torrent*psvita' -and $JobId -eq $json.jobId }
+    }
+
+    It 'background mode starts the worker for the saved job and never runs it inline' {
+        $out = Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase (Join-Path $script:Scratch 'roms') -AsJson 6>&1 | Out-String
+        $json = ($out -replace '(?s)^.*?(\{.*\}).*$', '$1') | ConvertFrom-Json
+        Should -Invoke Start-DlromJob -Times 1 -ParameterFilter { $Job.id -eq $json.jobId -and $Job.kind -eq 'telegram' }
+        Should -Invoke Invoke-TelegramJob -Times 0
+        (Read-DlromJob $json.jobId).torrent.hash | Should -Be 'cafebabe'
+    }
+
+    It '--wait runs the worker inline, spawns nothing and returns its exit code' {
+        $rc = @(Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase (Join-Path $script:Scratch 'roms') -Wait 6>$null)
+        $rc[-1] | Should -Be 0
+        Should -Invoke Invoke-TelegramJob -Times 1 -ParameterFilter { $Job.kind -eq 'telegram' }
+        Should -Invoke Start-DlromJob -Times 0
+        Mock Invoke-TelegramJob { return $false }
+        $rc = @(Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase (Join-Path $script:Scratch 'roms') -Wait 6>$null)
+        $rc[-1] | Should -Be 1
+    }
+
+    It '--wait --json still prints one result object' {
+        $out = Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase (Join-Path $script:Scratch 'roms') -Wait -AsJson 6>&1 | Out-String
+        $json = ($out -replace '(?s)^.*?(\{.*\}).*$', '$1') | ConvertFrom-Json
+        $json.ok | Should -BeTrue
+        $json.jobId | Should -Not -BeNullOrEmpty
+    }
+
+    It 'reports a worker that cannot be started and points at --resume' {
+        Mock Start-DlromJob { throw 'no process for you' }
+        $out = Invoke-TelegramRomRequest -Query 'Danganronpa' -Plan $script:Plan -RomsBase (Join-Path $script:Scratch 'roms') -AsJson 6>&1 | Out-String
+        $out | Should -Match 'spawn-error'
+        $out | Should -Match 'dlrom --resume'
     }
 
     It 'plain output uses the spawn summary' {

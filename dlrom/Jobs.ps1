@@ -104,6 +104,7 @@ function New-DlromJob {
         noSteam        = $NoSteam
         installedPaths = @()
         handoff        = ''
+        manualNote     = ''     # telegram jobs: what the user still has to do by hand
         pid            = 0
         createdAt      = (Get-UtcStamp)
         startedAt      = ''
@@ -240,9 +241,53 @@ function Complete-DlromJob {
 function Resolve-DlromJobStatus {
     param([PSCustomObject]$Job)
     if ($Job.status -notin $script:JOB_STATUS_ACTIVE) { return $Job.status }
-    if (-not $Job.pid) { return $Job.status }
-    if (Get-Process -Id $Job.pid -ErrorAction SilentlyContinue) { return $Job.status }
+    if (-not $Job.pid) {
+        # A Telegram worker records its pid when it claims the job. Still pid 0 after the spawn
+        # grace means the worker never started, or the record predates Telegram workers.
+        if ($Job.kind -eq $script:JOB_KIND_TELEGRAM -and (Test-DlromJobStale $Job)) { return $script:JOB_STATUS_ORPHANED }
+        return $Job.status
+    }
+    $proc = Get-Process -Id $Job.pid -ErrorAction SilentlyContinue
+    if ($proc -and -not (Test-DlromPidReused -Job $Job -Process $proc)) { return $Job.status }
     return $script:JOB_STATUS_ORPHANED
+}
+
+# A job stamp (ISO string, or a DateTime from ConvertFrom-Json) as UTC, or $null when unreadable.
+function ConvertFrom-DlromStamp {
+    param($Stamp)
+    if ($Stamp -is [datetime]) { return $Stamp.ToUniversalTime() }
+    $t = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+    if ([datetime]::TryParse([string]$Stamp, [System.Globalization.CultureInfo]::InvariantCulture, $styles, [ref]$t)) { return $t }
+    return $null
+}
+
+# True when the job's last update is older than the spawn grace (or unreadable).
+function Test-DlromJobStale {
+    param([PSCustomObject]$Job)
+    $t = ConvertFrom-DlromStamp $Job.lastUpdate
+    if ($null -eq $t) { return $true }
+    return (((Get-Date).ToUniversalTime() - $t).TotalSeconds -gt $script:JOB_SPAWN_GRACE_SEC)
+}
+
+# After a reboot the dead worker's pid can belong to another process. The worker stamps
+# startedAt after it starts, so a process that started later is not the worker.
+function Test-DlromPidReused {
+    param([PSCustomObject]$Job, $Process)
+    $started = ConvertFrom-DlromStamp $Job.startedAt
+    if ($null -eq $started) { return $false }
+    try { $procStart = $Process.StartTime.ToUniversalTime() } catch { return $false }
+    return ($procStart -gt $started.AddSeconds(5))
+}
+
+# A Telegram job --resume may restart: its worker died, or it failed in a way a retry can fix
+# (stalled, timed out, qBittorrent down). Completed jobs and other failures are not.
+function Test-TelegramJobResumable {
+    param([PSCustomObject]$Job)
+    if (-not $Job -or $Job.kind -ne $script:JOB_KIND_TELEGRAM) { return $false }
+    $status = Resolve-DlromJobStatus $Job
+    if ($status -eq $script:JOB_STATUS_ORPHANED) { return $true }
+    return ($status -eq $script:JOB_STATUS_FAILED -and [string]$Job.message -match $script:JOB_RESUMABLE_RX)
 }
 
 function Show-DlromJobStatus {
@@ -280,6 +325,7 @@ function Show-DlromJobStatus {
     if ($job.platform) { Write-Host "  Platform:   $($job.platform)" }
     if ($job.torrent -and $job.torrent.hash) { Write-Host "  Hash:       $($job.torrent.hash)" }
     if ($job.torrent -and $job.torrent.bot)  { Write-Host "  Bot:        @$($job.torrent.bot)" }
+    if ($job.torrent -and $job.torrent.savePath) { Write-Host "  Save path:  $($job.torrent.savePath)" }
     if ($job.vitaBuild) {
         $buildLabel = if ($script:VITA_BUILD_LABELS.ContainsKey($job.vitaBuild)) {
             $script:VITA_BUILD_LABELS[$job.vitaBuild]
@@ -293,6 +339,7 @@ function Show-DlromJobStatus {
     if ($job.completedAt) { Write-Host "  Completed:  $($job.completedAt)" }
     foreach ($p in @($job.installedPaths)) { Write-Host "  Installed:  $p" }
     if ($job.message)  { Write-Host "  Message:    $($job.message)" }
+    if ($job.manualNote) { Write-Host "  Manual:     $($job.manualNote)" -ForegroundColor Yellow }
     if ($job.handoff)  { Write-Host "  $($job.handoff)" -ForegroundColor Green }
     Write-Host ""
 
