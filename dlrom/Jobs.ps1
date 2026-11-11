@@ -150,12 +150,16 @@ function Start-DlromJob {
     $psi.UseShellExecute        = $false
 
     if (Test-DlWindows) {
-        # cmd /c ""ps.exe" -File "script" -JobFile "job" > "log" 2>&1"
-        $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -JobFile "{2}" > "{3}" 2>&1' -f `
+        # cmd /c ""ps.exe" -File "script" -JobFile "job" < NUL > "log" 2>&1"
+        $inner = '"{0}" -NoProfile -ExecutionPolicy Bypass -File "{1}" -JobFile "{2}" < NUL > "{3}" 2>&1' -f `
                     $psExe, $scriptPath, $Job.jobFile, $Job.logFile
-        $psi.FileName              = 'cmd.exe'
-        $psi.Arguments             = "/c `"$inner`""
-        $psi.RedirectStandardInput = $true
+        $psi.FileName  = 'cmd.exe'
+        $psi.Arguments = "/c `"$inner`""
+        # ShellExecute, not CreateProcess with inherited handles: an inherited handle (a caller's
+        # captured stdout pipe) stays open in cmd until the worker exits, so `dlrom ... | x`
+        # would block for the whole download. Stdin is NUL so the worker can never wait on input.
+        $psi.UseShellExecute = $true
+        $psi.WindowStyle     = [System.Diagnostics.ProcessWindowStyle]::Hidden
     } else {
         # Prefer a transient user-manager unit; fall back to setsid where systemd-run or a
         # user bus is missing. A runtime probe, not an OS guess - either can be absent
@@ -190,9 +194,7 @@ function Start-DlromJob {
     $proc = [System.Diagnostics.Process]::Start($psi)
     if (-not $proc) { throw "Failed to start dlrom worker process" }
 
-    if (Test-DlWindows) {
-        $proc.StandardInput.Close()
-    } else {
+    if (-not (Test-DlWindows)) {
         $workerPid = ($proc.StandardOutput.ReadLine() -as [int])
         $proc.WaitForExit()
         if ($workerPid) { return $workerPid }
