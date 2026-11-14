@@ -93,6 +93,8 @@ This matters when the caller is a script, a scheduled task, or an AI agent.
 | `dltv` from KissKH | a worker has started and printed a Job ID | `dltv --status <jobId>` or `dltv --jobs` |
 | `dlrom` | the links are found and a worker has started | `dlrom --status <jobId>` or `dlrom --jobs` |
 
+`dltv` and `dlanime` file torrent episodes into `<Show>\Season NN` (anime: `<Show>`), reusing an existing show folder.
+
 The torrent scripts hand the file to qBittorrent. qBittorrent owns the download
 and is where you watch it. They need no job system of their own.
 

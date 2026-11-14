@@ -119,7 +119,9 @@ Settings live in the `tv` section of `%LOCALAPPDATA%\dlScripts\config.json` (`~/
 2. Drops anything that fails the safety filters (below).
 3. Scores the rest and takes the top result, or lets you pick with `--interactive`.
 4. If that pick is weak, tries the KissKH fallback (see above).
-5. Sends the magnet to qBittorrent with the configured save path.
+5. Sends the magnet to qBittorrent. Episodes are filed into `<destination>\<Show>\Season NN` (a complete
+   series goes in `<Show>`), reusing an existing show folder such as `Abbott Elementary (2021)`, so
+   nothing lands loose in the library root.
 
 ### KissKH path
 
