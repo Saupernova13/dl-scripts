@@ -52,6 +52,7 @@ param(
 # Shared resolver library: Initialize-DlConfig, Resolve-MediaPath, Get-DriveMetaInventory.
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/DriveResolver.ps1")
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/Detach.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/MediaFolders.ps1")
 . (Join-Path $PSScriptRoot "KissKH.ps1")
 . (Join-Path $PSScriptRoot "Stats.ps1")
 . (Join-Path $PSScriptRoot "Jobs.ps1")
@@ -577,10 +578,14 @@ try {
     Write-Log "  Single Episode:  $($selected.IsSingleEpisode)" "DEBUG"
     Write-Host ""
 
+    # File the episode under <Show>\Season NN rather than loose in the library root.
+    $savePath = Get-DlEpisodeSavePath -Root $Destination -TorrentName $selected.Name -Fallback $Query -CompleteSeries:$selected.IsCompleteSeries
+    $selected | Add-Member -NotePropertyName SavePath -NotePropertyValue $savePath -Force
+
     if ($DryRun) {
         $magnetPreview = $selected.MagnetLink.Substring(0, [Math]::Min(120, $selected.MagnetLink.Length))
         Write-Log "[DRY RUN] Would POST to $QbitHost/api/v2/torrents/add" "INFO"
-        Write-Log "[DRY RUN]   savepath: $Destination" "INFO"
+        Write-Log "[DRY RUN]   savepath: $savePath" "INFO"
         Write-Log "[DRY RUN]   magnet:   $magnetPreview..." "INFO"
         Write-Log "Dry run complete - no torrent submitted." "SUCCESS"
         return ($selected | ConvertTo-Json)
@@ -590,7 +595,8 @@ try {
 
     $body = @{
         urls     = $selected.MagnetLink
-        savepath = $Destination
+        savepath = $savePath
+        contentLayout = 'NoSubfolder'
     }
 
     $addResponse = Invoke-WebRequest -Uri "$QbitHost/api/v2/torrents/add" -Method POST -Body $body -UseBasicParsing
@@ -599,7 +605,7 @@ try {
         Write-Log "Successfully added to qBittorrent!" "SUCCESS"
         Write-Log "  Show:        $($selected.Name)" "INFO"
         Write-Log "  Size:        $($selected.Size)" "INFO"
-        Write-Log "  Destination: $Destination" "INFO"
+        Write-Log "  Destination: $savePath" "INFO"
         Write-Host ""
         Write-Log "Process completed successfully" "SUCCESS"
         return ($selected | ConvertTo-Json)
