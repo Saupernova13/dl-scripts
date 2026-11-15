@@ -37,6 +37,7 @@ param(
 
 # Shared resolver library: Initialize-DlConfig, Resolve-MediaPath, Get-DriveMetaInventory.
 . (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/DriveResolver.ps1")
+. (Join-Path (Split-Path -Parent $PSScriptRoot) "lib/MediaFolders.ps1")
 
 $cfg = Initialize-DlConfig -Section "anime" -Defaults ([PSCustomObject]@{
     qbitHost            = "http://localhost:8080"
@@ -326,10 +327,17 @@ try {
     Write-Log "  Preferred Uploader: $($selectedTorrent.IsPreferredUploader)" "DEBUG"
     Write-Host ""
 
+    # Series episodes go in <Show>; movies stay loose in the movies root.
+    $savePath = $Destination
+    $isSeries = ($isAnimeSeries -ne "no")
+    if ($isSeries) {
+        $savePath = Get-DlEpisodeSavePath -Root $Destination -TorrentName $selectedTorrent.Name -Fallback $Query -Anime
+    }
+
     if ($DryRun) {
         $magnetPreview = $selectedTorrent.MagnetLink.Substring(0, [Math]::Min(120, $selectedTorrent.MagnetLink.Length))
         Write-Log "[DRY RUN] Would POST to $QbitHost/api/v2/torrents/add" "INFO"
-        Write-Log "[DRY RUN]   savepath: $Destination" "INFO"
+        Write-Log "[DRY RUN]   savepath: $savePath" "INFO"
         Write-Log "[DRY RUN]   magnet:   $magnetPreview..." "INFO"
         Write-Log "Dry run complete - no torrent submitted." "SUCCESS"
         return ($selectedTorrent | ConvertTo-Json)
@@ -339,15 +347,16 @@ try {
 
     $body = @{
         urls = $selectedTorrent.MagnetLink
-        savepath = $Destination
+        savepath = $savePath
     }
+    if ($isSeries) { $body.contentLayout = 'NoSubfolder' }
 
     Write-Log "Sending POST request to qBittorrent API..." "DEBUG"
     $addResponse = Invoke-WebRequest -Uri "$QbitHost/api/v2/torrents/add" -Method POST -Body $body -UseBasicParsing
 
     if ($addResponse.StatusCode -eq 200) {
         Write-Log "Successfully added torrent to qBittorrent!" "SUCCESS"
-        Write-Log "  Destination: $Destination" "INFO"
+        Write-Log "  Destination: $savePath" "INFO"
         Write-Log "  Name: $($selectedTorrent.Name)" "INFO"
         Write-Log "  Size: $($selectedTorrent.Size)" "INFO"
         Write-Log "  Seeds: $($selectedTorrent.Seeders)" "INFO"

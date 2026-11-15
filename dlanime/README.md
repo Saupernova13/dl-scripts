@@ -85,7 +85,7 @@ All values can be overridden at runtime with the corresponding command-line para
 2. Fetches the nyaa.si search results page and parses the HTML table
 3. Scores every torrent (see Scoring System below)
 4. Auto-selects the highest-scored torrent, or prompts you in `-Interactive` mode
-5. Sends the torrent to qBittorrent via the WebUI API with the configured save path
+5. Sends the torrent to qBittorrent via the WebUI API. Series episodes are filed into `<series destination>\<Show>` (no season folder), reusing an existing show folder; movies save straight to the movies destination
 
 ## Scoring System
 
