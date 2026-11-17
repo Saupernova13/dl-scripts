@@ -283,6 +283,51 @@ $script:TGSRC_DEFAULT_BOTS = @{
 $script:TGSRC_STAGING_DIR = '.dlrom-torrent'
 $script:TGSRC_QBIT_TAG    = 'dlrom'
 
+# --- Torrent install rules ----------------------------------------------------
+#
+# How a finished Telegram torrent is filed, keyed by the job's console folder. One row per
+# console; a folder with no row uses the default. Strategy names map to functions in
+# TorrentInstall.ps1, so a new console is a row here and a new layout is one function.
+#
+#   Strategy    folder | files | gamedir | container | rpxdir | manual | generic
+#   Exts        extensions the strategy files (files, folder)
+#   ExtNotes    ext -> note, used when every filed file has one of those extensions
+#   Then        strategy to try when `files` finds none of Exts
+#   Sub         subfolder under the console folder (container)
+#   Marker      directory name that marks a game dir (gamedir); Suffix is added to its name
+#   ManualExts  gamedir: files that mean "install by hand" when no Marker dir exists
+#   Note        manual: what the user still has to do
+#   SteamSync   whether Steam ROM Manager has a parser for the result
+$script:TORRENT_INSTALL_DEFAULT = @{ Strategy = 'generic'; SteamSync = $true }
+$script:TORRENT_INSTALL_RULES = @{
+    'switch'  = @{ Strategy = 'folder'; Exts = @('.nsp', '.xci', '.nsz', '.xcz'); SteamSync = $true }
+    'n3ds'    = @{ Strategy = 'files'; Exts = @('.3ds', '.cci', '.cxi', '.3dsx', '.app', '.cia'); SteamSync = $true
+                   ExtNotes = @{ '.cia' = 'install the .cia in Azahar (File > Install CIA); Steam ROM Manager does not list .cia' } }
+    'ps3'     = @{ Strategy = 'gamedir'; Marker = 'PS3_GAME'; Suffix = '.ps3'; SteamSync = $true
+                   ManualExts = @('.iso', '.pkg')
+                   ManualNote = 'RPCS3 must install the .pkg (File > Install Packages); the Steam parser only sees extracted games' }
+    'xbox360' = @{ Strategy = 'files'; Exts = @('.iso', '.xex'); Then = 'container'; Sub = 'xbla'; SteamSync = $true }
+    'xbox'    = @{ Strategy = 'files'; Exts = @('.iso'); SteamSync = $true }
+    'wiiu'    = @{ Strategy = 'files'; Exts = @('.wua', '.wux', '.wud', '.iso'); Then = 'rpxdir'; SteamSync = $true }
+    'psvita'  = @{ Strategy = 'manual'; SteamSync = $false
+                   Note = 'NoNpDrm dump: install it in Vita3K, or copy app\<TITLEID> to ux0:app on a Vita' }
+    'ps4'     = @{ Strategy = 'manual'; SteamSync = $false
+                   Note = 'install the .pkg in shadPS4 and add a shortcut under ps4\shortcuts' }
+    'ps5'     = @{ Strategy = 'manual'; SteamSync = $false; Note = 'no emulator; kept for reference' }
+}
+
+# qBittorrent states that mean a torrent has all its data (it may be seeding or paused).
+$script:QBIT_DONE_STATES = @('uploading', 'stalledUP', 'queuedUP', 'forcedUP', 'pausedUP', 'stoppedUP', 'checkingUP')
+# States where qBittorrent is holding the torrent back (queue limit, checking, moving), not failing
+# to find peers: they do not count towards the stall timeout.
+$script:QBIT_WAITING_STATES = @('queuedDL', 'checkingDL', 'checkingResumeData', 'allocating', 'moving', 'metaDL', 'forcedMetaDL')
+$script:QBIT_PAUSED_DL_STATES = @('pausedDL', 'stoppedDL')
+
+# A Telegram worker that has not claimed its job (pid 0) is "starting" for this long, then orphaned.
+$script:JOB_SPAWN_GRACE_SEC = 120
+# Failure messages --resume may retry: the torrent is still in qBittorrent and may finish.
+$script:JOB_RESUMABLE_RX = '(?i)stalled:|timed out|is not reachable'
+
 # --- Rendering ----------------------------------------------------------------
 
 $script:PROGRESS_BAR_WIDTH = 20

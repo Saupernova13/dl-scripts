@@ -38,6 +38,7 @@ param(
     # Background job surface
     [switch]$Wait,
     [string]$Status = "",
+    [string]$Resume = "",           # a Telegram job id, or 'all': restart its worker
     [switch]$ListJobs,
     [string]$JobFile = "",
     [switch]$Json,
@@ -87,6 +88,8 @@ $repoRoot = Split-Path -Parent $PSScriptRoot
 . (Join-Path $PSScriptRoot 'TelegramCli.ps1')       # --telegram-login / --telegram-status / --telegram-logout
 . (Join-Path $PSScriptRoot 'NswtlBot.ps1')           # NSWTL bot replies: parser, reply kinds, page buttons
 . (Join-Path $PSScriptRoot 'TelegramSource.ps1')     # --source routing, bot conversation, torrent handoff
+. (Join-Path $PSScriptRoot 'TorrentInstall.ps1')     # per-console rules + strategies for filing a finished torrent
+. (Join-Path $PSScriptRoot 'TelegramJob.ps1')        # Telegram worker (wait, install, Steam), --resume, auto-resume
 
 # -Verbose (a common parameter) turns on DEBUG; -Quiet hides routine INFO.
 $script:LOG_VERBOSE = ($VerbosePreference -ne 'SilentlyContinue')
@@ -149,6 +152,9 @@ $cfg = Initialize-DlConfig -Section "rom" -Defaults ([PSCustomObject]@{
     telegramFallback     = $true    # auto: retry on Telegram when RetroGameTalk finds nothing
     telegramMinSendGapSec = 3       # minimum gap between messages sent to a bot
     telegramMaxPages     = 4        # result pages read per search (a page is 12 entries)
+    telegramTorrentTimeoutSec = 86400  # overall wait for a Telegram torrent to finish
+    telegramStallTimeoutSec   = 3600   # fail a Telegram torrent that gains no bytes for this long
+    telegramAutoResume   = $true    # a normal download first restarts Telegram jobs whose worker died
 })
 
 # Publish the section so every module's Get-CfgValue (Common.ps1) reads the same config
@@ -190,6 +196,12 @@ if ($Clean) {
     exit (Invoke-DlromClean -TempDir $tempDir -All:$All -DryRun:$DryRun -AsJson:$Json)
 }
 
+# --resume needs the config (qBittorrent address, timeouts); it carries no game name.
+if ($Resume) {
+    $rc = @(Invoke-DlromResume -Id $Resume -Wait:$Wait -AsJson:$Json -Cfg $cfg)
+    exit ([int]($rc | Select-Object -Last 1))
+}
+
 # ---------------------------------------------------------------------------
 # Worker mode (internal). Runs the slow half of a job the parent already resolved, with
 # nothing but a log file for company.
@@ -228,14 +240,16 @@ if ($JobFile) {
                     -Destination $job.romsBase -Cfg $cfg -NoExtract:$job.noExtract `
                     -NoSteam:$job.noSteam -PickIndex $job.torrentPick -Reason $job.reason -Job $job
         } elseif ($job.kind -eq $script:JOB_KIND_TELEGRAM) {
-            # The torrent is already in qBittorrent; the worker that waits for it and installs the
-            # result does not exist yet.
-            throw 'Telegram jobs are downloaded by qBittorrent; the installer for them is not available yet.'
+            # The torrent is already in qBittorrent. This waits for it, installs it and completes
+            # the job itself, so the message carries the manual note or the real failure reason.
+            $ok = [bool](@(Invoke-TelegramJob -Job $job -Cfg $cfg) | Select-Object -Last 1)
         } else {
             $ok = Invoke-RomPipeline -Job $job -Cfg $cfg -TempDir $tempDir
         }
-        Complete-DlromJob -Job $job -Ok ([bool]$ok) `
-            -Message $(if ($ok) { 'Installed' } else { 'Nothing was installed' })
+        if ($job.kind -ne $script:JOB_KIND_TELEGRAM) {
+            Complete-DlromJob -Job $job -Ok ([bool]$ok) `
+                -Message $(if ($ok) { 'Installed' } else { 'Nothing was installed' })
+        }
     } catch {
         Write-Log "Worker failed: $($_.Exception.Message)" 'ERROR'
         Write-Log $_.ScriptStackTrace 'DEBUG'
@@ -258,6 +272,9 @@ if (-not $Query) {
 }
 
 Remove-OldDlromJobs -KeepDays ([int](Get-CfgValue 'jobKeepDays' 7))
+
+# A dry run changes nothing, so it does not restart anything either.
+if (-not $LinksOnly) { [void](Invoke-TelegramAutoResume -Cfg $cfg) }
 
 $script:DOWNLOADER = Find-Downloader
 
@@ -366,7 +383,7 @@ function Invoke-TelegramSource {
     # Anything a callee writes to the pipeline would join the exit code; the last item is ours.
     $rc = @(Invoke-TelegramRomRequest -Query $Query -Plan $plan -Region $Region -RomsBase $base `
             -MaxResults $MaxResults -VitaBuild $vitaAsked -DryRun:$LinksOnly -Interactive:$Interactive `
-            -AsJson:$Json -NoExtract:$NoExtract -NoSteam:$NoSteam)
+            -AsJson:$Json -NoExtract:$NoExtract -NoSteam:$NoSteam -Wait:$Wait)
     return [int]($rc | Select-Object -Last 1)
 }
 

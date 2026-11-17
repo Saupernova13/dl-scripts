@@ -35,7 +35,8 @@ function Get-DlromProtectedNames {
     foreach ($file in @(Get-ChildItem -LiteralPath (Get-DlromJobsDir) -Filter '*.json' -ErrorAction SilentlyContinue)) {
         $job = Read-DlromJob ([System.IO.Path]::GetFileNameWithoutExtension($file.Name))
         if (-not $job) { continue }
-        if ((Resolve-DlromJobStatus $job) -notin $script:JOB_STATUS_ACTIVE) { continue }
+        # A resumable Telegram job (worker died, stalled) still has its download in staging.
+        if ((Resolve-DlromJobStatus $job) -notin $script:JOB_STATUS_ACTIVE -and -not (Test-TelegramJobResumable $job)) { continue }
         # A running job now owns a whole temp subdirectory named for its id, so the id has
         # to be protected too - otherwise --clean deletes the folder mid-download.
         if ($job.id) { $names[[string]$job.id] = $true }

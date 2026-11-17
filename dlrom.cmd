@@ -3,6 +3,7 @@ REM dlrom - Download ROMs from RetroGameTalk's Repo or the NSWTL Telegram bots a
 REM Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu|console] [--source auto|rgt|telegram] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
 REM        dlrom --status <jobId> [--json]
 REM        dlrom --jobs [--json]
+REM        dlrom --resume <jobId|all> [--wait] [--json]
 REM        dlrom --clean [--all] [--dry-run] [--json]
 REM
 REM --clean reclaims what dlrom is holding: interrupted downloads, extraction working dirs,
@@ -12,6 +13,9 @@ REM
 REM Downloads run in the BACKGROUND by default: dlrom searches, resolves the links, spawns
 REM a worker and returns a job id straight away. Follow it with --status; use --wait only
 REM when you actually want to sit and watch the transfer.
+REM
+REM --resume restarts the worker of a Telegram job that is orphaned, or failed because it stalled,
+REM timed out or qBittorrent was down. 'all' resumes every such job; --wait runs it in this window.
 REM
 REM Sources: https://retrogametalk.com/repo/ (the former cdromance catalogue; no account needed) and the NSWTL Telegram library bots (log in once with dlrom --telegram-login).
 REM --source auto (default) tries The Repo first and falls back to the bot for that console;
@@ -53,6 +57,7 @@ if /i "%~1"=="-list"    goto :job_list
 if /i "%~1"=="--jobs"   goto :job_list
 if /i "%~1"=="--status" goto :job_status
 if /i "%~1"=="-status"  goto :job_status
+if /i "%~1"=="--resume" goto :job_resume
 if /i "%~1"=="--sync-steam"  goto :sync_steam
 if /i "%~1"=="--steam-queue" goto :steam_queue
 if /i "%~1"=="--clean"  goto :do_clean
@@ -66,6 +71,7 @@ if "%~1"=="" (
     echo Usage: dlrom "Game Name" [--platform PLATFORM] [--region REGION] [--vita emu^|console] [--source auto^|rgt^|telegram] [--sort SORT] [--dest PATH] [--dry-run] [--wait] [--interactive] [--no-extract] [--no-steam] [--json] [--verbose] [--quiet]
     echo        dlrom --status ^<jobId^> [--json]
     echo        dlrom --jobs [--json]
+    echo        dlrom --resume ^<jobId^|all^> [--wait] [--json]   restart a stalled or orphaned Telegram job
     echo        dlrom --clean [--all] [--dry-run] [--json]
     echo        dlrom --sync-steam [--json]   run Steam syncs deferred by Steam Deck Game Mode
     echo        dlrom --steam-queue [--json]  show deferred Steam syncs without running them
@@ -99,6 +105,7 @@ if "%~1"=="" (
     echo                  torrent^). --list and --links-only do the same thing.
     echo   --wait         stay in the foreground until the ROM is installed
     echo   --status ID    show progress for a job
+    echo   --resume ID    restart a Telegram job that stalled, timed out or lost its worker ^(ID or all^)
     echo   --jobs         list recent jobs ^(--list with no game name does the same^)
     echo   --clean        delete temp files, abandoned partials and caches
     echo                  add --all for job history, --dry-run to preview
@@ -249,6 +256,30 @@ exit /b %ERRORLEVEL%
 :job_list
 set "PS_ARGS=-ListJobs"
 if /i "%~2"=="--json" set "PS_ARGS=%PS_ARGS% -Json"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
+exit /b %ERRORLEVEL%
+
+REM --- --resume <jobId|all> [--wait] [--json] [--verbose] ---
+:job_resume
+if "%~2"=="" (
+    echo Usage: dlrom --resume ^<jobId^|all^> [--wait] [--json]
+    echo Run "dlrom --list" to see recent job ids.
+    exit /b 1
+)
+set "PS_ARGS=-Resume "%~2""
+shift
+shift
+:resume_args
+if "%~1"=="" goto :resume_run
+if /i "%~1"=="--wait"    ( set "PS_ARGS=%PS_ARGS% -Wait"    & goto :resume_next )
+if /i "%~1"=="--json"    ( set "PS_ARGS=%PS_ARGS% -Json"    & goto :resume_next )
+if /i "%~1"=="--verbose" ( set "PS_ARGS=%PS_ARGS% -Verbose" & goto :resume_next )
+set "DL_ARG=%~1"
+if "%DL_ARG:~0,1%"=="-" goto :bad_flag
+:resume_next
+shift
+goto :resume_args
+:resume_run
 powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT%" %PS_ARGS%
 exit /b %ERRORLEVEL%
 
